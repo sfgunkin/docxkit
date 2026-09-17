@@ -32,11 +32,13 @@ from ._xml import (
     normalize_glyphs,
     overlaps,
     own_properties,
+    run_holds_content,
     run_open_before,
     run_spans,
     set_run_property,
     set_run_text,
     span_holding,
+    split_run,
     visible_text,
 )
 from .errors import AnchorError
@@ -321,7 +323,20 @@ def _run_vert_align(run_xml: str, val: str) -> str:
 def _restyle(para_xml: str, text: str, style: Callable[[str], str],
              *, normalize: bool = False, within: str | None = None) -> str:
     """Apply `style` to the runs covering exactly `text`, splitting the
-    runs at the span's edges so nothing outside it is touched."""
+    runs at the span's edges so nothing outside it is touched.
+
+    The split is :func:`_xml.split_run`, which gives every child of the
+    run to exactly ONE side — BACKLOG S5. Rebuilding each piece with
+    `set_run_text` kept the whole run's structure in all three of them,
+    which is right for a piece that IS the run and wrong for one of
+    three: a reference entry written as ``[1]<w:tab/>Sen (1985)
+    Journal…`` came back with a tab after each piece, the one between
+    the number and the author now sitting after "(1985) ", and a run
+    carrying a `footnoteReference` gained a second marker for the same
+    note. `visible_text` counts neither, so every text gate read the
+    paragraph as unchanged — the same shape `wrap_visible_span` printed
+    seven copies of one hyphen in (backlog S1), and the same fix.
+    """
     runs, spans, at, end = _locate(para_xml, text, normalize=normalize,
                                    within=within)
 
@@ -335,13 +350,16 @@ def _restyle(para_xml: str, text: str, style: Callable[[str], str],
         if lo == 0 and hi == len(body):
             edits.append((run, style(run_xml)))
             continue
-        pieces = [(body[:lo], False), (body[lo:hi], True),
-                  (body[hi:], False)]
-        built = "".join(
-            style(set_run_text(run_xml, part)) if inside
-            else set_run_text(run_xml, part)
-            for part, inside in pieces if part)
-        edits.append((run, built))
+        # `run_holds_content`: the left half is a whole run even when
+        # nothing rode left, and a `<w:r><w:rPr/></w:r>` shell is
+        # something Word opens and a diff reports.
+        head, rest = split_run(run_xml, lo)
+        inside, tail = split_run(rest, hi - lo)
+        edits.append((run, "".join(
+            style(piece) if styled else piece
+            for piece, styled in ((head, False), (inside, True),
+                                  (tail, False))
+            if run_holds_content(piece))))
 
     out = para_xml
     for run, replacement in reversed(edits):

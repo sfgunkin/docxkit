@@ -189,6 +189,50 @@ def test_italicize_a_span_that_fills_its_run_adds_no_split():
                       (" for more", False)]
 
 
+# --- what a split run carries with it (BACKLOG S5) ----------------------
+#
+# A run holds more than text: a tab, a break, a note reference. Rebuilt
+# piece by piece through `set_run_text`, each piece kept a copy of all of
+# it — `set_run_text` writes the text into the FIRST `w:t` and blanks the
+# others, which is right for a fragment that IS the whole run and wrong
+# for one of three. `_xml.split_run` is the walk that gives each child to
+# exactly one side, by document order.
+
+
+def test_styling_part_of_a_run_does_not_COPY_its_tab():
+    """A reference entry as Word writes it: the number, a tab, the entry.
+    Italicising the journal title split the run into two pieces and gave
+    BOTH the tab — so the page gained a tab it never had, and the one
+    between the number and the author moved to after "(1985) ".
+
+    `visible_text` counts no tabs, so every text gate read the paragraph
+    as unchanged."""
+    entry = ("<w:r><w:t>[1]</w:t><w:tab/>"
+             "<w:t>Sen (1985) Journal of Economics</w:t></w:r>")
+
+    out = italicize(para(entry), "Journal of Economics")
+
+    assert out.count("<w:tab/>") == 1
+    assert out.index("[1]") < out.index("<w:tab/>") < out.index("Sen (1985)")
+    italic = [text_of(m.group(0)) for m in RUN_RE.finditer(out)
+              if "<w:i/>" in m.group(0)]
+    assert italic == ["Journal of Economics"]
+    assert text_of(out) == "[1]Sen (1985) Journal of Economics"
+
+
+def test_styling_part_of_a_run_does_not_COPY_its_note_marker():
+    """The same fault where it costs a footnote: a marker duplicated into
+    every piece is a second reference to note 2 in the body, and Word
+    renders both."""
+    run_xml = ('<w:r><w:t>see the note</w:t>'
+               '<w:footnoteReference w:id="2"/></w:r>')
+
+    out = superscript(para(run_xml), "note")
+
+    assert out.count("footnoteReference") == 1
+    assert text_of(out) == "see the note"
+
+
 def test_italicize_across_FRAGMENTED_runs_styles_every_piece():
     """Word splits at rsid boundaries, so the span routinely covers part
     of one run, all of another and part of a third."""
