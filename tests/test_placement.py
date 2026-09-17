@@ -1999,24 +1999,32 @@ def test_the_LAST_block_is_judged_by_its_LAST_element_not_its_second():
 
 
 def test_exhibit_block_never_answers_with_ANOTHER_captions_span():
-    """`x.caption_at == i`, read as `>=`, takes the first exhibit captioned
-    at or AFTER the paragraph asked about. The two agree wherever
-    `exhibits` reads that paragraph as a caption too, and part company
-    where it does not: a line break inside the number, "Table 1-" and
-    "A." — `_text` drops the break and sees a caption, `text_of` keeps it
-    and sees prose. The answer for Table 1-A may then be a refusal, but
-    it is never Table 2's span, which a caller would move."""
+    """`x.caption_at == i`, read as `>=`, takes the first exhibit
+    captioned at or AFTER the paragraph asked about. The two agree
+    wherever `exhibits` reads that paragraph as a caption too, and part
+    company where it does not: a line break inside the number, "Table
+    1-" and "A." — `_text` drops the break and sees a caption, `text_of`
+    keeps it and sees prose. So the answer for Table 1-A is a REFUSAL,
+    and the refusal is the guarantee: under `>=` the call answers with
+    Table 2's span instead, which a caller would move.
+
+    Written as a try/except/else asserting on either path, so whichever
+    way the call went the test passed — and the `else` never ran, which
+    means the assertion its name promised was never made (found by
+    coverage over the test files, BACKLOG 2026-09-18). There is no
+    fixture where the two readings differ AND a block comes back: they
+    differ exactly where `==` finds nothing, so the raise IS the claim.
+    Measured with `tools/can_it_fail.py`: this kills the `>=` mutant,
+    and a happy-path version of the same name does not, because there
+    the two readings agree.
+    """
     doc = parts(P("Prose.")
                 + "<w:p><w:r><w:t>Table 1-</w:t><w:br/>"
                 "<w:t>A. Counts</w:t></w:r></w:p>" + TBL("a")
                 + P("More prose.") + P("Table 2. Other") + TBL("b"))
 
-    try:
-        block = placement.exhibit_block(doc, "Table 1-A.")
-    except placement.PackageError as exc:
-        assert "Table 1-A." in str(exc)
-    else:
-        assert block.caption.startswith("Table 1-"), block.caption
+    with pytest.raises(placement.PackageError, match=r"Table 1-A\."):
+        placement.exhibit_block(doc, "Table 1-A.")
 
 
 def test_a_table_of_PICTURES_under_a_caption_is_still_its_table():
