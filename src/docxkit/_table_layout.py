@@ -1756,6 +1756,15 @@ def _group_columns(cells: list[_Span]) -> set[int]:
 #: to move with it or a run reads at two sizes in one cell.
 _HOUSE_FONT_ATTRS = ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia")
 _TRPR_RE = re.compile(r"<w:trPr\b[^>]*(?<!/)>", re.DOTALL)
+#: A row's table-property EXCEPTIONS, whole: CT_Row sequences them before
+#: the row properties, so a `w:trPr` written for a row that has one goes
+#: after it — and after the WHOLE element, since `w:tblPrEx` holds
+#: properties of its own and writing past its open tag lands inside it.
+_TBLPREX_RE = re.compile(r"<w:tblPrEx\b[^>]*/>|<w:tblPrEx\b.*?</w:tblPrEx>",
+                         re.DOTALL)
+#: the SELF-CLOSING form of the row properties, which `_TRPR_RE` cannot
+#: merge into: it is filled rather than written beside
+_TRPR_EMPTY_RE = re.compile(r"<w:trPr\b[^>]*/>")
 
 
 @dataclass
@@ -1847,8 +1856,24 @@ def house(xml: str, table: Table, *, font: str = "Arial Narrow",
             if (m := _TRPR_RE.search(new_row)) is not None:
                 new_row = (new_row[:m.end()] + "<w:cantSplit/>"
                            + new_row[m.end():])
+            elif (m := _TRPR_EMPTY_RE.search(new_row)) is not None:
+                # `<w:trPr/>` is row properties too — the shape `_xml`
+                # records for `<w:pPr/>`, and real Word output. The
+                # search above cannot merge into it, and writing beside
+                # it left the row with TWO `w:trPr`, which `lint`
+                # reports and CT_Row does not allow.
+                new_row = (new_row[:m.start()]
+                           + "<w:trPr><w:cantSplit/></w:trPr>"
+                           + new_row[m.end():])
             else:
-                at = new_row.index(">") + 1
+                # AFTER a `w:tblPrEx`, which CT_Row sequences before the
+                # row properties — Word writes one on every row whose
+                # borders or width differ from the table's, and a
+                # `w:trPr` in front of it is the one order the schema
+                # does not allow. The lxml twin is `placement._trpr`.
+                prex = _TBLPREX_RE.search(new_row)
+                at = (prex.end() if prex is not None
+                      else new_row.index(">") + 1)
                 new_row = (new_row[:at] + "<w:trPr><w:cantSplit/></w:trPr>"
                            + new_row[at:])
             report.rows += 1

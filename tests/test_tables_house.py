@@ -70,6 +70,40 @@ def test_every_row_gets_cantSplit_and_never_a_SECOND_trPr():
     assert "<w:tblHeader/>" in body, "the existing trPr content survived"
 
 
+def test_cantSplit_lands_AFTER_a_rows_tblPrEx():
+    """CT_Row is a sequence: `w:tblPrEx?`, then `w:trPr?`, then the
+    cells. Word writes a `w:tblPrEx` on any row whose borders, width or
+    margins differ from the table's — ordinary in a converted table —
+    and the row properties went in at the open tag, in front of it,
+    which is the one order the schema does not allow. Word repairs it
+    silently on open, so nothing here saw it; the package emits the
+    file long before Word does. `placement._trpr` is the lxml twin."""
+    xml = _doc().replace(
+        "<w:tr>", "<w:tr><w:tblPrEx><w:tblBorders/></w:tblPrEx>", 1)
+
+    out, _ = house(xml, read_all(xml)[0])
+
+    first = out[out.index("<w:tr>"):out.index("</w:tr>")]
+    assert first.count("<w:trPr") == 1, first
+    assert first.index("<w:tblPrEx>") < first.index("<w:trPr>"), first
+
+
+def test_an_EMPTY_trPr_is_FILLED_rather_than_doubled():
+    """`<w:trPr/>` is row properties too, and real Word output — the
+    shape `_xml` records for `<w:pPr/>`. The search for a `w:trPr` to
+    merge into skips a self-closing one, so `cantSplit` was written
+    beside it and the row came out with TWO `w:trPr`: what the test
+    above exists to prevent, by the other road."""
+    xml = _doc().replace("<w:tr>", "<w:tr><w:trPr/>", 1)
+
+    out, report = house(xml, read_all(xml)[0])
+
+    first = out[out.index("<w:tr>"):out.index("</w:tr>")]
+    assert first.count("<w:trPr") == 1, first
+    assert "<w:cantSplit/>" in first
+    assert report.rows == 3
+
+
 def test_the_table_is_set_to_full_width_and_autofit():
     xml = _doc()
     out, report = house(xml, read_all(xml)[0])

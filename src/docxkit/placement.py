@@ -508,8 +508,36 @@ def _ppr(el: etree._Element) -> etree._Element:
     ppr = el.find(W + "pPr")
     if ppr is None:
         ppr = etree.Element(W + "pPr")
-        el.insert(0, ppr)
+        el.insert(0, ppr)                 # CT_P opens with its properties
     return ppr
+
+
+def _trpr(row: etree._Element) -> etree._Element:
+    """The row's properties, created where CT_Row puts them.
+
+    CT_Row is a SEQUENCE — `w:tblPrEx?`, then `w:trPr?`, then the cells —
+    and index 0 is right only for a row that carries no exceptions. Word
+    writes a `w:tblPrEx` on every row whose borders, width or margins
+    differ from the table's, which is what a converted or hand-edited
+    table is full of, and a `w:trPr` in front of one is the order the
+    schema does not allow.
+
+    Word repairs it on open rather than refusing it, exactly as it
+    repairs a row-mark written before `cantSplit` (measured 2026-09-16,
+    `_TRPR_ORDER` above): the repair happens once Word has opened and
+    saved the file, and every other reader of the package sees the
+    invalid order until then. `_table_layout.house` writes the same
+    element as a string and now makes the same choice.
+    """
+    trpr = row.find(W + "trPr")
+    if trpr is None:
+        trpr = etree.Element(W + "trPr")
+        prex = row.find(W + "tblPrEx")
+        if prex is None:
+            row.insert(0, trpr)
+        else:
+            prex.addnext(trpr)
+    return trpr
 
 
 def _in_order(props: etree._Element, tag: str) -> etree._Element:
@@ -583,11 +611,7 @@ def keep_together(block: list[etree._Element], *, on: bool = True) -> None:
     for tbl in (e for e in block if e.tag == W + "tbl"):  # bind every row
         rows = tbl.findall(W + "tr")
         for n, row in enumerate(rows):
-            trpr = row.find(W + "trPr")
-            if trpr is None:
-                trpr = etree.Element(W + "trPr")
-                row.insert(0, trpr)
-            _flag(trpr, "cantSplit", on)
+            _flag(_trpr(row), "cantSplit", on)
             last = n == len(rows) - 1
             for para in row.iter(W + "p"):
                 _flag(_ppr(para), "keepNext", on and not last)
@@ -764,11 +788,7 @@ def own_page(block: list[etree._Element]) -> None:
         rows = tbl.findall(W + "tr")
         if not rows:
             continue
-        trpr = rows[0].find(W + "trPr")
-        if trpr is None:
-            trpr = etree.Element(W + "trPr")
-            rows[0].insert(0, trpr)
-        _flag(trpr, "tblHeader", True)
+        _flag(_trpr(rows[0]), "tblHeader", True)
         for row in rows:
             rpr = row.find(W + "trPr")
             if rpr is not None:

@@ -3344,6 +3344,36 @@ def test_the_table_ABOVE_the_hole_is_looked_for_BACKWARDS():
     assert any("against each other" in x for x in rep.problems), rep.problems
 
 
+#: a row carrying table-property EXCEPTIONS, as Word writes for a row whose
+#: borders, width or margins differ from the table's
+EXCEPTED_ROW = ("<w:tbl><w:tr><w:tblPrEx><w:tblBorders/></w:tblPrEx>"
+                "<w:tc><w:p><w:r><w:t>шапка</w:t></w:r></w:p></w:tc>"
+                "</w:tr></w:tbl>")
+
+
+@pytest.mark.parametrize("writer", ["place", "own_page"])
+def test_a_new_trPr_lands_AFTER_the_rows_tblPrEx(writer):
+    """CT_Row is a SEQUENCE — `w:tblPrEx?`, then `w:trPr?`, then the
+    cells — and both writers of row properties created theirs at index
+    0, in front of exceptions the row already carried. Word repairs that
+    on open, as it repairs a row mark written before `cantSplit`
+    (`_TRPR_ORDER`, measured 2026-09-16), so no gate here ever said
+    anything; every other reader of the package sees the invalid order
+    until Word has opened and saved the file."""
+    doc = parts(P("Как показано в таблице 1, всё сходится.")
+                + P("Таблица 1. Заголовок") + EXCEPTED_ROW)
+
+    if writer == "place":
+        body = body_of(placement.place(doc)[0])
+    else:
+        body = body_of(doc)
+        placement.own_page(list(body))
+
+    row = tbl_of(body).find(NS + "tr")
+    assert row is not None
+    assert children_of(row)[:2] == ["tblPrEx", "trPr"]
+
+
 # ---------------------------------------------------------- keep LAST --
 
 
