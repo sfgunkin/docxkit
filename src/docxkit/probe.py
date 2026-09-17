@@ -212,7 +212,8 @@ def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
     # between paragraphs as bookmarks do — and an empty `<w:p/>`, which
     # opens nothing and closes where it opens: a bookmark after any of
     # them read as nested (347 in 98 of 2,954 corpus packages).
-    opens, closes = [], []
+    opens: list[int] = []
+    closes: list[int] = []
     for tag in _P_TAG_RE.finditer(body):
         (opens if tag.group(1) == "" else closes).append(tag.start())
     for m in BOOKMARK_NAME_RE.finditer(body):
