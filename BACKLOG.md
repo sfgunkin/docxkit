@@ -46,45 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S1 — revision build asks about 2 of the 14 revision kinds, so baseline refuses what build allowed
-
-<!-- status: open -->
-
-Found 2026-09-18 while fixing the `cellMerge` defect, one module over, and
-it is wider than that fix.
-
-`revision build`'s own pending gates read
-`tracked.package_counts(...)["insertions"]` and `["deletions"]`
-(`src/docxkit/revision/_build.py:118-127` and `:144-158`) rather than asking
-`state`. There are fourteen names in `revisions._REVISION_NAMES`; those two
-counts see two of them.
-
-So a manuscript or a baseline whose only tracked change is a cell merge — or
-a `pPrChange`, an `rPrChange`, a `sectPrChange`, a `tblPrChange`, a
-`tblGridChange`, a `trPrChange`, a `tcPrChange`, a `moveFrom` or a
-`moveTo` — passes BOTH of `build`'s refusals, while `baseline` refuses the
-same file. Compare is then handed a document carrying an unadjudicated
-verdict and flattens it, which is exactly what those refusals exist to
-prevent: the author is never offered the change, and the redline that comes
-back does not contain it as a proposal.
-
-It is the same defect `state` was just taught the full list for (see the
-`cellMerge` entry), one module over. `state` now knows all fourteen names
-and which of them only Word can clear; `build` still asks a question about
-two.
-
-**Why it was not fixed in that round, and what the judgement is.** Making
-`build` ask `state` would mean a formatting-only batch — a manuscript
-carrying nothing but a `pPrChange`, say — newly REFUSES a build that
-succeeds today. That may well be right: an unadjudicated formatting change
-is still unadjudicated, and the reason `baseline` refuses it is the reason
-`build` should. But it changes what the protocol accepts, on real papers
-mid-round, and it deserves its own round with the corpus measured first:
-how many of the manuscripts on this machine carry a formatting-only tracked
-change, and how many rounds would newly refuse.
-
-Filed so the two halves are not fixed one at a time by accident.
-
 ### S3 — the lint gate refuses six write commands and a tracked build, with no route out
 
 <!-- status: open -->

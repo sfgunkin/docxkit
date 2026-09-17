@@ -14,6 +14,101 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — revision build asks about 2 of the 14 revision kinds, so baseline refuses what build allowed~~ — FIXED 18.09, `4241b86`
+<!-- status: fixed -->
+
+Found 2026-09-18 while fixing the `cellMerge` defect, one module over, and
+it is wider than that fix.
+
+`revision build`'s own pending gates read
+`tracked.package_counts(...)["insertions"]` and `["deletions"]`
+(`src/docxkit/revision/_build.py:118-127` and `:144-158`) rather than asking
+`state`. There are fourteen names in `revisions._REVISION_NAMES`; those two
+counts see two of them.
+
+So a manuscript or a baseline whose only tracked change is a cell merge — or
+a `pPrChange`, an `rPrChange`, a `sectPrChange`, a `tblPrChange`, a
+`tblGridChange`, a `trPrChange`, a `tcPrChange`, a `moveFrom` or a
+`moveTo` — passes BOTH of `build`'s refusals, while `baseline` refuses the
+same file. Compare is then handed a document carrying an unadjudicated
+verdict and flattens it, which is exactly what those refusals exist to
+prevent: the author is never offered the change, and the redline that comes
+back does not contain it as a proposal.
+
+It is the same defect `state` was just taught the full list for (see the
+`cellMerge` entry), one module over. `state` now knows all fourteen names
+and which of them only Word can clear; `build` still asks a question about
+two.
+
+**Why it was not fixed in that round, and what the judgement is.** Making
+`build` ask `state` would mean a formatting-only batch — a manuscript
+carrying nothing but a `pPrChange`, say — newly REFUSES a build that
+succeeds today. That may well be right: an unadjudicated formatting change
+is still unadjudicated, and the reason `baseline` refuses it is the reason
+`build` should. But it changes what the protocol accepts, on real papers
+mid-round, and it deserves its own round with the corpus measured first:
+how many of the manuscripts on this machine carry a formatting-only tracked
+change, and how many rounds would newly refuse.
+
+Filed so the two halves are not fixed one at a time by accident.
+
+**FIXED 18.09 in `4241b86`**, and the decision was measured before it was
+made, because the fix makes a build that succeeds today newly REFUSE.
+
+Both gates now ask `revisions.revision_kinds` over the package's text parts
+— every kind `state` counts — instead of the two substring counts, and both
+messages name what they found: `4 pending revision(s) — w:del (2),
+w:ins (2)`. When a kind is one no docxkit path can clear (`WORD_ONLY`), the
+message says so and sends the author to Word, as `baseline`'s refusal now
+does. `revision_kinds` lives in `revisions.py` beside `_REVISION_NAMES`, and
+`_state` uses it for `word_only` — that regex was one copy away from having
+three.
+
+**The corpus, measured read-only over 2,958 `.docx` (4 unreadable), three
+parts read out of each zip and none opened for writing:**
+
+* **452** files carry a tracked change of a kind the two counts cannot see,
+  of 759 with any tracked change at all. Every one of them ALSO carries an
+  insertion or a deletion, so `build` already refuses them. Nothing changes
+  for these.
+* **11** carry ONLY such kinds — the builds that would newly refuse.
+* Kind totals: `rPrChange` 59,502 · `tcPrChange` 12,728 · `pPrChange` 8,000
+  · `moveTo` 1,389 · `trPrChange` 1,272 · `moveFrom` 1,120 · `cellIns` 248 ·
+  `tblGridChange` 133 · `tblPrChange` 89 · `cellDel` 20 · `sectPrChange` 12.
+
+**Landed whole, with no warning-first staging, and this is why.** All 759
+tracked files were classified by protocol role across the nine projects
+carrying a `revision/paper.toml`: **not one of them is a file `build`
+gates** — no `build/prev.docx`, no declared manuscript. Of the eleven, two
+are batches, two are redline records under `build/redlines/`, and seven are
+loose documents outside any project. So the new refusal costs nothing that
+exists today.
+
+And the state it exists for is reachable by the ordinary route rather than
+being hypothetical: one of the eleven is a Parental Style BATCH of 35
+`w:rPrChange` and one `w:pPrChange`. Promote a batch of that shape and the
+manuscript is exactly the file this gate used to call clean. A staged
+warning would only have delayed a refusal nobody currently hits.
+
+Tests seen red before the fix — eight failures with the `src/` change
+stashed, all in `tests/test_revision.py`:
+`test_build_refuses_a_BASELINE_whose_only_change_is_one_of_those`
+(parametrised over moveTo, pPrChange, rPrChange),
+`test_build_refuses_a_MANUSCRIPT_whose_only_change_is_one_of_those` (the
+same three), `test_the_pending_refusal_NAMES_the_kinds_and_counts_them` and
+`test_the_refusal_says_which_kind_only_WORD_can_clear`. Three more —
+`test_the_OVERRIDES_still_absorb_one_of_those_deliberately` — are green both
+ways by design: the flags must still mean "build anyway" for the new kinds.
+
+Two tests in `tests/test_pending_working.py` read the old wording
+(`"2 insertion(s)"`, `match="1 deletion"`) and now read `w:ins (2)` /
+`w:del (1)`, with a note saying why. That is a wording migration, not a
+weakening.
+
+Measurement scripts kept at `scratchpad\agents\build_pending_kinds\`
+(`measure_corpus.py`, `roles.py`, `corpus.json`), so the numbers can be
+re-derived rather than trusted.
+
 ### ~~S3 — revision/_common was measured against a harness missing the tests its code arrived with~~ — FIXED 18.09, `7a76b27`
 
 <!-- status: fixed -->
