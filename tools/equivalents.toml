@@ -174,6 +174,10 @@ claims = [
 ["revision/_gates.py"]
 claims = [
   { was = 'if self.code == -1:', line = 'if self.code is -1:', why = "`code` is an int, and CPython keeps a single object for every small int from -5 to 256, -1 among them, so any int equal to -1 is that object." },
+  { was = 'capture_output=True, check=False, timeout=10)', line = 'capture_output=True, check=True, timeout=10)', why = "This call is the last statement inside `with contextlib.suppress(Exception):`, and nothing reads what it returns. All `check=True` adds is a `CalledProcessError` when `taskkill` answers non-zero, which that suppress catches, and control reaches the same `proc.kill()` below either way. An argument from the CODE." },
+  { was = 'capture_output=True, check=False, timeout=10)', line = 'capture_output=True, check=False, timeout= 11)', kind = "cosmetic", why = "How long a best-effort kill waits for `taskkill`, in whole seconds. The bound is there so a kill that fails cannot become a second hang, and the `TimeoutExpired` it raises is suppressed with everything else on this path; nine, ten or eleven seconds all deliver that, and `taskkill /F /T` answers in milliseconds. A test could only pin the number by reading the keyword back." },
+  { was = 'capture_output=True, check=False, timeout=10)', line = 'capture_output=True, check=False, timeout= 9)', kind = "cosmetic", why = "The same bound one second shorter, and the same argument as the `timeout= 11` claim: the wait exists so a failed kill cannot hang, and no outcome turns on which whole second it gives up at." },
+  { was = 'text=True, encoding="utf-8", errors="replace",', line = 'text=False, encoding="utf-8", errors="replace",', why = "`subprocess.Popen` settles text mode as `encoding or errors or text or universal_newlines`, so the `encoding` beside it on this same line puts the pipes in text mode whatever `text` says. Measured on CPython 3.14.7: both spellings hand `drain` a `str`, and `_run_one` driven with the real subprocess module answers the same either way. An argument from the CODE." },
 ]
 
 ["_tracked_gates.py"]

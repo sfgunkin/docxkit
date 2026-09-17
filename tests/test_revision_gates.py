@@ -441,10 +441,12 @@ class _FakeSubprocess:
 
     def __init__(self) -> None:
         self.runs: list[list[str]] = []
+        self.run_kwargs: list[dict[str, object]] = []
         self.popen_kwargs: dict[str, object] = {}
 
-    def run(self, argv, **_kw):
+    def run(self, argv, **kw):
         self.runs.append(argv)
+        self.run_kwargs.append(kw)
         return types.SimpleNamespace(returncode=0)
 
     def Popen(self, _command, **kw):
@@ -491,13 +493,15 @@ def test_run_one_on_WINDOWS_starts_the_gate_in_its_own_PROCESS_GROUP(
 
 class _FakeThreading:
     """A reader that drains when started and records what each `join`
-    was allowed."""
+    was allowed, and whether it was asked for a daemon."""
 
     def __init__(self) -> None:
         self.joins: list[float | None] = []
+        self.daemons: list[bool] = []
 
     def Thread(self, target, daemon):
         joins = self.joins
+        self.daemons.append(daemon)
 
         class _Reader:
             def start(self) -> None:
@@ -559,19 +563,27 @@ def test_SECONDS_are_the_difference_of_two_clock_readings(monkeypatch,
     assert gate.seconds == 3.0
 
 
+@pytest.mark.parametrize("platform", ["linux", "x-after-win32"])
 def test_kill_tree_off_WINDOWS_kills_the_SESSION_and_never_runs_taskkill(
-        monkeypatch):
+        monkeypatch, platform):
     """`os.killpg` is faked as well as the platform: CI's runner IS a
     POSIX box, and a real `killpg` on the group of pid 4242 would kill
     whatever holds it. `taskkill` does not exist there; asked for, it
-    fails quietly inside the suppress and the grandchild lives on."""
+    fails quietly inside the suppress and the grandchild lives on.
+
+    The second name is no platform's, and it is here for the same reason
+    as in `_run_one`'s twin below: `linux` and `darwin` both sort BEFORE
+    "win32", so neither tells this equality from `>=`, which reads every
+    such name as Windows and sends `taskkill` after a POSIX process
+    group (whole sweep, 2026-09-18). `_kill_tree`'s copy of the line was
+    the one left unheld."""
     import os
     import signal
 
     from docxkit.revision._gates import _kill_tree
 
     killed: list[tuple[int, int]] = []
-    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setattr(os, "getpgid", lambda pid: pid + 1, raising=False)
     monkeypatch.setattr(os, "killpg",
                         lambda pgid, sig: killed.append((pgid, sig)),
@@ -640,6 +652,83 @@ def test_the_reader_is_given_FIVE_seconds_on_BOTH_paths(monkeypatch,
 
     assert code == -1
     assert reader.joins == [5, 5]
+
+
+# --- the whole sweep of 2026-09-18 ----------------------------------------
+#
+# Nine real survivors, and the fakes are why: the one above lets every
+# keyword through to nowhere, the reader ignores what it was asked to be,
+# and the clock two tests up ticks a whole 3.0, which rounds the same at
+# every decimal place.
+
+
+def test_the_tree_kill_CAPTURES_what_taskkill_prints(monkeypatch):
+    """`capture_output=True`. `taskkill` answers "SUCCESS: The process
+    with PID 4242 has been terminated." on the parent's own stdout, and
+    uncaptured it lands in the middle of the ladder's verdict lines —
+    between a gate's `[FAIL (2)]` and the next gate's name. The test
+    above pins the argv and lets every keyword through.
+
+    The keywords it does NOT ask about are argued in
+    `tools/equivalents.toml`: `check` cannot decide anything from inside
+    a `suppress(Exception)` that ends on this call, and the ten seconds
+    are a bound nothing turns on."""
+    from docxkit.revision._gates import _kill_tree
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    sub, proc = _FakeSubprocess(), _FakeProc()
+
+    _kill_tree(proc, sub)
+
+    (kwargs,) = sub.run_kwargs
+    assert kwargs["capture_output"] is True, (
+        "taskkill's SUCCESS line is not part of the ladder's output")
+
+
+def test_the_READER_is_a_DAEMON_thread(monkeypatch, tmp_path):
+    """`daemon=True`, and the hang it prevents is the one this module
+    exists for. A grandchild `taskkill` missed still holds the pipe, so
+    the reader stays blocked on a read that never returns; `join(5)`
+    gives up on it and `_run_one` returns either way. As a daemon that
+    thread is abandoned when the interpreter exits. As an ordinary one
+    it is waited for, and `docxkit revision validate` then hangs at the
+    END of the run instead of in the middle of it — a timeout that
+    bounds the gate and not the command.
+
+    The fake reader drains in `start`, so nothing here blocks whichever
+    way the flag goes: what is asserted is what the thread was ASKED to
+    be."""
+    from docxkit.revision._gates import _run_one
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    reader = _FakeThreading()
+
+    _run_one("echo hi", tmp_path, 5, _FakeSubprocess(), reader)
+
+    assert reader.daemons == [True]
+
+
+def test_SECONDS_are_reported_to_a_TENTH(monkeypatch, tmp_path):
+    """`round(..., 1)`. The CLI prints this number raw — `[pass] 3.1s` —
+    so the rounding IS the resolution the author reads. To the whole
+    second every gate under one reads as `0.0s`, and a lint gate that
+    takes 400 ms is then indistinguishable from one that did not run; to
+    a hundredth the verdict carries two digits of a clock reading that
+    starts before `Popen` and ends after the reader is joined.
+
+    A tick of 3.06 rather than the 3.0 above, because a whole number of
+    seconds rounds to itself at every decimal place."""
+    from docxkit.revision import _gates
+
+    monkeypatch.setattr(_gates, "_run_one", lambda *_a: (0, "ok"))
+    paper = paper_with(tmp_path, "echo hi")
+    ticks = iter([2.0, 5.06])
+    monkeypatch.setitem(sys.modules, "time", types.SimpleNamespace(
+        monotonic=lambda: next(ticks)))
+
+    (gate,) = run_gates(paper)
+
+    assert gate.seconds == 3.1
 
 
 # --- the verdict is the REPORT's -------------------------------------
