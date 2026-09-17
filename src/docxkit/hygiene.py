@@ -900,11 +900,17 @@ def _is_equation_carrier(tbl_xml: str) -> bool:
     It is a table to the schema and an equation to the reader, and the
     paragraph after it continues the sentence the equation sits in — so the
     rule that separates a table from the text below does not apply to it.
+
+    An EMPTY `<w:tr/>` or `<w:tc/>` is a row or a cell and is counted
+    as one, its slash captured: read as an open tag it ran on to the next
+    close, and a 2-row or 3-cell table passed for the 1×2 shape.
     """
-    rows = re.findall(r"<w:tr\b.*?</w:tr>", tbl_xml, re.DOTALL)
+    rows = [m.group(0) for m in re.finditer(
+        r"<w:tr\b[^>]*?(?:(/)>|(?<!/)>.*?</w:tr>)", tbl_xml, re.DOTALL)]
     if len(rows) != 1:
         return False
-    cells = re.findall(r"<w:tc\b.*?</w:tc>", rows[0], re.DOTALL)
+    cells = [m.group(0) for m in re.finditer(
+        r"<w:tc\b[^>]*?(?:(/)>|(?<!/)>.*?</w:tc>)", rows[0], re.DOTALL)]
     return (len(cells) == 2
             and bool(re.fullmatch(r"\([\w.]+\)",
                                   visible_text(cells[-1]).strip())))

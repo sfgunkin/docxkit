@@ -419,6 +419,20 @@ def test_a_ONE_cell_row_is_not_an_equation_carrier_either():
                                 + "</w:tr></w:tbl>") is True
 
 
+def test_an_EMPTY_row_or_cell_is_counted_not_merged_into_the_next():
+    """`<w:tr/>` and `<w:tc/>` open nothing. Read as open tags they ran on
+    to the next close: a table of two rows, one of them empty, counted as
+    one, and a row of three cells as two — both then passed for the 1×2
+    equation carrier, and the table lost the rule below it."""
+    def tc(text: str) -> str:
+        return f"<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+
+    assert _is_equation_carrier("<w:tbl><w:tr/><w:tr>" + tc("x = 1")
+                                + tc("(3)") + "</w:tr></w:tbl>") is False
+    assert _is_equation_carrier("<w:tbl><w:tr><w:tc/>" + tc("x = 1")
+                                + tc("(3)") + "</w:tr></w:tbl>") is False
+
+
 def test_restoring_a_part_needs_the_content_types_on_BOTH_sides():
     """`and`, not `or`. The document being repaired may have no
     `[Content_Types].xml` at all — a caller assembling parts by hand, or

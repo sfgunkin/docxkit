@@ -51,8 +51,12 @@ _PGSZ_RE = re.compile(r'<w:pgSz[^>]*w:orient="([^"]+)"')
 _CAPTION_RE = re.compile(
     r"^\s*((?:Table|Figure|Таблица|Рисунок)\s+[A-Z]?\d+)\s*[:.]")
 #: a paragraph OR a table, in document order, on the shared spelling of
-#: a paragraph — the two walks below have to agree about where one ends
-_BLOCK_RE = re.compile(rf"{PARA_RE.pattern}|<w:tbl\b.*?</w:tbl>", re.DOTALL)
+#: a paragraph — the two walks below have to agree about where one ends.
+#: The table half carries the paragraph's `(?<!/)>` guard too: an empty
+#: `<w:tbl/>` read as an open tag ran on to the next table's close and
+#: took the caption between into a block that is never read as one.
+_BLOCK_RE = re.compile(rf"{PARA_RE.pattern}|<w:tbl\b[^>]*(?<!/)>.*?</w:tbl>",
+                       re.DOTALL)
 
 
 @dataclass

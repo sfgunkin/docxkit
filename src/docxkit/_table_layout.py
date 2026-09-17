@@ -557,7 +557,11 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
         raise AnchorError(f"table {table.index} has no cell content to fit")
     if total is None:
         own = _own_tblpr(body)
-        w_m = re.search(r'<w:tblW w:w="(\d+)" w:type="dxa"/>',
+        # Either attribute order: `w:type` first is how 26 of 2,954
+        # corpus packages write a dxa width, and a spelling bound to
+        # `w:w` first divided their columns over the grid's sum instead.
+        w_m = re.search(r'<w:tblW\b(?=[^>]*\bw:type="dxa")[^>]*\bw:w="(\d+)"'
+                        r"[^>]*/>",
                         live_properties(own[2])) if own else None
         total = int(w_m.group(1)) if w_m else sum(grid)
     if total <= 0:
@@ -590,7 +594,9 @@ def _side_margins(body: str) -> int:
 
     def one(*names: str) -> int:
         for nm in names:
-            e = re.search(rf'<w:{nm} w:w="(\d+)" w:type="dxa"/>',
+            # either attribute order, as for the table's own width
+            e = re.search(rf'<w:{nm}\b(?=[^>]*\bw:type="dxa")'
+                          r'[^>]*\bw:w="(\d+)"[^>]*/>',
                           mar.group(0)) if mar else None
             if e:
                 return int(e.group(1))

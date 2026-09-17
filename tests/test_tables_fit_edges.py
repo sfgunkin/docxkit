@@ -168,6 +168,42 @@ def test_existing_cell_margins_are_read_not_assumed():
     assert assumed.cramped and not actual.cramped
 
 
+def test_cell_margins_written_TYPE_FIRST_are_read_too():
+    """`<w:left w:type="dxa" w:w="10"/>` is the same margin in the other
+    attribute order, and a producer writes it that way (one package of
+    the corpus, an LE draft). Spelled `w:w` before `w:type`, the read
+    matched nothing and the table was measured with Word's 108 a side."""
+    row = ("<w:tr>" + cell(frun("Wrappable label text"), w=1000)
+           + cell(frun("-0.250***"), w=600) + cell(frun("0.047"), w=600)
+           + "</w:tr>")
+    declared = doc(tbl(
+        [1000, 600, 600], row,
+        pr_extra=('<w:tblCellMar><w:left w:type="dxa" w:w="10"/>'
+                  '<w:right w:type="dxa" w:w="10"/></w:tblCellMar>')))
+
+    _, actual = fit_columns(declared, read_all(declared)[0])
+
+    assert not actual.cramped
+
+
+def test_a_table_width_written_TYPE_FIRST_is_the_width_divided():
+    """`<w:tblW w:type="dxa" w:w="3000"/>` is the same width in the other
+    attribute order — 97 dxa widths in 26 of the corpus's 2,954 packages
+    are written so. Spelled `w:w` before `w:type`, the read matched
+    nothing, and the columns were divided over the grid's sum instead of
+    the width the table declares."""
+    row = ("<w:tr>" + cell(frun("A label"), w=1000)
+           + cell(frun("0.047"), w=1000) + "</w:tr>")
+    d = doc(tbl([1000, 1000], row)).replace(
+        '<w:tblW w:w="2000" w:type="dxa"/>',
+        '<w:tblW w:type="dxa" w:w="3000"/>')
+
+    out, rep = fit_columns(d, read_all(d)[0])
+
+    assert rep.total == 3000
+    assert sum(grid_of(out)) == 3000
+
+
 def test_margin_replaces_existing_cell_margins():
     mar = ('<w:tblCellMar><w:left w:w="108" w:type="dxa"/>'
            '<w:right w:w="108" w:type="dxa"/></w:tblCellMar>')

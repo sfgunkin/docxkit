@@ -220,6 +220,20 @@ def test_the_table_ABOVE_a_caption_is_not_the_caption_s_table(tmp_path,
     assert rep.exhibits == [("Table 1", "table, 3 rows", "")]
 
 
+def test_an_EMPTY_table_does_not_swallow_the_next_exhibit(tmp_path):
+    """`<w:tbl/>` opens nothing. Read as an open tag it ran on to the
+    NEXT table's close, taking Table 2's caption into one block that
+    starts `<w:tbl` — and a block that is a table is never a caption, so
+    Table 2 was not reported at all."""
+    body = (_caption_para() + _table(2) + "<w:tbl/>"
+            + _caption_para("Table 2: Regressions.") + _table(3))
+
+    rep = probe(make_docx(tmp_path, body))
+
+    assert rep.exhibits == [("Table 1", "table, 2 rows", ""),
+                            ("Table 2", "table, 3 rows", "")]
+
+
 def test_a_caption_whose_table_follows_IMMEDIATELY(tmp_path):
     """The other edge of the same window: `i + 1` is the first block it
     looks at, and a caption sitting directly on its table is the
