@@ -46,6 +46,58 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S1 — parse_number reads a DECIMAL comma as a thousands separator, and _render_value writes the result back
+
+<!-- status: open -->
+
+Found 2026-09-18 by the `_table_core.py` survivor round, and it is the
+worst-consequence defect of the campaign so far, because it changes NUMBERS
+in a paper's tables and nothing anywhere says so.
+
+`parse_number` strips every comma before calling `float()`. That is right
+for a thousands separator and wrong for a DECIMAL comma, which is what every
+Russian-language manuscript in this corpus uses:
+
+    "0,31"     ->    31.0
+    "12,5"     ->   125.0
+    "1 234,5"  -> 12345.0
+
+The space separators the docstring promises ARE handled, so this is not a
+form the reader rejects — it is a form the reader ACCEPTS and gets wrong by
+two orders of magnitude, silently.
+
+**`_render_value` inherits the misreading**, and that is where it reaches
+the page. A Russian cell holding `0,31`, updated to `0.4`, is written back
+as **`'0'`**. The table looks updated. `tables.update` reports the change.
+Nothing in the pipeline compares the written value against the intended one
+in a way that would notice, because both sides of that comparison come
+through the same reader.
+
+**The corpus this matters for is this package's own.** DSI is Russian
+throughout; the Parental Style and Loneliness papers carry Russian tables
+too. `tables.update` is the routine those rounds use to rebuild a table from
+a DataFrame, which is exactly the path that reads a cell, decides it has
+changed, and writes a new one.
+
+Repro: `scratchpad\agents\table_core\defect_1.py`.
+
+**Why no test caught it.** The module's own fixtures are English and hold
+`1,234.5`; the decimal-comma form appears in no fixture in the suite. And
+the survivor that led here was in `parse_number` itself — one of the eleven
+unpinned members the constants census found, since `_NUM_RE`'s separator
+alternatives are data cosmic-ray cannot reach.
+
+**What the fix has to decide**, which is why this is filed rather than
+patched in the round: `"1,234"` is genuinely ambiguous — 1234 in an English
+table, 1.234 in a Russian one — and no amount of care inside
+`parse_number` resolves it from the string alone. The options are a locale
+the caller states, an inference from the whole COLUMN (a column mixing
+`0,31` and `12,5` cannot be using thousands separators), or a refusal to
+guess when a single value is ambiguous. The third is the safest and the
+loudest; the second is what a human does. A round that fixes this must also
+say what `tables.update` does with a cell it cannot read, because refusing
+mid-update is its own hazard.
+
 ### S2 — link_all mints a bookmark for an institutional author and writes no hyperlink
 
 <!-- status: open -->
