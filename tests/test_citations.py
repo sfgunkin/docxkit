@@ -2181,6 +2181,15 @@ def test_a_minted_bookmark_name_fits_wordss_40_character_limit():
     An institutional author mints a 90-character name, so the cap has to
     be applied when the name is created, not discovered when the author
     hands the file back (Parental Style: 4 entries, 8 dead anchors).
+
+    This asserted a second thing — "and the link still points at a
+    bookmark that exists" — over a loop that never had an item: on THIS
+    fixture `link_all` mints the name and writes no `w:hyperlink` at
+    all, so there was no anchor to check and the claim was never made
+    (found by coverage over the test files, BACKLOG 2026-09-18). The
+    canary one line up is what kept the first half honest, which is the
+    lesson: a canary on one of a pair is not a canary on the pair. The
+    anchor claim is now made where anchors exist, below.
     """
     from docxkit._cite_build import WORD_BOOKMARK_LIMIT
     from docxkit.citations import link_all
@@ -2194,9 +2203,36 @@ def test_a_minted_bookmark_name_fits_wordss_40_character_limit():
     assert names, "no bookmark was minted"
     for n in names:
         assert len(n) <= WORD_BOOKMARK_LIMIT, f"{n!r} is {len(n)} chars"
-    # and the link still points at a bookmark that exists
-    for anchor in re.findall(r'w:anchor="([^"]+)"', out):
-        assert anchor in names, f"{anchor!r} has no bookmark"
+
+
+def test_every_anchor_link_all_WRITES_lands_on_a_bookmark_it_minted():
+    """A dead anchor is the Parental Style defect itself: Word keeps the
+    link, the target is not there, and the reader gets nothing when they
+    click. Nothing asserted this over `link_all`'s own output — the one
+    place that tried is the 40-character test above, whose fixture
+    writes no link at all.
+
+    An ordinary surname, because that is the pair `link_all` completes:
+    an entry bookmark, a `<key>txt` marker on the mention, and a
+    hyperlink each way. The canary is that there ARE anchors: with none,
+    every assertion below is about nothing, which is exactly how the
+    claim went missing the first time.
+    """
+    from docxkit.citations import link_all
+
+    parts = _parts("The survey (Ravallion 2011) covers households.",
+                   "References",
+                   "Ravallion, M. (2011). On measuring poverty. Washington.")
+
+    link_all(parts)
+
+    out = parts["word/document.xml"].decode("utf-8")
+    names = set(re.findall(r'w:name="([^"]+)"', out))
+    anchors = re.findall(r'w:anchor="([^"]+)"', out)
+
+    assert len(anchors) >= 2, f"the round trip was not linked: {out}"
+    for anchor in anchors:
+        assert anchor in names, f"{anchor!r} has no bookmark: {sorted(names)}"
 
 
 def test_the_in_text_partner_also_fits_the_limit():
