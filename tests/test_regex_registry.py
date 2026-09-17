@@ -26,7 +26,7 @@ import itertools
 import pathlib
 import re
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 import pytest
 
@@ -683,27 +683,210 @@ ATTRIBUTE_SPELLINGS = ("", ' w:id="1"',
                        ' w:type="separator" w:id="1"')
 
 
-def _reads_empty_as_open(compiled: re.Pattern[str]) -> str | None:
-    """The first EMPTY container `compiled` reads as an opening tag."""
-    for prefix, tag, attrs in itertools.product(("w", "m"), CONTAINERS,
-                                                ATTRIBUTE_SPELLINGS):
-        healthy = f"<{prefix}:{tag}{attrs}>text</{prefix}:{tag}>"
-        # Probed rather than read off the source, so an alternation
-        # (`<(/?)w:(tbl|tr|tc|p)\b…`) is covered too.
-        if (well := compiled.search(healthy)) is None:
-            continue                    # not about this element
-        if ">" not in well.group(0):
-            continue                    # a counter: it pairs nothing
-        empty = f"<{prefix}:{tag}{attrs}/>"
-        hit = compiled.search(empty + healthy)
-        if hit is None or hit.start() != 0:
+# --- what a probe is built FROM: the pattern's own spellings -------------
+#
+# A fixed probe, `<w:x ATTRS>text</w:x>`, matched nothing a pattern needed
+# MORE of — a link's `w:anchor`, a field's `w:instr`, a run holding a
+# `w:commentReference` — and such a pattern was read as "not about this
+# element" and skipped, with nothing saying so. The probe is now built
+# from what the pattern itself spells: its attributes, with the literal
+# value where it gives one, and the other elements it names, as content.
+# Every container a pattern opens is exercised, or declared below.
+
+#: `w:name`, `(?:w|m):name`, `w:(?:a|b)` and `w:(a|b)Suffix`, over
+#: `_hole_masked` text; followed by `=`, an attribute.
+_SPELLED = re.compile(
+    r"(?<![\w.-])(?P<prefix>[A-Za-z]\w*|\((?:\?:)?\w+(?:\|\w+)+\)):"
+    r"(?:(?P<name>[A-Za-z]\w*)|\((?:\?:)?(?P<names>\w+(?:\|\w+)*)\)"
+    r"(?P<suffix>\w*))(?P<attr>=?)")
+
+#: `(m:nor|m:sty|w:i)`: qualified names as one group's alternatives.
+_QUALIFIED_ALTERNATIVES = re.compile(r"\((?:\?:)?(\w+:\w+(?:\|\w+:\w+)+)\)")
+
+#: An element name the pattern leaves OPEN — `<w:\w+\b`, `<\w[^>]*>`,
+#: `<[^>]+>` — which any container's name fills. A hole followed by
+#: letters (`<w:\w+PrChange`) names a family, not a container.
+_ANY_NAME = re.compile(
+    r"<(?:\(/\?\)|/\?)?(?:(?:[A-Za-z]\w*|\0{2,}+|\[[^\]]*\][*+?]?):)?"
+    r"(?:\0{2,}+|\[[^\]]*\][*+?]?)(?![A-Za-z])")
+
+#: `name="value"` with a plain value, which a probe has to repeat:
+#: `w:type="dxa"` matches no `w:type="1"`.
+_LITERAL_VALUE = re.compile(
+    r"(?<![\w:.-])((?:[A-Za-z]\w*:)?[A-Za-z]\w*)=\"([\w.-]*)\"")
+
+#: An opening tag a healthy match passes through.
+_OPENING = re.compile(r"<(\w+):(\w+)(\s[^<>]*?)?(?<!/)>")
+
+
+def _hole_masked(source: str) -> str:
+    """`_masked`, blanked with NUL: a class escape is a hole, and must not
+    read as the whitespace a pattern spells for real."""
+    return _ESCAPES.sub(lambda m: "\0" * len(m.group(0)), source)
+
+
+def _spellings(probe: str) -> tuple[set[tuple[str, str]], list[str]]:
+    """The (prefix, name) of each element `probe` spells where a tag OPENS,
+    and ` name="value"` for each attribute it spells."""
+    masked = _hole_masked(probe)
+    values = dict(_LITERAL_VALUE.findall(masked))
+    elements: set[tuple[str, str]] = set()
+    attributes: list[str] = []
+    for m in _SPELLED.finditer(masked):
+        prefixes = m.group("prefix").strip("()?:").split("|")
+        names = ([m.group("name")] if m.group("name") else
+                 [n + m.group("suffix") for n in m.group("names").split("|")])
+        if m.group("attr"):
+            attributes += [f' {p}:{n}="{values.get(f"{p}:{n}", "1")}"'
+                           for p in prefixes for n in names]
+        elif masked[max(0, m.start() - 2):m.start()] != "</":
+            elements |= {(p, n) for p in prefixes for n in names}
+    for m in _QUALIFIED_ALTERNATIVES.finditer(masked):
+        for qualified in m.group(1).split("|"):
+            prefix, _, name = qualified.partition(":")
+            elements.add((prefix, name))
+    return elements, list(dict.fromkeys(attributes))
+
+
+def _contents(elements: set[tuple[str, str]], attributes: str) -> list[str]:
+    """What a healthy container holds: text, or one or two of the elements
+    the pattern names, each empty, holding text, or open and shut."""
+    singles = [form
+               for prefix, name in sorted(elements)
+               for attrs in dict.fromkeys(("", attributes))
+               for form in (f"<{prefix}:{name}{attrs}/>",
+                            f"<{prefix}:{name}{attrs}>text</{prefix}:{name}>",
+                            f"<{prefix}:{name}{attrs}></{prefix}:{name}>")]
+    return ["text", *singles,
+            *(a + b for a, b in itertools.product(singles, repeat=2))]
+
+
+class _Reading(NamedTuple):
+    """How one pattern reads the containers it may open."""
+
+    flagged: str | None     # the first EMPTY one it reads as an opening tag
+    by_name: frozenset[str]  # read by name or attribute alone: undecidable
+    unreached: frozenset[str]  # named, but no probe reached it
+
+
+def _slash(hit: re.Match[str]) -> bool:
+    return any(g == "/" for g in hit.groups() if g is not None)
+
+
+def _tails(probe: str) -> list[str]:
+    """`probe`, and every part of it from a `<` at its OWN level on.
+
+    A pattern whose match starts on something else — a field's
+    `<w:fldChar …/>` — opens its runs only after context no probe builds,
+    and was never reached. Cut at the level of the pattern itself, the
+    rest is a pattern of its own that starts on the tag.
+    """
+    tails, depth, at, in_class = [probe], 0, 0, False
+    while at < len(probe):
+        char = probe[at]
+        if char == "\\":
+            at += 2
             continue
-        if any(g == "/" for g in hit.groups() if g is not None):
-            continue        # it CAPTURES the slash: the caller is told
-        if well.group(0) == healthy and hit.group(0) == empty:
-            continue        # an ELEMENT matcher reading both forms whole
-        return empty
+        if in_class:
+            in_class = char != "]"
+        elif char == "[":
+            in_class = True
+            if probe.startswith("[^]", at):
+                at += 2             # a `]` first in a class is a member
+            elif probe.startswith("[]", at):
+                at += 1
+        elif char in "()":
+            depth += 1 if char == "(" else -1
+        elif char == "<" and not depth and at:
+            tails.append(probe[at:])
+        at += 1
+    return tails
+
+
+def _reading(probe: str) -> _Reading | None:
+    """What `probe` does with an empty container, or None if it names none.
+
+    Probed rather than read off the source, so an alternation
+    (`<(/?)w:(tbl|tr|tc|p)\\b…`) is covered too. The container a match
+    STARTS on is asked as it always was — the empty form, then a healthy
+    element — and a container the match opens further in is asked by
+    swapping its opening tag for the empty form, unless the pattern never
+    needed that tag (it sat in a wildcard).
+    """
+    elements, attributes = _spellings(probe)
+    named = {(p, n) for p, n in elements if n in CONTAINERS}
+    any_name = _ANY_NAME.search(_hole_masked(probe)) is not None
+    if not named and not any_name:
+        return None
+    wanted = named | ({(p, c) for p in ("w", "m") for c in CONTAINERS}
+                      if any_name else set())
+    reached: set[tuple[str, str]] = set()
+    by_name: set[str] = set()
+    for tail in _tails(probe):
+        try:
+            compiled = re.compile(tail, re.DOTALL)
+        except re.error:
+            continue                # it names a group the cut left behind
+        flagged = _exercise(compiled, wanted, elements, attributes,
+                            reached, by_name)
+        if flagged is not None:
+            return _Reading(flagged, frozenset(), frozenset())
+    unreached = {f"{p}:{n}" for p, n in named - reached}
+    if any_name and not reached:
+        unreached.add("any element name")
+    return _Reading(None, frozenset(by_name), frozenset(unreached))
+
+
+def _exercise(compiled: re.Pattern[str], wanted: set[tuple[str, str]],
+              elements: set[tuple[str, str]], attributes: list[str],
+              reached: set[tuple[str, str]], by_name: set[str]) -> str | None:
+    """The first empty container `compiled` reads as an opening tag, or
+    None; what it reached, or read by name alone, is added to the sets."""
+    own = "".join(attributes)
+    for (prefix, tag), attrs in itertools.product(
+            sorted(wanted), dict.fromkeys((*ATTRIBUTE_SPELLINGS, own,
+                                           *attributes))):
+        empty = f"<{prefix}:{tag}{attrs}/>"
+        others = {(p, n) for p, n in elements if n != tag}
+        for inner in _contents(others, own):
+            healthy = f"<{prefix}:{tag}{attrs}>{inner}</{prefix}:{tag}>"
+            well = compiled.search(healthy)
+            if well is None or well.start():
+                alone = compiled.search(empty)
+                if well is None and alone is not None \
+                        and alone.group(0) == empty:
+                    reached.add((prefix, tag))   # reads the EMPTY form only
+                continue
+            hit = compiled.search(empty + healthy)
+            if (hit is None or hit.start() or _slash(hit)
+                    or (well.group(0) == healthy and hit.group(0) == empty)):
+                reached.add((prefix, tag))
+            elif ">" in well.group(0):
+                return empty
+            else:
+                by_name.add(f"{prefix}:{tag}")
+            for opening in _OPENING.finditer(well.group(0), 1):
+                if opening.group(2) not in CONTAINERS:
+                    continue
+                gone = compiled.search(healthy[:opening.start()]
+                                       + healthy[opening.end():])
+                if gone is not None and not gone.start():
+                    continue            # wildcard content, not a token
+                twin = (f"<{opening.group(1)}:{opening.group(2)}"
+                        f"{opening.group(3) or ''}/>")
+                sick = healthy[:opening.start()] + twin \
+                    + healthy[opening.end():]
+                hit = compiled.search(sick)
+                if hit is not None and not hit.start() and not _slash(hit):
+                    return f"{twin} in {sick}"
+                reached.add((opening.group(1), opening.group(2)))
     return None
+
+
+def _reads_empty_as_open(probe: str) -> str | None:
+    """The first EMPTY container `probe` reads as an opening tag."""
+    reading = _reading(probe)
+    return reading.flagged if reading is not None else None
 
 
 #: Patterns the gate above flags and that are right as written, each
@@ -717,9 +900,6 @@ def _reads_empty_as_open(compiled: re.Pattern[str]) -> str | None:
 #: an isolated input costs nothing, an exemption that was wrong costs a
 #: swallowed element.
 NOT_AN_OPENING_TAG: dict[tuple[str, str], str] = {
-    ("_cite_grammar.py", r"\S+"): (
-        "generic tokenizer: splits VISIBLE text on whitespace to find the "
-        "capitalised word a name starts on; it never sees markup"),
     ("_cite_repair.py", r"<w:p\b[^>]*>"): (
         "isolated input: `_mark_para_head` gets a paragraph matched by the "
         "guarded PARA_RE, through `para_slice` or `_cite_build`'s rebuild, "
@@ -765,10 +945,10 @@ def test_no_pattern_reads_an_EMPTY_container_as_an_opening_tag(
     if (module, source) in NOT_AN_OPENING_TAG:
         return
     try:
-        compiled = re.compile(probe, re.DOTALL)
+        re.compile(probe, re.DOTALL)
     except re.error:                                    # pragma: no cover
         pytest.skip("built from another pattern at import time")
-    empty = _reads_empty_as_open(compiled)
+    empty = _reads_empty_as_open(probe)
     assert empty is None, (
         f"{module}:{line} {name} reads {empty} as an OPENING tag and "
         f"pairs it with the next close, swallowing the element after it. "
@@ -781,28 +961,185 @@ def test_every_exemption_names_a_pattern_that_still_needs_it():
     """A stale exemption fails: gone from the package, or no longer
     flagged — either way it would silently cover the next pattern
     written with that spelling, and its reason describes nothing."""
-    probes = {(module, source): probe
-              for module, _, source, probe, _ in ALL_PATTERNS}
+    probes: dict[tuple[str, str], list[str]] = {}
+    for module, _, source, probe, _ in ALL_PATTERNS:
+        probes.setdefault((module, source), []).append(probe)
     for key, reason in NOT_AN_OPENING_TAG.items():
         assert len(reason) > 40, (key, reason)
         assert key in probes, f"exempt, but no longer in the package: {key}"
-        assert _reads_empty_as_open(re.compile(probes[key], re.DOTALL)), (
+        assert any(_reads_empty_as_open(p) for p in probes[key]), (
             f"exempt, but the gate no longer flags it: {key}")
 
 
 def test_the_gate_tells_an_opening_tag_from_an_element():
-    """The gate's own instrument, both ways round."""
+    """The gate's own instrument, both ways round — and for the patterns
+    a fixed `<w:x>text</w:x>` probe never reached: one that needs an
+    attribute, one that needs content, one that opens its container
+    after another."""
     flagged = [r"<w:p\b[^>]*>", r"<w:comment [^>]*>(.*?)</w:comment>",
-               r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>']
+               r'<w:footnote\b[^>]*w:id="(-?\d+)"[^>]*>(.*?)</w:footnote>',
+               r'<w:hyperlink\b[^>]*w:anchor="(\w+)"[^>]*>.*?</w:hyperlink>',
+               r'<w:fldSimple\b[^>]*w:type="dxa"[^>]*>',
+               r"<w:r\b[^>]*>(?:(?!</w:r>).)*?<w:commentReference\b[^>]*/>",
+               r"<w:tc>\s*<w:p\b[^>]*>"]
     for source in flagged:
-        assert _reads_empty_as_open(re.compile(source, re.DOTALL)), source
+        assert _reads_empty_as_open(source), source
     clean = [r"<w:p\b[^>]*(?<!/)>.*?</w:p>",
              r"<w:tc\b[^>]*?(/?)>",
              r"<w:p\b[^>]*?(?:/>|>.*?</w:p>)",
-             r"<w:sz\b[^>]*/>"]
+             r"<w:sz\b[^>]*/>",
+             r'<w:hyperlink\b[^>]*w:anchor="(\w+)"[^>]*(?<!/)>.*?</w:hyperlink>',
+             r"<w:tc>\s*<w:p\b[^>]*(?<!/)>",
+             r"<w:p\b[^>]*(?<!/)>.*?</w:p>|<w:tbl\b[^>]*(?<!/)>"]
     for source in clean:
-        assert _reads_empty_as_open(re.compile(source, re.DOTALL)) is None, \
-            source
+        assert _reads_empty_as_open(source) is None, source
+
+
+def test_the_gate_says_what_it_CANNOT_decide():
+    """A pattern that reads a container's name and stops before the tag
+    ends matches the empty form exactly as the open one; one that opens a
+    container only after context no probe builds is never reached. Both
+    are reported, never passed as clean."""
+    by_name = _reading(r"<w:ins(?=[\s/>])")
+    assert by_name is not None and by_name.by_name == {"w:ins"}
+    unreached = _reading(r"(?:<w:fldChar\b[^>]*/>\s*<w:r\b[^>]*(?<!/)>)+")
+    assert unreached is not None and unreached.unreached == {"w:r"}
+    # ...but cut at its own level, a pattern opens its container in a tail
+    assert _reads_empty_as_open(r"<w:fldChar\b[^>]*/>\s*<w:r\b[^>]*>")
+    assert _reading(r"<w:\w+PrChange\b") is None, "a family, not a container"
+    assert _reading(r"<w:sz\b[^>]*/>") is None
+
+
+#: Patterns about a container that no probe can DECIDE, each with what
+#: its caller does with an empty one. Two kinds, and only two. A reader of
+#: the tag's NAME or ATTRIBUTES stops before the tag ends, so `<w:ins …/>`
+#: and `<w:ins …>` match it alike, and whether that matters is the
+#: caller's question — the reason answers it. A pattern that opens a
+#: container only after context no probe builds is never reached, and the
+#: reason says why its reading is right. Keyed like the exemptions above.
+#: A paragraph mark's insertion or deletion is the EMPTY `<w:ins …/>` in
+#: its `w:rPr`, and it is a revision like any other — which is what most
+#: of the name readers below count.
+NOT_EXERCISED: dict[tuple[str, str], str] = {
+    ("_tracked_gates.py", r"<w:ins(?=[\s/>])"): (
+        "name reader: `package_counts` counts insertions as Word does, and "
+        "a paragraph mark's empty one is an insertion"),
+    ("_tracked_gates.py", r"<w:del(?=[\s/>])"): (
+        "name reader: `package_counts` counts deletions as Word does, and "
+        "a paragraph mark's empty one is a deletion"),
+    ("_tracked_gates.py", r"<w:{tag}\b"): (
+        "name reader: `structure_counts` compares element counts before "
+        "and after a batch; an empty table, row or cell is one element on "
+        "both sides alike, and nothing is paired"),
+    ("_xml.py", r'<w:comment\b[^>]*w:id="(\d+)"'): (
+        "attribute reader: COMMENT_ID_RE takes every comment's id, for the "
+        "next free id and the comment count, and an empty comment holds "
+        "an id like any other"),
+    ("batch.py", r"<w:(ins|del)\b"): (
+        "name reader: `run` refuses to stack a batch on pending revisions, "
+        "and a paragraph mark's empty insertion is one still pending"),
+    ("batch.py", r"<w:tr\b"): (
+        "name reader: `invariants` counts rows before and after an edit; "
+        "an empty row is one row on both sides, and nothing is paired"),
+    ("body.py", r"<w:p(?=[\s/>])"): (
+        "name reader: `cell` asks whether its content STARTS as a "
+        "paragraph, and an empty `<w:p/>` is one to pass through as is"),
+    ("cli.py", r"<w:del(?=[\s/>])"): (
+        "name reader: `cmd_math` says a file is read accepted when "
+        "it carries any deletion, a paragraph mark's empty one included"),
+    ("comments.py", r'<w:p [^>]*w14:paraId="([0-9A-Fa-f]+)"'): (
+        "attribute reader: a comment's paragraph ids, the LAST of which "
+        "commentsExtended keys on; an empty last paragraph holds that id"),
+    ("equations.py", r"<w:del(?=[\s/>])"): (
+        "name reader: `_accepted_side` asks only whether any deletion is "
+        "there; `element_spans`, which steps over empty ones, cuts them"),
+    ("footnotes.py",
+     r"<(?:w:bookmarkStart|w:hyperlink|w:drawing|w:tbl|m:oMath|w:pict"
+     r"|w:object|w:sym|w:contentPart)\b"
+     r"|<w:delText\b[^>]*(?<!/)>(?!\s*</w:delText>)"): (
+        "name reader: counts a note's carriers so a note holding one is "
+        "never cut as a shell; an empty link or table counted can only "
+        "KEEP a note (none is kept so in 2,954 corpus packages)"),
+    ("refstyle.py", r"<w:p[\s/]"): (
+        "name reader: `refile` names an EMPTY paragraph in the gap above a "
+        "reference, and `<w:p/>` is exactly what it is written to find"),
+    ("refstyle.py", r'<w:{tag}\b[^>]*?\bw:{attr}="([^"]*)"'): (
+        "attribute reader: `_declared` reads the `w:ind` and `w:spacing` "
+        "attributes `_LAYOUT_RULES` names out of one live pPr; no "
+        "container is ever named"),
+    ("renumber.py", r'(<w:footnote\b[^>]*?w:id=")(-?\d+)(")'): (
+        "attribute reader: `remap_ids` rewrites every note's id, and an "
+        "empty `<w:footnote w:id=…/>` holds an id and a place in the order "
+        "like any other (see `_FN_EL_RE`)"),
+    ("revision/_losses.py", r"<w:ins(?=[\s/>])"): (
+        "name reader: `moved_footnotes` takes a note with an insertion and "
+        "no deletion as a CANDIDATE only, which `emptied_footnotes` then "
+        "measures by rejecting"),
+    ("revision/_losses.py", r"<w:del(?=[\s/>])"): (
+        "name reader: the other half of `moved_footnotes`' candidate shape; "
+        "a paragraph mark's empty deletion is a deletion there too"),
+    ("revisions.py", r"<w:(?:ins|del)(?=[\s/>])|w:moveFrom|w:moveTo"): (
+        "name reader: `_has_content_revisions` asks whether there is any "
+        "insertion, deletion or move to simulate, and a paragraph mark's "
+        "empty insertion is one"),
+    ("revisions.py", "<w:ins "): (
+        "name reader: `counts` is the (insertions, deletions) element count "
+        "`cli` prints, and a paragraph mark's empty insertion is one"),
+    ("revisions.py", "<w:del "): (
+        "name reader: `counts` is the (insertions, deletions) element count "
+        "`cli` prints, and a paragraph mark's empty deletion is one"),
+    ("sections.py", r"<w:(?:ins|del|moveFrom|moveTo)\b"): (
+        "name reader: `renumber` refuses a paragraph carrying tracked "
+        "changes, and a revision on its mark is one; refusing is safe"),
+    ("sections.py", r'<w:{tag} w:val="([^"]*)"'): (
+        "attribute reader: a numbering level's `w:val` properties (start, "
+        "numFmt, lvlText…); `w:val` is on no container at all"),
+    ("styles.py", r'<w:{name} w:val="([^"]*)"'): (
+        "attribute reader: a style's `w:name`/`w:basedOn` value; `w:val` "
+        "is on no container at all"),
+    ("styles.py", r'<w:{prop}\b[^>]*\bw:val="([^"]*)"'): (
+        "attribute reader: one run property's `w:val` inside an rPr; "
+        "`w:val` is on no container at all"),
+    ("styles.py", r'<w:{tag}\b[^>]*?\bw:{attr}="([^"]*)"'): (
+        "attribute reader: `paragraph_property` reads the property "
+        "attributes its callers name (`w:ind`, `w:spacing`) out of one "
+        "pPr; no container is ever named"),
+}
+
+
+def _undecided() -> dict[tuple[str, str], str]:
+    """(module, source) -> what the probes could not decide about it."""
+    out: dict[tuple[str, str], set[str]] = {}
+    for module, _, source, probe, _ in ALL_PATTERNS:
+        try:
+            reading = _reading(probe)
+        except re.error:                                # pragma: no cover
+            continue
+        if reading is None or reading.flagged is not None:
+            continue
+        said = {f"read by name: {n}" for n in reading.by_name} | {
+            f"never reached: {n}" for n in reading.unreached}
+        if said:
+            out.setdefault((module, source), set()).update(said)
+    return {key: "; ".join(sorted(said)) for key, said in out.items()}
+
+
+def test_every_container_a_pattern_opens_is_EXERCISED_or_declared():
+    """Nothing silently skipped: a pattern the probes cannot decide is
+    declared in NOT_EXERCISED with its caller's reason, or it fails."""
+    new = {key: said for key, said in _undecided().items()
+           if key not in NOT_EXERCISED and key not in NOT_AN_OPENING_TAG}
+    assert not new, "\n".join(f"{m}: {s!r}: {said}"
+                              for (m, s), said in sorted(new.items()))
+
+
+def test_every_declared_pattern_is_still_one_the_probes_cannot_decide():
+    """A stale declaration fails: gone from the package, or exercised now,
+    it would cover the next pattern written that way for no reason."""
+    undecided = _undecided()
+    for key, reason in NOT_EXERCISED.items():
+        assert len(reason) > 40, (key, reason)
+        assert key in undecided, f"declared, but gone or exercised: {key}"
 
 
 # --- attribute ORDER, the second divergence that bit -------------------
