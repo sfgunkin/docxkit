@@ -14,6 +14,32 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — a sweep over a harness near the 30 s deadline grades every survivor KILLED and prints the figure~~ — FIXED 17.09, `2820489`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 on a four-stream sweep. `revision/_promote.py`'s stream
+printed
+
+    revision/_promote.py     24/367 run — killed 24, survived 0 (0.0% survive)
+
+at about ninety seconds a mutant. The revision/ superset harness (twelve
+files, 737 tests) ran 29.4 s single-process on the loaded machine — against
+`MUTANT_SECONDS = 30`. A mutant that SURVIVES is one whose tests all had to
+run, so near the deadline every would-be survivor becomes a timeout, and a
+timeout is graded KILLED: the figure was heading for the best in the package
+and measured nothing. The hazard was known (the 09-15 note "a harness over
+30 s would grade every survivor KILLED") and checked by hand before sweeps;
+nothing in the instrument checked it, and the session only verified that the
+baseline PASSED.
+
+**Fixed 17.09 in `2820489`.** `chunk` times the unmutated baseline it already
+runs and refuses — before any mutation — when it takes more than
+`BASELINE_SHARE` (0.6) of `MUTANT_SECONDS`, saying why and what to do (measure
+on a quiet machine, or with a faster harness). The partial `revision/_promote`
+session from that run is not a measurement and is to be re-swept quiet.
+Test: `test_a_harness_too_SLOW_for_the_mutant_deadline_is_refused` (exactly the
+share is allowed, past it refused).
 ### ~~S2 — `printed_text` reads a paragraph's tab STOPS as printed tabs, so `compare --expect-clean` fails a formatting-only change~~ — FIXED 17.09, `942df35`
 
 <!-- status: fixed -->
