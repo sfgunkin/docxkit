@@ -811,48 +811,6 @@ Workaround: renumber the duplicate before running `repack`.
 
 ---
 
-### S4 — no supported path to replace a promoted batch the author has not opened
-<!-- status: open -->
-
-Found 2026-09-15 on Month_of_birth_and_school_outcomes. R1 was promoted, and
-then three statements in it turned out to be wrong before the author had
-opened the file. The author chose to have the proposal rebuilt rather than
-receive a second round stacked on it. The manuscript was provably untouched:
-
-    mb1.docx             a8d4245cdcd26865…  == its stamp's sha256 == the build/redlines copy
-    stamp base_sha256    55cd0cb68b69b7c2…  == sha256(build/prev.docx)
-    ledger               built -> promoted, nothing after
-
-Every route the CLI offers refuses, and one of the refusals points the wrong
-way:
-
-* `revision ship edited_r1b.docx --allow-pending-working`. This flag was
-  written for exactly this case ("build over a promoted batch the author has
-  not adjudicated"). It clears the pending check, and then
-  `drift(working, prev)` fires: exit 4, "prev.docx is no longer what
-  mb1.docx grew out of … ingest, baseline, then build again". Baselining
-  would adopt the unaccepted proposal as the truth. The drift check never
-  consults the manuscript's own stamp, so `--allow-pending-working` cannot
-  succeed without `--allow-stale-baseline`, whose help text warns of the
-  opposite hazard.
-* `revision promote` cannot take the rebuilt batch, whatever `--base` names.
-  Its first guard wants `sha256(live) == sha256(base)`, and its second wants
-  `base_of(batch) == base_hash`. The live file is the old batch and the new
-  batch was built on prev, so no single base satisfies both.
-
-Suggested fix: treat "live is byte for byte the last promoted batch, and
-that batch was built on prev" as a state of its own; the stamp and the
-ledger already record it. Either let `build --allow-pending-working` skip
-`drift` in that state and let `promote` accept it, recording the proposal as
-`replaced`, or add a `revision withdraw` that verifies the state and restores
-the promote's rescue copy.
-
-Workaround in use: check both hashes above, and that the rescue copy equals
-prev. Then copy `build/rescue/mb1_rescue_20260915-220117-827975.docx` over
-`mb1.docx`, and ship and promote as usual.
-
----
-
 ### S4 — no helper to replace a span AROUND the links inside it; four `edit` helpers unexported
 <!-- status: open -->
 
