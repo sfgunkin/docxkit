@@ -418,9 +418,14 @@ def cmd_inspect(args: argparse.Namespace) -> int:
           f"{'  UNBALANCED' if sorted(starts) != sorted(ends) else ''}")
     print(f"  comments    {n_com}")
     if args.comments and com:
-        for m in re.finditer(r"<w:comment [^>]*>(.*?)</w:comment>", com,
+        # One line per comment the count above counted, an EMPTY
+        # `<w:comment .../>` included: read as an open tag it ran on to
+        # the next comment's close, and two comments printed as one.
+        for m in re.finditer(r"<w:comment [^>]*?"
+                             r"(?:(/)>|(?<!/)>(.*?)</w:comment>)", com,
                              re.DOTALL):
-            print(f"    - {text_of(m.group(1)).strip()[:110]}")
+            said = text_of(m.group(2) or "").strip()[:110]
+            print(f"    - {said or '(empty)'}")
     if args.revisions:
         from .revisions import revision_text, spans
         for span in spans(doc)[:200]:

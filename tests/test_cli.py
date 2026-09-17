@@ -2560,6 +2560,26 @@ def test_inspect_lists_the_comments_ONLY_when_asked(capsys, monkeypatch,
     assert "comments    1" in quiet, "the COUNT is in both"
 
 
+def test_inspect_lists_an_EMPTY_comment_as_a_comment_of_its_own(
+        capsys, monkeypatch, tmp_path):
+    """The list agrees with the count above it. `<w:comment .../>` opens
+    nothing; read as an open tag it ran on to the next comment's close,
+    and two comments counted printed as one line."""
+    from conftest import comment
+    empty = ('<w:comment w:id="1" w:author="Tester" '
+             'w:date="2026-07-29T00:00:00Z" w:initials="T"/>')
+    items = (empty, comment(2, "a referee said"))
+    path = write(tmp_path / "reviewed.docx",
+                 make_parts(para(run("prose")), comment_items=items))
+
+    run_cli(monkeypatch, "inspect", str(path), "--comments")
+    out = capsys.readouterr().out
+
+    assert "comments    2" in out
+    assert [line for line in out.splitlines() if line.startswith("    - ")] \
+        == ["    - (empty)", "    - a referee said"]
+
+
 def test_an_anchor_line_quotes_SIXTY_characters_and_says_if_it_repeats(
         monkeypatch, paper, fake_word, capsys):
     """Two survivors in one line. The width is what keeps a locate
