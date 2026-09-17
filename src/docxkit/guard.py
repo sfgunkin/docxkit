@@ -24,6 +24,7 @@ __all__ = [
     "base_of",
     "carry",
     "check",
+    "describes",
     "restamp",
     "sha256",
     "stamp",
@@ -183,6 +184,33 @@ def carry(src: str | Path, dst: str | Path) -> Path | None:
             f"bytes it was written for.")
     target.write_bytes(source.read_bytes())
     return target
+
+
+def describes(out: str | Path) -> bool | None:
+    """Does the stamp beside `out` record `out`'s own bytes?
+
+    None when there is nothing to ask: no stamp, one that does not
+    parse, or one with no hash in it — the same three cases in which
+    :func:`carry` has nothing to carry. False is the case worth a
+    refusal: the file changed after the stamp was written, by Word or by
+    a tool, and anything that trusts the stamp's other fields
+    (`base_sha256`, the inputs) is trusting a claim about other bytes.
+
+    Asked by `revision promote` BEFORE it writes, because `carry` asks
+    the same question only after the manuscript has been replaced (DSI,
+    2026-09-16), and by `revision validate`, which is where a tool pass
+    over the batch has usually just happened.
+    """
+    path = stamp_path(out)
+    if not path.exists():
+        return None
+    try:
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    if not isinstance(recorded, dict) or "sha256" not in recorded:
+        return None
+    return bool(recorded["sha256"] == sha256(out))
 
 
 def base_of(out: str | Path) -> str | None:

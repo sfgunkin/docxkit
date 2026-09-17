@@ -42,6 +42,10 @@ LEDGER = "ledger.jsonl"
 #: vocabulary in one place.
 BUILT = "built"
 PROMOTED = "promoted"
+#: A promoted proposal taken back before the author opened it — see
+#: `revision.withdraw`. Out of order by design: it follows PROMOTED and
+#: returns the round to where BUILT found it.
+WITHDRAWN = "withdrawn"
 BASELINED = "baselined"
 
 
@@ -57,7 +61,7 @@ def record(paper: Paper, event: str, **facts: Any) -> Path:
     matters and this module must not re-read a file that may already
     have been replaced by the step it is recording.
     """
-    if event not in (BUILT, PROMOTED, BASELINED):
+    if event not in (BUILT, PROMOTED, WITHDRAWN, BASELINED):
         raise ValueError(f"not a ledger event: {event!r}")
     path = ledger_path(paper)
     path.parent.mkdir(parents=True, exist_ok=True)

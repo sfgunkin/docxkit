@@ -49,8 +49,9 @@ Four operations, in the order a batch meets them::
     promote   put a validated batch onto the manuscript
 
 plus ``state`` (which of the two states is this file in?),
-``baseline`` (the author accepted — this is the new truth) and ``init``
-(scaffold the layout for a paper that has not migrated yet).
+``baseline`` (the author accepted — this is the new truth), ``withdraw``
+(take back a promoted proposal nobody has opened) and ``init`` (scaffold
+the layout for a paper that has not migrated yet).
 
 Every refusal in here was a real incident. They are worth reading as a
 list, because each one is silent if you skip it:
@@ -179,6 +180,7 @@ from ._losses import moved_footnotes as moved_footnotes
 from ._losses import relabelled_links as relabelled_links
 from ._losses import restored_bookmarks as restored_bookmarks
 from ._promote import PromoteReport as PromoteReport
+from ._promote import WithdrawReport as WithdrawReport
 from ._promote import _stamped as _stamped
 from ._promote import promote as promote
 from ._promote import prune_rescues as prune_rescues
@@ -186,6 +188,7 @@ from ._promote import redline_path as redline_path
 from ._promote import redlines as redlines
 from ._promote import rescue_path as rescue_path
 from ._promote import rescues as rescues
+from ._promote import withdraw as withdraw
 from ._registry import REGISTRY_ENV as REGISTRY_ENV
 from ._registry import Survey as Survey
 from ._registry import register as register
@@ -238,6 +241,7 @@ __all__ = [
     "Survey",
     "ValidateReport",
     "Verdict",
+    "WithdrawReport",
     "WorkingPending",
     "baseline",
     "build",
@@ -280,4 +284,5 @@ __all__ = [
     "survey_exit_code",
     "validate",
     "verdict",
+    "withdraw",
 ]

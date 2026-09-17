@@ -37,6 +37,8 @@ and the single-file revision protocol, which finds its own paths in
     docxkit revision validate [BATCH.docx] [--no-word] [--render ANCHOR...]
     docxkit revision ship REVISED.docx   # both, one Word session
     docxkit revision promote [BATCH.docx]
+    docxkit revision restamp [BATCH.docx] --why TEXT   # a tool changed it
+    docxkit revision withdraw --why TEXT   # a proposal nobody has opened
     docxkit revision baseline [--force] [--accept-loss A,... ]...
     docxkit revision rescues [--prune KEEP]
     docxkit revision redlines
@@ -1907,6 +1909,15 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                           word_deadline=paper.word_deadline or None)
 
     print(f"{target.name}")
+    if report.stamp_describes_batch is False:
+        # First, because it is about the file as a whole and `promote`
+        # refuses on it — a PASS below would otherwise be the last word.
+        print(f"== stamp ==  {target.name} has changed since `revision "
+              f"build` stamped it")
+        print("   the gates below read it as it is; `promote` will refuse "
+              "it until the change is accounted for. A docxkit tool pass "
+              "(relink, glyph repair): `docxkit revision restamp --why "
+              "\"...\"`. A Word session: rebuild.")
     if report.aborted == "baseline":
         print(f"== baseline ==  {target.name} was NOT built on {base.name}")
         print(f"   it says it was built on {report.built_on[:16]}, and "
@@ -2027,6 +2038,53 @@ def cmd_revision_promote(args: argparse.Namespace) -> int:
               f"{paper.rescue_keep}")
     print(f"\n{report.onto.name} is now a PROPOSAL. The author adjudicates "
           f"it in Word;\nthis tool never accepts on their behalf.")
+    return 0
+
+
+def cmd_revision_restamp(args: argparse.Namespace) -> int:
+    """A docxkit tool changed the batch after `build`: say so in its stamp.
+
+    `guard.restamp` for a paper's cycle, which had to import `guard` to
+    get past `promote`'s refusal (DSI, 2026-09-16). Refuses a batch with
+    no stamp: there is no build record to amend, and an unstamped batch
+    promotes without one.
+    """
+    from . import guard as _g
+    paper = _paper(args)
+    target = Path(args.batch) if args.batch else paper.batch
+    if not target.is_file():
+        print(f"no batch to restamp: {target} is not there.")
+        return 3
+    said = _g.describes(target)
+    if said is None:
+        print(f"{target.name} has no readable stamp beside it, so there is "
+              f"no build record to amend — and an unstamped batch promotes "
+              f"without one. Nothing written.")
+        return 1
+    if said:
+        print(f"{target.name} is the bytes its stamp describes; nothing to "
+              f"restamp.")
+        return 0
+    stamp = _g.restamp(target, why=args.why)
+    print(f"restamped {target.name} (sha256 {_g.sha256(target)[:16]}): "
+          f"{args.why}")
+    print(f"the repair is recorded in {stamp.name}; `revision promote` "
+          f"will carry it beside the manuscript.")
+    return 0
+
+
+def cmd_revision_withdraw(args: argparse.Namespace) -> int:
+    """Take back a promoted proposal the author has not opened."""
+    from .revision import withdraw
+    paper = _paper(args)
+    report = withdraw(paper, why=args.why)
+    print(f"withdrew {report.withdrawn.name}: {report.onto.name} is the "
+          f"baseline again ({paper.prev.name}'s bytes)")
+    print(f"the proposal stays on record: "
+          f"{report.withdrawn.relative_to(paper.root)}")
+    if report.removed_batch:
+        print(f"unstaged {paper.batch.name}, which was that proposal")
+    print("\nBuild the replacement and promote it as usual.")
     return 0
 
 
@@ -2613,6 +2671,19 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("batch", nargs="?")
     r.add_argument("--base", metavar="PATH",
                    help="the baseline the batch was built on")
+
+    r = _rev("restamp", cmd_revision_restamp,
+             "a docxkit tool changed the batch after build: record it")
+    r.add_argument("batch", nargs="?",
+                   help="default: revision/build/batch.docx")
+    r.add_argument("--why", required=True, metavar="TEXT",
+                   help="what the tool did; kept in the stamp and carried "
+                        "beside the manuscript by promote")
+
+    r = _rev("withdraw", cmd_revision_withdraw,
+             "take back a promoted proposal the author has not opened")
+    r.add_argument("--why", required=True, metavar="TEXT",
+                   help="recorded in build/ledger.jsonl")
 
     r = _rev("baseline", cmd_revision_baseline,
              "the author accepted: record the manuscript as the new truth")

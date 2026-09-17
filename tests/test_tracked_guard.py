@@ -265,6 +265,34 @@ def test_carry_refuses_a_stamp_that_does_not_describe_the_target(
     assert not _stamp_path(other).exists()
 
 
+@pytest.mark.parametrize("stamp_text,edited,answer", [
+    pytest.param(None, False, None, id="no_stamp"),
+    pytest.param("{not json", False, None, id="unparseable"),
+    pytest.param('["sha256"]', False, None, id="not_an_object"),
+    pytest.param('{"original": "prev.docx"}', False, None, id="no_hash"),
+    pytest.param("OWN", False, True, id="its_own_bytes"),
+    pytest.param("OWN", True, False, id="changed_since"),
+])
+def test_describes_says_whether_a_stamp_is_about_THESE_bytes(
+        tmp_path, stamp_text, edited, answer):
+    """`promote` refuses on False BEFORE it writes, so the three kinds of
+    "nothing to ask" must not read as False — an unstamped batch is the
+    hand-authored vehicle and promotes — and a hash that matches must not
+    read as None, or a changed file would pass beside it. `is`, because
+    a truthy non-bool from `==` is a different contract."""
+    from docxkit.guard import describes, stamp
+
+    out = write(tmp_path / "batch.docx", make_parts(para(run("as built"))))
+    if stamp_text == "OWN":
+        stamp(out, base_sha256="0" * 64)
+    elif stamp_text is not None:
+        _stamp_path(out).write_text(stamp_text, encoding="utf-8")
+    if edited:
+        write(out, make_parts(para(run("as a tool left it"))))
+
+    assert describes(out) is answer
+
+
 def test_carry_from_an_UNSTAMPED_source_removes_the_stale_stamp(tmp_path):
     """The incident's shape (HCW, 2026-09-04): a stamp beside the
     manuscript naming an earlier round's inputs, still there after a

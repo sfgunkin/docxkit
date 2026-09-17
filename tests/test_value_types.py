@@ -77,6 +77,7 @@ VALUES = [
     "revision._losses.Loss",
     "revision._config.Paper",
     "revision._promote.PromoteReport",
+    "revision._promote.WithdrawReport",
     "revision._losses.Relabelled",
     "revision._state.State",
     "revision._state.StatusReport",

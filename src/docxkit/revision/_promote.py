@@ -284,6 +284,24 @@ def promote(paper: Paper, batch: str | Path | None = None,
             f"build was REFUSED, this file is the previous batch: delete "
             f"it and build again.)")
 
+    # …and whether the batch is still the bytes its stamp describes.
+    # `carry` below refuses a stamp that is not — but only after the
+    # manuscript has been replaced, the rescue taken and the redline
+    # kept, so a promote that exited 1 had done the dangerous half of its
+    # work and skipped the record (DSI, 2026-09-16: a relink pass over
+    # the batch after `build`, which nothing restamped). Asked here,
+    # nothing has been written when it refuses.
+    if _guard.describes(batch) is False:
+        raise StaleBatch(
+            f"{batch.name} has changed since `revision build` stamped it, "
+            f"so the stamp's baseline and inputs describe other bytes. "
+            f"Nothing was written. If a docxkit tool changed it — a "
+            f"citation relink, a glyph repair — record that and promote "
+            f"again:\n"
+            f"    docxkit revision restamp --why \"<what the tool did>\"\n"
+            f"If it was opened and saved in Word, rebuild it instead: a "
+            f"restamp would certify an edit nobody reviewed.")
+
     paper.rescue_dir.mkdir(parents=True, exist_ok=True)
     rescue = rescue_path(paper)
     shutil.copy2(live, rescue)
@@ -351,3 +369,114 @@ def promote(paper: Paper, batch: str | Path | None = None,
                          redline=redline, stamp=stamp,
                          pruned=tuple(prune_rescues(paper,
                                                     protect=rescue)))
+
+
+# ------------------------------------------------------------- withdraw
+
+@dataclass(frozen=True)
+class WithdrawReport:
+    #: The kept redline that was on the manuscript — still in
+    #: ``build/redlines/``, because it is the record of what was offered.
+    withdrawn: Path
+    onto: Path
+    #: True when ``build/batch.docx`` WAS that proposal and was unstaged.
+    removed_batch: bool
+    why: str
+
+
+def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
+    """Take back a promoted proposal the author has not opened.
+
+    The one door out of the PROMOTED state that is not the author's, and
+    it opens only while nothing the author did can be behind it. BACKLOG
+    S4, Month_of_birth, 2026-09-15: a proposal turned out to be wrong
+    before the author had looked at it, and every command refused the
+    rebuild — `build --allow-pending-working` then failed on `drift`,
+    whose advice was to baseline the unaccepted proposal as the truth,
+    and `promote` wanted a base both the live file and the new batch
+    answered to. The way out was a rescue copied over the manuscript by
+    hand, after three hashes were checked by eye.
+
+    So the three hashes are checked here, and it refuses unless all hold:
+
+    * the manuscript is byte for byte the NEWEST kept redline — the last
+      promote's bytes, untouched. A file the author has opened and saved
+      is theirs, whatever they did in it;
+    * that proposal was built on the CURRENT baseline: its stamp says so
+      (`guard.base_of`), or — for the unstamped, hand-authored vehicle —
+      a rescue holds the baseline's bytes, which is the promote saying
+      what it replaced. Without one of them `prev` is not provably the
+      file the promote replaced, and copying it back would put another
+      generation on the paper;
+    * Word does not hold the file.
+
+    Then `prev`'s bytes go back onto the manuscript — the same bytes as
+    the promote's rescue, by the check `promote` makes before it copies
+    — and the stamp beside it, which described the proposal, is removed.
+    The redline stays in ``build/redlines/`` (that folder is the record
+    of what each round offered, withdrawn or not), and ``build/batch.docx``
+    is removed when it IS the withdrawn proposal: staged, it would be read
+    by `verdict` as this round's batch, and the author's next save logged
+    as that batch "rejected in full". A batch rebuilt before withdrawing
+    is left where it is.
+
+    `why` goes into the ledger beside the hashes.
+    """
+    live = paper.working
+    for candidate in (live, paper.prev):
+        if not candidate.exists():
+            raise ProtocolError(f"missing: {candidate}")
+    kept = paper.redlines()
+    if not kept:
+        raise ProtocolError(
+            f"nothing has been promoted onto {live.name}: "
+            f"{paper.redline_dir.name}/ keeps no redline, so there is no "
+            f"proposal here to withdraw.")
+    newest, live_hash = kept[-1], _guard.sha256(live)
+    if _guard.sha256(newest) != live_hash:
+        raise ProtocolError(
+            f"{live.name} is no longer the batch the last promote put on it "
+            f"({newest.name}): it has been opened and saved since, or that "
+            f"proposal was adjudicated already, and whatever the author did "
+            f"in it is theirs. Withdrawing is only for a proposal nobody has "
+            f"opened.")
+    if package.is_locked(live):
+        raise DocumentLocked(
+            f"{live.name} is open in Word. Close it first — a copy made "
+            f"now would be overwritten the moment Word saves.")
+
+    base_hash = _guard.sha256(paper.prev)
+    built_on = _guard.base_of(live)
+    proved = built_on == base_hash or (
+        built_on is None
+        and any(_guard.sha256(r) == base_hash for r in rescues(paper)))
+    if not proved:
+        raise ProtocolError(
+            f"{newest.name} was not built on {paper.prev.name} as it stands "
+            f"— "
+            + (f"its stamp names {built_on[:16]}, and the baseline is "
+               f"{base_hash[:16]}" if built_on is not None
+               else "it carries no stamp, and no rescue copy holds the "
+                    "baseline's bytes")
+            + f". Putting {paper.prev.name} back would not restore the "
+            f"file that promote replaced. Restore the right copy from "
+            f"{paper.rescue_dir.name}/ by hand, then rebuild.")
+
+    shutil.copyfile(paper.prev, live)
+    if _guard.sha256(live) != base_hash:
+        raise ProtocolError(
+            f"the copy did not land: {live} — {newest.name} still holds the "
+            f"proposal")
+    _guard.stamp_path(live).unlink(missing_ok=True)
+
+    removed = paper.batch.is_file() and _guard.sha256(paper.batch) == live_hash
+    if removed:
+        paper.batch.unlink()
+        _guard.stamp_path(paper.batch).unlink(missing_ok=True)
+
+    _ledger.record(paper, _ledger.WITHDRAWN,
+                   batch=newest.name, withdrawn_sha256=live_hash,
+                   restored_sha256=base_hash, onto=live.name,
+                   removed_batch=removed, why=why)
+    return WithdrawReport(withdrawn=newest, onto=live, removed_batch=removed,
+                          why=why)

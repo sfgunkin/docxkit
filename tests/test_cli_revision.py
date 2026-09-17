@@ -1424,6 +1424,192 @@ def test_promote_refuses_while_word_holds_the_file(monkeypatch, project):
     assert project.working.read_bytes() == before
 
 
+def test_promote_refuses_a_batch_a_tool_changed_and_names_RESTAMP(
+        monkeypatch, project, capsys):
+    """Exit 4 with nothing written, and the refusal carries the command
+    that clears it — DSI's round needed two private modules instead."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("as built"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    write(project.batch, make_parts(para(run("relinked"))))
+    before = project.working.read_bytes()
+
+    code, _ = run_cli(monkeypatch, "revision", "promote",
+                      "--paper", str(project.root))
+
+    assert code == 4
+    assert project.working.read_bytes() == before
+    assert "docxkit revision restamp --why" in capsys.readouterr().err
+
+
+def _changed_since_build(project):
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("as built"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    write(project.batch, make_parts(para(run("relinked"))))
+
+
+def test_restamp_records_the_tool_pass_and_promote_then_takes_it(
+        monkeypatch, project, capsys):
+    from docxkit import guard
+
+    _changed_since_build(project)
+
+    code, _ = run_cli(monkeypatch, "revision", "restamp", "--why",
+                      "relink: links only", "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "relink: links only" in out
+    assert guard.describes(project.batch) is True
+    assert guard.base_of(project.batch) == guard.sha256(project.prev), \
+        "the restamp dropped the build's own provenance"
+    code, _ = run_cli(monkeypatch, "revision", "promote",
+                      "--paper", str(project.root))
+    assert code == 0
+
+
+def test_restamp_of_an_UNCHANGED_batch_writes_nothing(monkeypatch, project,
+                                                      capsys):
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("as built"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    before = guard.stamp_path(project.batch).read_bytes()
+
+    code, _ = run_cli(monkeypatch, "revision", "restamp", "--why", "x",
+                      "--paper", str(project.root))
+
+    assert code == 0
+    assert "nothing to restamp" in capsys.readouterr().out
+    assert guard.stamp_path(project.batch).read_bytes() == before
+
+
+def test_restamp_REFUSES_an_unstamped_batch(monkeypatch, project, capsys):
+    """Minting a stamp here would invent a build record — one with no
+    baseline in it, which `promote` reads as "cannot tell"."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("hand-authored"))))
+
+    code, _ = run_cli(monkeypatch, "revision", "restamp", "--why", "x",
+                      "--paper", str(project.root))
+
+    assert code == 1
+    assert "no readable stamp" in capsys.readouterr().out
+    assert not guard.stamp_path(project.batch).exists()
+
+
+def test_restamp_with_no_batch_says_so(monkeypatch, project, capsys):
+    code, _ = run_cli(monkeypatch, "revision", "restamp", "--why", "x",
+                      "--paper", str(project.root))
+
+    assert code == 3
+    assert "no batch to restamp" in capsys.readouterr().out
+
+
+def test_restamp_without_WHY_is_refused_by_the_parser(monkeypatch, project,
+                                                      capsys):
+    code, _ = run_cli(monkeypatch, "revision", "restamp",
+                      "--paper", str(project.root))
+
+    assert code == 2
+    assert "--why" in capsys.readouterr().err
+
+
+def test_validate_WARNS_that_promote_will_refuse_a_changed_batch(
+        monkeypatch, project, capsys):
+    """Warned, not failed: every gate reads the bytes that are there, and
+    the stamp is promote's question. But a PASS alone, followed by a
+    refusal one command later, is the sequence DSI walked into.
+
+    The batch is the baseline's own parts, re-zipped STORED after the
+    stamp: other bytes, the same document, so every gate passes and the
+    exit code is the stamp's to change — which it must not."""
+    import zipfile
+
+    from docxkit import guard, package
+
+    parts = package.read_parts(project.prev)
+    write(project.batch, parts)
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    with zipfile.ZipFile(project.batch, "w", zipfile.ZIP_STORED) as z:
+        for name, blob in parts.items():
+            z.writestr(name, blob)
+    assert guard.describes(project.batch) is False
+
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert "== stamp ==" in out and "revision restamp" in out
+    assert code == 0
+
+
+def test_validate_says_NOTHING_about_a_stamp_that_matches(monkeypatch,
+                                                          project, capsys):
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("as built"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+
+    run_cli(monkeypatch, "revision", "validate", "--no-word",
+            "--paper", str(project.root))
+
+    assert "== stamp ==" not in capsys.readouterr().out
+
+
+def test_withdraw_puts_the_baseline_back_and_says_where_the_proposal_is(
+        monkeypatch, project, capsys):
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("the proposal"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    run_cli(monkeypatch, "revision", "promote", "--paper", str(project.root))
+    capsys.readouterr()
+
+    code, _ = run_cli(monkeypatch, "revision", "withdraw", "--why",
+                      "wrong numbers", "--paper", str(project.root))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert project.working.read_bytes() == project.prev.read_bytes()
+    assert "redlines" in out and "unstaged" in out
+    assert str(project.root) not in out, "paths are the project's, relative"
+
+
+def test_withdraw_says_NOTHING_about_unstaging_a_batch_rebuilt_since(
+        monkeypatch, project, capsys):
+    """The line names a file that was removed; a rebuilt batch was not,
+    and announcing it would send the reader looking for a missing one."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("the proposal"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    run_cli(monkeypatch, "revision", "promote", "--paper", str(project.root))
+    write(project.batch, make_parts(para(run("already rebuilt"))))
+    capsys.readouterr()
+
+    code, _ = run_cli(monkeypatch, "revision", "withdraw", "--why",
+                      "rebuilt first", "--paper", str(project.root))
+
+    assert code == 0
+    assert "unstaged" not in capsys.readouterr().out
+    assert project.batch.exists()
+
+
+def test_withdraw_REFUSES_with_nothing_promoted(monkeypatch, project):
+    before = project.working.read_bytes()
+
+    code, _ = run_cli(monkeypatch, "revision", "withdraw", "--why", "x",
+                      "--paper", str(project.root))
+
+    assert code == 1
+    assert project.working.read_bytes() == before
+
+
 def test_promote_takes_explicit_paths(monkeypatch, project, tmp_path):
     batch = write(tmp_path / "b.docx", make_parts(para(run("explicit"))))
     code, _ = run_cli(monkeypatch, "revision", "promote", str(batch),

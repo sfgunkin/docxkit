@@ -108,6 +108,13 @@ class ValidateReport:
     #: The baseline hash the batch says it was built on, when that is
     #: not the one it was handed.
     built_on: str = ""
+    #: Is the batch still the bytes its stamp was written for? False
+    #: after a tool pass over it that nothing restamped — which `promote`
+    #: refuses, so it is said here, where that pass has usually just run
+    #: (DSI's relink, 2026-09-16). None with no stamp to ask. Never the
+    #: exit code: every gate above reads the bytes that are there, and
+    #: their verdict stands; the stamp is `promote`'s question.
+    stamp_describes_batch: bool | None = None
     #: The paper's OWN gates, when the caller ran them — `validate
     #: --run-gates` does, and the ladder never does (:func:`run_gates`
     #: says why). Appended as each finishes, so `ok` and `exit_code`
@@ -365,7 +372,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     path = Path(path)
     parts = package.read_parts(path)
     report = ValidateReport(path=path,
-                            baseline=Path(baseline) if baseline else None)
+                            baseline=Path(baseline) if baseline else None,
+                            stamp_describes_batch=_guard.describes(path))
 
     # Gate 0: is this batch even ABOUT this baseline? Everything below
     # compares the two, so a mismatched pair produces a full, detailed,

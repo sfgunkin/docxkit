@@ -1610,6 +1610,55 @@ def test_promote_still_takes_an_UNSTAMPED_batch(project):
     assert project.working.read_bytes() == project.batch.read_bytes()
 
 
+def test_promote_refuses_a_batch_CHANGED_since_its_stamp_BEFORE_writing(
+        project):
+    """The stamp is checked before anything is written, not by `carry`
+    after the manuscript has already been replaced.
+
+    DSI, 2026-09-16: a relink pass changed `build/batch.docx` after
+    `revision build` stamped it, `validate` passed it, and `promote`
+    copied it over the manuscript, took the rescue and kept the redline
+    — then refused in `guard.carry`, exit 1, leaving no carried stamp, no
+    ledger line and no pruning. A command that reported failure had done
+    the dangerous half of its work. Refused up front, nothing moves."""
+    from docxkit import guard
+    from docxkit.revision import _ledger
+
+    write(project.batch, make_parts(para(run("as the build wrote it"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    write(project.batch, make_parts(para(run("as a tool pass left it"))))
+    before = project.working.read_bytes()
+
+    with pytest.raises(StaleBatch, match="restamp") as refused:
+        revision.promote(project)
+
+    assert "changed since" in str(refused.value)
+    assert project.working.read_bytes() == before
+    assert revision.rescues(project) == [], "a rescue was taken anyway"
+    assert project.redlines() == [], "a redline was kept anyway"
+    assert not _ledger.ledger_path(project).exists()
+    assert not guard.stamp_path(project.working).exists()
+
+
+def test_promote_takes_a_batch_a_tool_RESTAMPED(project):
+    """The way through the refusal above when the change was a tool's:
+    `guard.restamp` records the repair, and the stamp carried beside the
+    manuscript keeps that record."""
+    from docxkit import guard
+
+    write(project.batch, make_parts(para(run("as the build wrote it"))))
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+    write(project.batch, make_parts(para(run("relinked"))))
+    guard.restamp(project.batch, why="relink: citation links only")
+
+    report = revision.promote(project)
+
+    assert project.working.read_bytes() == project.batch.read_bytes()
+    assert report.stamp is not None
+    carried = json.loads(report.stamp.read_text(encoding="utf-8"))
+    assert carried["repairs"][0]["why"] == "relink: citation links only"
+
+
 def test_promote_refuses_when_the_RESCUE_copy_did_not_land(project,
                                                            monkeypatch):
     """A post-condition that never fires in a happy path, and so was
