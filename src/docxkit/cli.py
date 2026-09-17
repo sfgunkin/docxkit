@@ -407,7 +407,10 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     # disagreed with `tables.read_all`, which is what a reader goes on to
     # index, and a questionnaire's inner tables made the gap large.
     top = len(_table_spans(doc))
-    nested = doc.count("<w:tbl>") - top
+    # Every table's open tag in any spelling, as `_table_spans` reads the
+    # top-level ones: counted as `<w:tbl>`, a table declaring its own
+    # namespace was missed here and found there (2026-09-17).
+    nested = len(re.findall(r"<w:tbl\b[^>]*(?<!/)>", doc)) - top
     print(f"{Path(args.docx).name}")
     print(f"  parts       {len(names)}")
     print(f"  paragraphs  {len(P_RE.findall(doc))}")
@@ -1047,7 +1050,7 @@ def cmd_math(args: argparse.Namespace) -> int:
     # a count that silently answers about a different view of the file
     # than the one named on the command line is the shape this file's
     # backlog keeps finding.
-    if "<w:del " in doc:
+    if re.search(r"<w:del(?=[\s/>])", doc):
         print("  (tracked file — read on its ACCEPTED side, so a "
               "paragraph being deleted is not a finding)")
     # Say what was left out. A notation table is the ordinary reason a

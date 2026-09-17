@@ -3294,6 +3294,26 @@ def test_inspect_counts_TWO_nested_tables_as_two(monkeypatch, tmp_path,
     assert "  tables      1  (+2 nested)" in capsys.readouterr().out
 
 
+def test_inspect_counts_a_table_whose_open_tag_carries_ATTRIBUTES(
+        monkeypatch, tmp_path, capsys):
+    """Nested tables were counted as `doc.count("<w:tbl>") - top`, while
+    `top` reads the tag in any spelling. A generated manuscript declares
+    the namespace on each table (9 tables in 1 of 2,954 corpus
+    packages), and there the two disagreed: its nested table was not
+    counted, and a declared top-level one would print "+-1 nested"."""
+    declared = ('<w:tbl xmlns:w="http://schemas.openxmlformats.org/'
+                'wordprocessingml/2006/main">')
+    inner = (declared + "<w:tr><w:tc>" + para(run("inner"))
+             + "</w:tc></w:tr></w:tbl>")
+    path = write(tmp_path / "declared.docx", make_parts(
+        para(run("x")) + "<w:tbl><w:tr><w:tc>" + inner
+        + para(run("outer")) + "</w:tc></w:tr></w:tbl>"))
+
+    run_cli(monkeypatch, "inspect", path)
+
+    assert "  tables      1  (+1 nested)" in capsys.readouterr().out
+
+
 def test_inspect_lists_TWO_HUNDRED_revisions_and_stops(monkeypatch, tmp_path,
                                                        capsys):
     """`spans(doc)[:200]`. The listing is a structural summary, not the
@@ -3444,6 +3464,24 @@ def test_math_says_a_file_is_TRACKED_only_when_it_is(monkeypatch, tmp_path,
     assert "tracked file" not in capsys.readouterr().out
 
     run_cli(monkeypatch, "math", str(tracked))
+    assert ("(tracked file — read on its ACCEPTED side"
+            in capsys.readouterr().out)
+
+
+def test_math_says_a_file_is_TRACKED_whatever_ends_the_deletion_name(
+        monkeypatch, tmp_path, capsys):
+    """Asked for `<w:del ` with a space, a deletion whose name a tab or a
+    newline ended — legal XML, though no corpus package writes one — left
+    the note out, over a file the command reads on its accepted side."""
+    from conftest import dele
+
+    tracked = _math_doc(tmp_path, para(run("Prose kept"),
+                                       dele(" and cut").replace("<w:del ",
+                                                                "<w:del\n")),
+                        "tracked.docx")
+
+    run_cli(monkeypatch, "math", str(tracked))
+
     assert ("(tracked file — read on its ACCEPTED side"
             in capsys.readouterr().out)
 
