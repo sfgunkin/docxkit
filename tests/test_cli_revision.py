@@ -2098,53 +2098,101 @@ def test_ship_stops_on_a_build_that_RETURNS_a_code_too(monkeypatch, project,
     assert "== lint ==" not in capsys.readouterr().out
 
 
-def test_ship_takes_every_flag_BUILD_takes(monkeypatch, capsys):
+def _choices(parser):
+    """The subparsers hanging off `parser`, by name."""
+    import argparse
+
+    action = next(a for a in parser._actions
+                  if isinstance(a, argparse._SubParsersAction))
+    return action.choices
+
+
+def _steps():
+    """The real `docxkit revision <step>` parsers, as objects."""
+    from docxkit import cli
+
+    return _choices(_choices(cli.build_parser())["revision"])
+
+
+def _flags(parser) -> set[str]:
+    return {o for a in parser._actions for o in a.option_strings
+            if o.startswith("--")} - {"--help"}
+
+
+def _shared_flags() -> set[str]:
+    """What the ONE declaration, `_build_args`, puts on a parser."""
+    import argparse
+
+    from docxkit import cli
+
+    declared = argparse.ArgumentParser()
+    cli._build_args(declared)
+    return _flags(declared)
+
+
+def test_ship_takes_every_flag_BUILD_takes():
     """`ship` runs `build` and delegates to `cmd_revision_build`, which
     reads `args.<flag>` — so a flag on one parser and not the other is
     not a gap, it is an AttributeError on every ship. That is what
     `--allow-stale-baseline` did the day it was added: four tests, and
     it would have been every real run.
 
-    Asserted as the RELATIONSHIP between the two parsers rather than as
-    a list, so the next flag cannot fall out of one of them."""
-    import argparse
+    Asked of the REAL parsers. It used to call `_build_args` on two
+    fresh parsers and compare them, which is the same function applied
+    twice: it could not fail, and the question it names — whether the
+    parser a person actually reaches carries those flags — was never
+    put (BACKLOG, 2026-09-18).
+    """
+    steps = _steps()
 
-    from docxkit import cli
-
-    build = argparse.ArgumentParser()
-    ship = argparse.ArgumentParser()
-    cli._build_args(build)
-    cli._build_args(ship)
-
-    def flags(p):
-        return {o for a in p._actions for o in a.option_strings}
-
-    assert flags(build) == flags(ship)
-    assert "--allow-stale-baseline" in flags(build), (
+    assert _flags(steps["build"]) <= _flags(steps["ship"])
+    assert "--allow-stale-baseline" in _flags(steps["ship"]), (
         "the flag whose absence from ship was the defect")
 
 
-def test_the_two_parsers_come_from_ONE_declaration(monkeypatch, capsys):
-    """The point of the helper: not that the lists agree today, but that
-    there is only one list. A second copy would pass the test above the
-    day it was written and drift the day after.
+def test_the_two_parsers_come_from_ONE_declaration():
+    """Not that the lists agree today, but that there is only one list.
 
-    Reads `build_parser`, which is where the declarations went when the
-    parser was split out of `main` on 2026-08-31 so the CLI's command
-    list could be ENUMERATED (`tests/test_cli_guards.py`'s lock sweep).
-    This failed loudly on that move rather than passing over an empty
-    `main` — a gate keyed to a location, which is the shape the backlog
-    note about `*.py` globs is about, on the side where it works."""
-    import inspect
+    Asked of the parser objects. It read `inspect.getsource(build_parser)`
+    until 2026-09-18 and looked for one flag NAME — so a flag declared
+    inline on `build` and not on `ship`, which is the drift it exists to
+    prevent, passed it: demonstrated by adding `--allow-anything` there
+    and watching it stay green.
 
-    from docxkit import cli
+    `build` carries the shared declaration and `--paper`, which `_rev`
+    gives every step, and nothing else. `ship` carries the same plus
+    `validate`'s own gate flags, because it is the two commands in one —
+    derived from `validate` rather than listed, so a new gate flag does
+    not have to be added here as well.
+    """
+    steps = _steps()
+    shared = _shared_flags()
+    gates = _flags(steps["validate"]) - {"--paper", "--baseline"}
 
-    source = inspect.getsource(cli.build_parser)
+    assert "--allow-math-resolve" in shared, (
+        "the shared declaration is empty or moved — every assertion "
+        "below would be vacuous")
+    assert _flags(steps["build"]) == shared | {"--paper"}
+    assert _flags(steps["ship"]) == shared | gates | {"--paper"}
 
-    assert source.count("_build_args(r)") == 2, (
-        "build and ship should each call the shared declaration once")
-    assert '"--allow-math-resolve"' not in source, (
-        "a flag is declared in _build_args, not in main")
+
+def test_a_SHARED_flag_means_the_same_thing_on_both_parsers():
+    """The half a name comparison cannot see: a second declaration that
+    spells a flag the same way and gives it another default, another
+    type or another help line. `ship --no-moves` meaning something other
+    than `build --no-moves` is a worse failure than its absence, because
+    nothing downstream reads as wrong.
+    """
+    steps = _steps()
+    build = {o: a for a in steps["build"]._actions for o in a.option_strings}
+    ship = {o: a for a in steps["ship"]._actions for o in a.option_strings}
+
+    def shape(action):
+        return (type(action).__name__, action.nargs, action.const,
+                action.default, action.type, action.choices, action.help)
+
+    for flag in sorted(_shared_flags()):
+        assert shape(build[flag]) == shape(ship[flag]), flag
 
 
 def test_a_survey_row_says_a_batch_is_STAGED_and_the_file_is_OPEN(tmp_path):
