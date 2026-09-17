@@ -1413,3 +1413,31 @@ def test_the_simulated_VIEW_is_CACHED_between_identical_calls():
 
     assert accept(xml) is first
     assert _simulate_clean.cache_info().hits == 1
+
+
+# --- the whole sweep of 2026-09-17 ------------------------------------
+
+
+def test_an_EXTENSION_after_a_formatting_SNAPSHOT_does_not_replace_it():
+    """`snapshot[0]`, read as `snapshot[-1]` — the mutant the COMMENT test
+    above was written for, alive again. On 2026-09-16 the snapshot became
+    the record's ELEMENT children, so a comment is no longer one of them:
+    the list holds the `w:rPr` alone, its first is its last, and the
+    comment tells the two readings apart no longer.
+
+    A second ELEMENT does. Markup compatibility lets an element from a
+    namespace the document declares ignorable stand where the schema has
+    no place for it, and a consumer that does not know it skips it —
+    Word since 2010 declares `w14` so in the documents it writes. After the
+    snapshot it is the last element child, and it holds no properties:
+    under the mutant the rejected run comes back with none.
+    """
+    xml = document(
+        f'<w:p><w:r><w:rPr><w:sz w:val="20"/><w:rPrChange {D}>'
+        '<w:rPr><w:sz w:val="24"/></w:rPr><w14:ext/>'
+        "</w:rPrChange></w:rPr><w:t>note</w:t></w:r></w:p>")
+
+    out = reject(xml)
+
+    assert '<w:rPr><w:sz w:val="24"/></w:rPr>' in out, out
+    assert '<w:sz w:val="20"/>' not in out

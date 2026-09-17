@@ -267,6 +267,43 @@ def test_the_ANCHORS_of_a_paragraph_that_cannot_MERGE_are_kept():
     assert tbl in out, "the table itself is untouched"
 
 
+# --- the whole sweep of 2026-09-17 ------------------------------------
+
+
+def test_a_COMMENT_REFERENCE_is_not_lifted_where_a_paragraph_cannot_MERGE():
+    """`t != "commentReference"` in `_BLOCK_ANCHORS`, read as `<=`. Every
+    other anchor tag sorts below that one, so `<=` differs from `!=` only
+    by letting the reference itself through: the block set becomes
+    `_ANCHOR_TAGS`, whole. The test above lifts a BOOKMARK, which both
+    readings lift, so it cannot tell them apart.
+
+    A comment can, because it is both kinds at once: its range markers
+    are range markup a block may hold, its `w:commentReference` is run
+    inner content no block may. The paragraph was inserted above a
+    TABLE, so rejecting it removes it rather than merging it, and what
+    stands where it stood is the range and nothing else. Under the
+    mutant the reference is lifted too, and `w:body` gains an element
+    the schema has no place for.
+    """
+    from docxkit.revisions import reject
+
+    tbl = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid>'
+           f"<w:tr><w:tc><w:tcPr/>{para(run('cell'))}</w:tc></w:tr></w:tbl>")
+    inserted = (f'<w:p>{MARK_INS}<w:ins w:id="82" w:author="A" w:date="d">'
+                '<w:commentRangeStart w:id="4"/>'
+                f'{run("A new sentence.")}<w:commentRangeEnd w:id="4"/>'
+                '<w:r><w:commentReference w:id="4"/></w:r>'
+                "</w:ins></w:p>")
+
+    out = reject(document(inserted + tbl))
+
+    lifted = out[out.index("<w:body>"):out.index("<w:tbl>")]
+    assert lifted == ('<w:body><w:commentRangeStart w:id="4"/>'
+                      '<w:commentRangeEnd w:id="4"/>'), out
+    assert "<w:commentReference" not in out
+    assert tbl in out, "the table itself is untouched"
+
+
 # --- what WORD makes of the anchors the fix leaves ---------------------
 #
 # The fix WRITES `commentRangeStart`/`commentRangeEnd` at block level
