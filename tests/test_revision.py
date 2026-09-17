@@ -448,6 +448,35 @@ def test_config_not_found_says_what_to_do(tmp_path):
         revision.find_config(tmp_path)
 
 
+def test_a_config_NOT_under_revision_makes_its_OWN_folder_the_root(tmp_path):
+    """`config.parent.name == _DIR` — the else-branch nothing had taken.
+
+    `find_config` looks for `<folder>/revision/paper.toml` and THEN for
+    `<folder>/paper.toml`, so a config that is not under a `revision/`
+    folder loads; the folder holding it is then the root itself, with
+    no level to climb. Every fixture until now scaffolded the
+    `revision/` form, which is the branch where both readings agree.
+
+    The folder is deliberately named to sort AFTER "revision": under
+    `>=` every name from "revision" up is read as the protocol's own
+    folder, and the root becomes its PARENT — the manuscript, the build
+    directory and the rescue copies all land one level above the
+    project, beside it instead of in it, and a paper called "Trade" or
+    "Wellbeing" is exactly such a name.
+    """
+    root = tmp_path / "zebra_paper"              # sorts after "revision"
+    root.mkdir()
+    (root / "paper.toml").write_text(
+        '[paper]\nworking = "paper.docx"\n', encoding="utf-8")
+
+    paper = revision.load_paper(root)
+
+    assert paper.root == root
+    assert paper.working == root / "paper.docx"
+    assert paper.prev == root / "revision" / "build" / "prev.docx"
+    assert paper.config.parent == root
+
+
 def test_paper_reads_its_own_end_of_the_protocol(project):
     assert project.name == "Test Paper"
     assert project.author == "Agent"

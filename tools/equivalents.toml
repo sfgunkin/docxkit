@@ -495,6 +495,12 @@ claims = [
   { was = 'if path.stat().st_size == 0:', line = 'if path.stat().st_size <= 0:', why = "A file size is never negative, so `<= 0` and `== 0` hold for exactly the same files. The spellings that CAN differ — `!= 0`, `>= 0`, `== 1` — are killed by the test that registers three papers and counts the header." },
 ]
 
+["revision/_config.py"]
+claims = [
+  { was = 'render_math: bool = True', line = 'render_math: bool = False', why = "A dataclass default no path leaves in place: `load_paper` is the only place a `Paper` is built — every command reaches one through it, and nothing else in the package calls the constructor — and it passes `render_math=bool(_read(data, \"verify\", \"render_math\", True))` on every call — that `True`, the config reader's own default, is the one a bare `paper.toml` takes, and test_paper_falls_back_when_the_config_is_bare reads it back. The argument `batch.py` and `revision/_validate.py` record for their report defaults." },
+  { was = 'timings: bool = True', line = 'timings: bool = False', why = "The same dataclass default nothing observes, two fields down: `load_paper` passes `timings=bool(_read(data, \"paper\", \"timings\", True))` every time, and the default that decides whether an undeclared paper records its step timings is that one, not this. Nothing else constructs a `Paper`, so no path reaches this declaration." },
+]
+
 ["revision/_state.py"]
 claims = [
   { was = 'return self.pending == 0', line = 'return self.pending <= 0', why = "`pending` sums `by_part`'s values, and `_state` is the only writer of that dict: `by_part[name] = len(found)` under `if found:`, so every value is a count of one or more and the sum is zero or positive. `<= 0` is then true for exactly the States `== 0` is true for, and `label`, `status().exit_code` and `verdict` read the same answer. Only a State built by hand with a negative count would tell them apart. An argument from the CODE." },
