@@ -247,6 +247,9 @@ max-complexity = 20
 "src/docxkit/find.py" = ["RUF001", "RUF002"]
 # a range of sections is written with an en dash, and the grammar says so
 "src/docxkit/sections.py" = ["RUF001", "RUF002"]
+# a place a protocol anchor occurs twice is written `P1 ×2`; the accepted
+# view is read through `tracked`, which `import docxkit` must not pay for
+"src/docxkit/snapshot.py" = ["RUF001", "PLC0415"]
 "src/docxkit/testing.py" = ["RUF001", "PLC0415"]
 # equations maps the Unicode math glyphs themselves to LaTeX commands,
 # and renumber/hygiene document en dashes and curly quotes by showing

@@ -11,6 +11,8 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit locate PAPER.docx ANCHOR... | --revisions
     docxkit api [TOPIC] [--signatures]   # the public surface by subject
     docxkit sites PAPER.docx "sig" [--part body|footnotes]
+    docxkit snapshot PAPER.docx [STEM] [--accepted] [--insertions 31,98]
+    docxkit anchors PAPER.docx [SPEC] [--anchor SCOPE=TEXT] [--json R.json]
     docxkit text PAPER.docx [--tracked final|original] [--md]
     docxkit count PAPER.docx [--exclude references,tables] [--limit N]
     docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]
@@ -558,6 +560,65 @@ def cmd_sites(args: argparse.Namespace) -> int:
                  normalize=args.normalize)
     print(found.format())
     return 0 if found.matches == 1 else 1
+
+
+def _insertions(text: str) -> list[int]:
+    """``31,98`` -> [31, 98]: baseline paragraphs a batch inserted after."""
+    try:
+        got = [int(n) for n in text.split(",")]
+    except ValueError:
+        why = f"{text!r}: baseline paragraph numbers, comma-separated — 31,98"
+        raise argparse.ArgumentTypeError(why) from None
+    if any(n < 0 for n in got):
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: a paragraph is inserted after ¶0 or a later one")
+    return got
+
+
+def _anchor_arg(text: str) -> object:
+    """``[kind@]scope=anchor``, refused by the PARSER if it cannot be read."""
+    from .snapshot import parse_anchor
+    try:
+        return parse_anchor(text)
+    except DocxKitError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    """Freeze a manuscript as text and structure, before a round edits it."""
+    from .snapshot import snapshot
+    got = snapshot(_package(args.docx, read_only=True),
+                   accepted=args.accepted, insertions=args.insertions)
+    if args.stem:
+        for path in got.write(args.stem):
+            print(f"  wrote {path}")
+    else:
+        print("\n".join([*got.lines, "", *got.notes]))
+    body = got.structure["body"]
+    print(f"{body['paragraphs']} paragraphs ({body['empty_paragraphs']} "
+          f"empty, unnumbered) · {body['tables']} tables · {body['oMath']} "
+          f"equations · {got.structure['footnotes']['notes']} footnotes · "
+          f"{got.structure['endnotes']['notes']} endnotes")
+    return 0
+
+
+def cmd_anchors(args: argparse.Namespace) -> int:
+    """Resolve a protocol's anchors: exactly once, in the paragraph named."""
+    from .snapshot import read_spec, resolve
+    wanted = [*(read_spec(args.spec) if args.spec else []), *args.anchor]
+    if not wanted:
+        print("docxkit anchors: give a SPEC file or --anchor "
+              "[kind@]scope=anchor", file=sys.stderr)
+        return 2
+    results = resolve(_package(args.docx, read_only=True), wanted,
+                      normalize=args.normalize, insertions=args.insertions)
+    for r in results:
+        print(r.format())
+    stops = sum(not r.ok for r in results)
+    print(f"{len(results)} anchors: {len(results) - stops} OK, {stops} STOP")
+    if args.json:
+        _write_json(args.json, results)
+    return 1 if stops else 0
 
 
 def _public_surface() -> list[tuple[str, str, str, str]]:
@@ -2407,6 +2468,41 @@ def build_parser() -> argparse.ArgumentParser:
                    help="fold Word's typographic substitutions before "
                         "matching, as para_slice(normalize=True) does")
     p.set_defaults(fn=cmd_sites)
+
+    p = sub.add_parser(
+        "snapshot", help="freeze a manuscript as text + structure: [P31], "
+                         "[T4:2,3], one ⟦MATH⟧ per equation, link targets")
+    p.add_argument("docx")
+    p.add_argument("stem", nargs="?", default="",
+                   help="write STEM.txt, STEM_notes.txt and "
+                        "STEM_structure.json; without it the dump prints")
+    p.add_argument("--accepted", action="store_true",
+                   help="the view with every revision accepted")
+    p.add_argument("--insertions", type=_insertions, default=[],
+                   metavar="N,...",
+                   help="number in BASELINE numbering: one paragraph was "
+                        "inserted after each baseline ¶N listed (31,98)")
+    p.set_defaults(fn=cmd_snapshot)
+
+    p = sub.add_parser(
+        "anchors", help="resolve a protocol's anchors: exactly once, in the "
+                        "paragraph named (exit 1 on a STOP)")
+    p.add_argument("docx")
+    p.add_argument("spec", nargs="?", default="",
+                   help="one anchor per line: scope<TAB>kind<TAB>anchor, "
+                        "optionally with a step name first")
+    p.add_argument("--anchor", action="append", default=[],
+                   type=_anchor_arg, metavar="[KIND@]SCOPE=TEXT",
+                   help='repeatable, e.g. "P31=the old words" or '
+                        '"append@P5=last words."')
+    p.add_argument("--normalize", action="store_true",
+                   help="fold Word's typographic substitutions first")
+    p.add_argument("--insertions", type=_insertions, default=[],
+                   metavar="N,...",
+                   help="address paragraphs in BASELINE numbering, as "
+                        "snapshot --insertions labels them")
+    p.add_argument("--json", metavar="PATH")
+    p.set_defaults(fn=cmd_anchors)
 
     p = sub.add_parser(
         "api", help="the public surface by SUBJECT: docxkit api bookmark")

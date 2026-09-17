@@ -64,6 +64,9 @@ VALUES = [
     "refstyle.Layout",          # the house rule itself, passed in and read
     "sections.Heading",         # a heading's number, as the reader sees it
     "sections._Level",          # one level of a Word list definition
+    "snapshot.Anchor",          # one anchor a protocol quotes
+    "snapshot.Resolution",      # where it resolved, and what its span meets
+    "snapshot.Snapshot",        # a manuscript frozen as text
     "refstyle.Style",
     # `revision` is a subpackage since 2026-08-30, so these name the
     # private half each type belongs to rather than one 3,118-line

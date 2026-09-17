@@ -78,6 +78,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `exhibits` | what the exhibits ARE: every caption, which table or image is its body — on either side, read off the document — and the span each one owns, hoisted bookmarks and notes included. `placement`, `repack` and `exhibit_block` sit on it |
 | `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word; `exhibit_block` is one exhibit's span, section break included |
 | `repack` | which sheet is mostly EMPTY and which exhibit's placement caused it — renders each alternative placement and ranks what it would save; reports, never edits |
+| `snapshot` | a round's starting state frozen as text (`[P31]`, `[T4:2,3]`, one `⟦MATH⟧` per equation) and structure (counts, bookmarks, link targets in every form, per part), accepted view and baseline numbering after insertions included; `resolve` holds a protocol's anchors to "exactly once, in the paragraph named" and says what each span meets |
 | `probe` | the four facts a batch has to know first: which FORM the links take, where the exhibit blocks and section breaks sit, which bookmarks are body-level, how a phrase is split across runs |
 | `revision` | the single-file protocol: one manuscript — the author's own file, named in `paper.toml` — two states read off the file itself, and the gate ladder between a proposal and the truth. A subpackage since 2026-08-30, fourteen layers behind one facade; import from `docxkit.revision` as before |
 | `cli` | the `docxkit` command line — the one-off jobs, without a throwaway script |
@@ -101,6 +102,8 @@ docxkit locate PAPER.docx ANCHOR... [--ordered] [--json R.json]
 docxkit locate PAPER.docx --revisions [--limit N]
 docxkit api [TOPIC] [--signatures]   # the public surface by subject
 docxkit sites PAPER.docx "sig" [--part body|footnotes]  # what an edit meets
+docxkit snapshot PAPER.docx [STEM] [--accepted] [--insertions 31,98]  # freeze text + structure
+docxkit anchors PAPER.docx [SPEC] [--anchor "P31=words"] [--json R.json]  # exit 1 on a STOP
 docxkit text PAPER.docx [--tracked final|original] [--md]
 docxkit count PAPER.docx [--exclude references,tables,...] [--limit N]
 docxkit tasks PAPER.docx [--all] [--check] [--done ID,ID]

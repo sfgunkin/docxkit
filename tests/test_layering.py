@@ -34,6 +34,9 @@ SRC = pathlib.Path(docxkit.__file__).parent
 #: one exception, `_CYCLE` below.
 LAYERS: tuple[tuple[str, ...], ...] = (
     ("cli", "compare", "revision"),
+    # reads the ACCEPTED view through `tracked`, and nothing imports it
+    # but `cli`
+    ("snapshot",),
     ("tracked", "export", "wordcount", "renumber", "pages", "probe",
      "refstyle", "testing", "repack"),
     ("tables", "crossrefs", "equations", "footnotes", "figures", "ingest",

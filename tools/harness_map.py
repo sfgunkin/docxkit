@@ -239,6 +239,7 @@ HARNESS: dict[str, list[str]] = {
     "placement.py": ["tests/test_placement.py"],
     "repack.py": ["tests/test_repack.py"],
     "sections.py": ["tests/test_sections.py", "tests/test_sections_edges.py"],
+    "snapshot.py": ["tests/test_snapshot.py"],
     "probe.py": ["tests/test_probe.py", "tests/test_probe_report.py"],
     "refstyle.py": ["tests/test_refstyle.py",
                     "tests/test_refstyle_layout.py",

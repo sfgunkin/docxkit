@@ -430,6 +430,7 @@ READ_ONLY_COMMANDS = {
     "sections": (),
     "crossrefs": ("--audit",), "math": ("--check",),
     "footnotes": ("--check",), "sites": ("Intro paragraph",),
+    "snapshot": (), "anchors": ("--anchor", "*=Intro paragraph"),
 }
 
 #: Commands the sweep does not run, each with the reason. A command
