@@ -703,6 +703,21 @@ The fix is a parametrisation per constant, so that THE PARAMETRISATION
 IS THE CONSTANT and a tag added without a case is a tag the census
 finds.
 
+**And the census comes back CLEAN sometimes, which is what makes it
+worth running.** `_compare_read.py` has `VOLATILE_FIELDS` (16 members)
+and `TEXT_PART_RE` (5 alternatives) — exactly the unreachable shape.
+Taken apart the same way, 21 cases, **21 of 21 KILLED**.
+`test_every_field_word_RECALCULATES_is_masked` is already the
+parametrisation-is-the-constant fix for the sixteen, and each of the
+five parts has a test of its own.
+
+So that module's 1.6 % is a REAL figure rather than an absent question:
+its survivors do not cluster away from the data, they cluster on two
+`elif` chains whose domain is three schema values. The difference
+between this and `lint.py` is not something a reader can tell by
+looking at the module — it took the same twenty minutes in both cases
+to find out. Run the census; do not predict its answer.
+
 ### And the first instance of it: a REGEX
 
 The sharpest limit of this whole campaign, found 2026-09-18 by the
