@@ -704,6 +704,57 @@ def test_an_EMPTY_link_inside_a_rewritten_piece_is_refused():
                               "point made (Sen 1999)")
 
 
+#: A cross-reference Word has not updated yet: the field is there, its
+#: cached result is not. Both shapes occur — an empty result run, and
+#: none at all between `separate` and `end`.
+EMPTY_RESULT_REF = link_field("", "", instr="REF _Ref9 \\h", styled=False)
+NO_RESULT_REF = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                 '<w:r><w:instrText xml:space="preserve"> REF _Ref9 \\h '
+                 "</w:instrText></w:r>"
+                 '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                 '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+@pytest.mark.parametrize("ref", [
+    pytest.param(EMPTY_RESULT_REF, id="empty_result_run"),
+    pytest.param(NO_RESULT_REF, id="no_result_run"),
+])
+def test_a_field_that_shows_NOTHING_yet_is_not_written_through(ref):
+    """A field's cached result is a label, and a field that has none yet
+    shows nothing — so it has no label run to be one, every run it owns
+    is zero width, and the match reads straight through it. Written the
+    ordinary way the replacement goes into the run before the field and
+    the runs after it are emptied, so the FIELD stays where it stood,
+    after the new words, and Word writes "Table 3" back there on its
+    next update. An empty `w:hyperlink` element in the same position is
+    refused (its run is a hyperlink run, whatever its width), and two
+    forms of one construct must answer alike."""
+    p = para(run("A claim"), ref, run(" here."))
+
+    with pytest.raises(AnchorError, match="shows nothing yet"):
+        replace_in_para(p, "claim here", "point made")
+    with pytest.raises(AnchorError, match="shows nothing yet"):
+        replace_keeping_links(p, "claim here", "point made")
+
+    out = replace_in_para(p, "claim here", "point made",
+                          allow_hyperlink=True)
+    assert visible_text(out) == "A point made."
+
+
+@pytest.mark.parametrize("old,new,want", [
+    pytest.param("A claim", "The point", "The point here.", id="before_it"),
+    pytest.param(" here.", " now.", "A claim now.", id="after_it"),
+])
+def test_a_match_that_only_TOUCHES_an_empty_field_is_not_refused(old, new,
+                                                                 want):
+    """Refusing there would make the paragraph uneditable: a field a
+    reader cannot see sits between the words, and anchoring on one side
+    of it is exactly what the refusal asks for."""
+    p = para(run("A claim"), EMPTY_RESULT_REF, run(" here."))
+
+    assert visible_text(replace_in_para(p, old, new)) == want
+
+
 @pytest.mark.parametrize("new,want", [
     pytest.param("see Sen 1999", "(see Sen 1999).", id="before_the_label"),
     pytest.param("Sen 1999 and others", "(Sen 1999 and others).",

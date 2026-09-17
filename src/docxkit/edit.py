@@ -636,6 +636,9 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
 
     if not allow_notes:
         _refuse_crossed_note(runs, spans, (at, end), new, who)
+    if not allow_hyperlink:
+        _refuse_crossed_empty_field(para_xml, runs, spans, (at, end), new,
+                                    who=who)
     _refuse_crossed_maths(para_xml, runs, spans, (at, end), new, who=who)
 
     edits, first = [], True
@@ -731,6 +734,54 @@ def _refuse_crossed_maths(para_xml: str, runs: list[re.Match[str]],
                 f"it was found in the runs' text, where the maths is not, "
                 f"so writing {new[:40]!r} would put the equation after "
                 f"the new words. Anchor on one side of the equation.")
+
+
+def _refuse_crossed_empty_field(para_xml: str, runs: list[re.Match[str]],
+                                spans: list[tuple[int, int]],
+                                match: tuple[int, int], new: str, *,
+                                who: str) -> None:
+    r"""Refuse a match that CROSSES a field showing nothing yet.
+
+    A field's cached result is a label (:func:`_label_spans_in`), and
+    this module refuses to write through one because Word regenerates it.
+    A field that has no result yet has no run to BE that label: every run
+    it owns is zero width — the ``begin``, the instruction, the
+    ``separate``, the ``end``, and an empty result run when there is one
+    — so the match reads straight through the field and no guard here
+    knew it was there.
+
+    Written the ordinary way, the replacement goes into the run holding
+    the START of the match and the runs after it are emptied, so the
+    field ends up after the new words and Word writes its result THERE
+    on the next update. That is the ``REF _Ref… \h`` failure of
+    2026-09-17 one update later: the words read correctly until the
+    field comes back in the wrong place, and no text diff, no anchor
+    check and no link gate says anything.
+
+    An empty ``w:hyperlink`` ELEMENT in the same position is refused
+    already — the element's run is a hyperlink run whatever its width —
+    and two forms of one construct must answer alike.
+    """
+    at, end = match
+    for lo, hi, _body in field_spans(para_xml):
+        held = [i for i, r in enumerate(runs) if in_span(r.start(), (lo, hi))]
+        if not held or any(spans[i][0] != spans[i][1] for i in held):
+            continue                # it shows something: that IS its label
+        where = spans[held[0]][0]
+        if not at < where < end:
+            continue                # beside the match, not across it
+        instruction = " ".join(unescape(t).strip()
+                               for t in INSTR_RE.findall(para_xml[lo:hi]))[:40]
+        raise AnchorError(
+            f"{who}: the match crosses a field that shows nothing yet "
+            f"({instruction}) -- the replacement goes into the run "
+            f"holding the start of the match and the text after the "
+            f"field is emptied, so the field ends up after {new[:40]!r} "
+            f"and Word writes its result THERE on its next update. "
+            f"Nothing downstream shows that: the field still resolves "
+            f"and the words read in the same order. Anchor on one side "
+            f"of the field, or pass allow_hyperlink=True to write "
+            f"through it deliberately.")
 
 
 class _Label(NamedTuple):
