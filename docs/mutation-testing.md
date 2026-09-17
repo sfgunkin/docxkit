@@ -767,6 +767,31 @@ mutants and nothing carries over. `replay_survivors` refuses by design
 rather than anchoring a case on whatever line has since slid into place.
 Re-sweep.
 
+**But a void figure is not a round that cannot be worked**, and for a
+day it was treated as one: three rounds in one afternoon — `pages.py`,
+`word.py` and `revision/_gates.py` — met that refusal, and one of them
+rebuilt its list by hand to get on with the work. cosmic-ray records the
+OPERATOR and the OCCURRENCE of every mutant, not only the text it
+produced, and both are re-appliable: `mutate_code(source, operator,
+occurrence)` says what that mutation is against whatever the file holds
+now. So there are two questions, and only the first is refused:
+
+    replay_survivors.py   are these mutants still alive, AS RECORDED?
+    render_survivors.py   what are these mutations against the file TODAY?
+
+`python tools/render_survivors.py src/docxkit/<module>.py` rebuilds each
+survivor where its line stands now, says which ones sit on a line that
+has itself changed (the trailing-comment case below), and REFUSES per
+mutant rather than guessing: each one is rebuilt against the snapshot
+first and held to what the session recorded for it, because an
+occurrence is a position in the operator's sites and an edit that adds
+one makes it name a different place. `--replay` puts the rebuilt cases
+through `kill_check` expecting a kill, which is `replay_survivors`'
+answer against anchors that exist; `--json` writes them out for a round
+that wants a verdict per mutant. It does not make the figure quotable —
+only a re-sweep does that — and it does mean the afternoon is not lost
+while the queue reaches one.
+
 **A claim needed a source edit to anchor: also void, and the edit looks
 harmless.** `verify_equivalents.anchored` insists a claim's `was` be
 exactly one line of the module, so a line the module writes TWICE cannot
