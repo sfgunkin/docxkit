@@ -22,7 +22,7 @@ import re
 
 import pytest
 
-from docxkit._xml import visible_text
+from docxkit._xml import printed_text, visible_text
 from docxkit.citations import wrap_visible_span
 from docxkit.errors import AnchorError
 
@@ -209,3 +209,76 @@ def test_a_span_on_a_run_edge_past_256_leaves_no_EMPTY_run():
 
     assert _linked(out) == "Smith 2020"
     assert "<w:r></w:r>" not in out, out[:400]
+
+
+# --- the printing children at a run's edge (S1, 2026-09-17) -------------
+#
+# `split_run` puts a child standing exactly at the cut on the LEFT, in
+# document order — which is what keeps the END of a wrap whole — so the
+# half cut at a run's own start holds every printing child in front of
+# that run's first `w:t`. Dropping the half on sight, as "there is no
+# before fragment here" did, DELETED that child: a tab, a no-break
+# hyphen, a line break, none of which `visible_text` renders. The
+# paragraph read identically before and after, `_wrap`'s own "no glyph
+# may move" assertion passed, and the page had lost a character.
+#
+# The other side of backlog S1 of 2026-08-21, where `set_run_text` COPIED
+# the same children into every fragment instead.
+
+
+def test_a_no_break_hyphen_OPENING_the_wrapped_run_is_not_deleted():
+    """Word splits a run at a no-break hyphen, so "Smith‑Jones (2003)"
+    linked from "Jones" is the ordinary shape and not a constructed one:
+    the second run opens with the hyphen, and the span starts at its
+    first visible character."""
+    para = ('<w:p><w:r><w:t>Smith</w:t></w:r>'
+            '<w:r><w:noBreakHyphen/><w:t xml:space="preserve">Jones (2003)'
+            "</w:t></w:r></w:p>")
+
+    out = _wrap(para, "Jones (2003)")
+
+    assert printed_text(out) == printed_text(para) == "Smith‑Jones (2003)"
+    assert _linked(out) == "Jones (2003)"
+    assert out.index("<w:noBreakHyphen/>") < out.index("<w:hyperlink"), \
+        "the hyphen belongs to the word, not to the link's label"
+
+
+def test_a_TAB_opening_the_wrapped_run_is_not_deleted_either():
+    """The same at the paragraph's other common edge: a citation run
+    that Word opened with a tab."""
+    para = ('<w:p><w:r><w:t xml:space="preserve">see </w:t></w:r>'
+            "<w:r><w:tab/><w:t>Rowe 1987</w:t></w:r></w:p>")
+
+    out = _wrap(para, "Rowe 1987")
+
+    assert printed_text(out) == printed_text(para) == "see \tRowe 1987"
+    assert _linked(out) == "Rowe 1987"
+
+
+def test_a_printing_child_at_the_END_of_the_wrapped_run_survives_too():
+    """The half at the other edge, which the same guard now reads: the
+    right half of a cut at the run's full length is empty, and the tab
+    rides left into the link. It is still on the page, in its place."""
+    para = ('<w:p><w:r><w:t xml:space="preserve">see </w:t></w:r>'
+            "<w:r><w:t>Rowe 1987</w:t><w:tab/></w:r>"
+            "<w:r><w:t>and more</w:t></w:r></w:p>")
+
+    out = _wrap(para, "Rowe 1987")
+
+    assert printed_text(out) == printed_text(para) == "see Rowe 1987\tand more"
+    assert _linked(out) == "Rowe 1987"
+
+
+def test_a_run_with_nothing_but_its_PROPERTIES_is_still_dropped():
+    """The guard may not buy the children back by keeping every half:
+    the shell of a run — open tag, `w:rPr`, close — is a zero-width
+    formatting island, and putting one in front of every link is what
+    the drop was for."""
+    para = ('<w:p><w:r><w:t xml:space="preserve">see </w:t></w:r>'
+            '<w:r><w:rPr><w:i/></w:rPr><w:t>Rowe 1987</w:t></w:r></w:p>')
+
+    out = _wrap(para, "Rowe 1987")
+
+    assert _linked(out) == "Rowe 1987"
+    assert "<w:r><w:rPr><w:i/></w:rPr></w:r>" not in out
+    assert out.count("<w:r>") == 2, out

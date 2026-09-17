@@ -20,6 +20,7 @@ from functools import lru_cache
 from ._xml import (
     RUN_RE,
     escape,
+    run_holds_content,
     run_spans,
     set_run_text,
     span_holding,
@@ -831,9 +832,17 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
                             para_xml[first.end():last.start()])
         inner = (_add_style(head, style) + middle
                  + _add_style(tail, style))
-    if at <= fs:
+    # A half cut at the run's own edge is usually the run's SHELL — open
+    # tag, properties, close — and putting that beside the link leaves a
+    # zero-width formatting island the next edit inherits. It is not
+    # always the shell: every printing child in front of the run's first
+    # `w:t` rides LEFT with it, by the document order that keeps the end
+    # of a wrap whole, so dropping the half on sight deleted a tab, a
+    # no-break hyphen or a line break from the page — and `visible_text`
+    # renders none of them, so every text assertion here still passed.
+    if at <= fs and not run_holds_content(before):
         before = ""
-    if end >= le:
+    if end >= le and not run_holds_content(after):
         after = ""
 
     linked = f'<w:hyperlink w:anchor="{escape(anchor)}">{inner}</w:hyperlink>'

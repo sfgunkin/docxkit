@@ -60,6 +60,7 @@ __all__ = [
     "own_properties",
     "printed_text",
     "ref_anchor",
+    "run_holds_content",
     "run_open_before",
     "run_spans",
     "set_para_property",
@@ -731,6 +732,34 @@ def _t(open_tag: str, text: str) -> str:
     if text != text.strip() and "xml:space" not in open_tag:
         open_tag = '<w:t xml:space="preserve">'
     return f"{open_tag}{escape(text)}</w:t>"
+
+
+#: A run holding nothing at all, once its own properties are out of it.
+_BARE_RUN_RE = re.compile(r"<w:r\b[^>]*(?<!/)>\s*</w:r>")
+
+
+def run_holds_content(run_xml: str) -> bool:
+    """Is there anything in this run besides its own ``w:rPr``?
+
+    The question a caller of :func:`split_run` has to ask before
+    throwing a half away. The LEFT half is always a whole run, even when
+    nothing rode left — ``<w:r><w:rPr>…</w:rPr></w:r>``, a zero-width
+    formatting island the next edit inherits — so a wrap that cuts at a
+    run's own start used to drop it on sight.
+
+    What that half can ALSO hold is every printing child standing in
+    front of the run's first ``w:t``: a tab, a no-break hyphen, a line
+    break ride left with it, by the document order that keeps the END of
+    a wrap whole. Dropping those deleted a character from the printed
+    page while :func:`visible_text` read the same on both sides — the
+    other side of the S1 that :func:`split_run` exists for, where the
+    same children were COPIED into every fragment instead.
+    """
+    if not run_xml.strip():           # the empty RIGHT half, or nothing
+        return False
+    own = own_properties(run_xml, "rPr")
+    bare = run_xml if own is None else run_xml[:own[0]] + run_xml[own[1]:]
+    return _BARE_RUN_RE.fullmatch(bare) is None
 
 
 def run_open_before(xml: str, pos: int) -> int:
