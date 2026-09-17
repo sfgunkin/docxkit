@@ -57,6 +57,7 @@ __all__ = [
     "FINAL",
     "ORIGINAL",
     "REVISION_RE",
+    "WORD_ONLY",
     "DocxKitError",
     "ParagraphChange",
     "Revision",
@@ -464,8 +465,32 @@ def _drop_row(row: _Element) -> None:
 #: not an appearance or a disappearance, and applying it means
 #: recomputing `gridSpan` and `vMerge` across the row — a different
 #: operation with a different failure mode, and no manuscript in the
-#: corpus carries one to measure against.
+#: corpus carries one to measure against. See :data:`WORD_ONLY` for what
+#: that exclusion costs the caller, and what is done about it.
 _CELL_FLAG = {"del": "cellDel", "ins": "cellIns"}
+
+
+#: Pending kinds this package COUNTS and cannot APPLY: `accept` and
+#: `reject` leave them exactly where they were, so no view derived here
+#: resolves one and no path through this toolkit clears it. Only Word
+#: can.
+#:
+#: The one member is `w:cellMerge`, for the reason argued above
+#: `_CELL_FLAG`, and that judgement stands. What did not stand is
+#: leaving the fact unsaid: `revision.state` counts a cell merge as
+#: pending — rightly, it is an open verdict, and Word's Compare would
+#: flatten it into the next baseline exactly as it would an insertion —
+#: and `accept` then reported success and changed nothing, so a
+#: manuscript whose only tracked change was a merge was a proposal for
+#: ever and every refusal quoted a number the author could not act on
+#: (BACKLOG S1, 2026-09-18).
+#:
+#: So the kinds are named here, `State.word_only` reports them apart
+#: from the count, and the refusals that read that count say which of
+#: them Word has to resolve. A kind leaves this tuple the day the
+#: simulator learns to apply it, and `tests/test_revision_state.py`
+#: holds it to that from both ends.
+WORD_ONLY = ("cellMerge",)
 
 
 def _cell_flags(cell: _Element, tags: tuple[str, ...]) -> list[_Element]:

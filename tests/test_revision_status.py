@@ -23,6 +23,12 @@ BODY = para(run("The index rose to 0.35 in 2024."))
 INS = ('<w:p><w:ins w:id="7" w:author="Agent" '
        'w:date="2026-01-01T00:00:00Z">'
        "<w:r><w:t>proposed</w:t></w:r></w:ins></w:p>")
+#: A tracked cell merge: pending, and the one kind `accept` and `reject`
+#: cannot apply — see `revisions.WORD_ONLY`.
+CELL_MERGE = ('<w:tbl><w:tr><w:tc><w:tcPr><w:cellMerge w:id="8" '
+              'w:author="Agent" w:date="2026-01-01T00:00:00Z" '
+              'w:vMerge="cont"/></w:tcPr>'
+              + para(run("cell")) + "</w:tc></w:tr></w:tbl>")
 
 
 def _paper(tmp_path, body: str = BODY):
@@ -53,6 +59,29 @@ def test_a_pending_proposal_is_not_truth_and_exits_1(tmp_path):
 
     assert not report.working.is_truth
     assert report.working.pending == 1
+    assert report.exit_code == 1
+
+
+def test_a_pending_CELL_MERGE_exits_1_like_any_other_proposal(tmp_path):
+    """The kind no path through this toolkit can clear (`revisions.
+    WORD_ONLY`) still exits 1, and that is a decision rather than an
+    oversight.
+
+    An exit code says what a script should DO, and there is nothing new
+    to do here: the file is a proposal, it must not be built on or
+    baselined, and the author resolves it — which is true of every
+    pending revision, since this tool never accepts or rejects on their
+    behalf. A code of its own would put a paper that is merely waiting
+    for its author down whatever branch a script keeps for the codes it
+    does not know. What was missing is the EXPLANATION, and that is
+    what `word_only` carries to the printed report and the refusals.
+    """
+    paper = _paper(tmp_path, BODY + CELL_MERGE)
+
+    report = revision.status(paper)
+
+    assert report.working.pending == 1
+    assert report.working.word_only == {"cellMerge": 1}
     assert report.exit_code == 1
 
 

@@ -27,6 +27,17 @@ class State:
     #: Empty for a file Word wrote; see :func:`footnotes.out_of_order`
     #: for what a file it did not costs.
     notes_unordered: dict[str, list[str]] = field(default_factory=dict)
+    #: Of the pending revisions, the ones no path through this toolkit
+    #: can clear: element name -> how many
+    #: (:data:`revisions.WORD_ONLY`). They are counted in `pending` as
+    #: well, because they ARE open verdicts — a baseline taken with one
+    #: standing hands the next Compare a proposal to flatten, exactly as
+    #: an insertion would. What is separate is WHOSE they are to
+    #: resolve: `accept` and `reject` leave a `w:cellMerge` where it
+    #: was, so the author's only way out is Word, and a refusal that
+    #: repeats the count without saying so sends them looking for a flag
+    #: that does not exist (BACKLOG S1, 2026-09-18).
+    word_only: dict[str, int] = field(default_factory=dict)
     #: Was this read from a COPY, because Word holds the file? A
     #: snapshot mid-edit is a true statement about a moment and the
     #: alternative was no answer at all — but the reader has to be told
@@ -57,6 +68,10 @@ class State:
 
 
 _AUTHOR_RE = re.compile(r'w:author="([^"]*)"')
+#: The element's own name, off the opening tag `revision_elements`
+#: hands back — read here for the same reason the author is, and with
+#: the same shape.
+_KIND_RE = re.compile(r"<w:(\w+)")
 
 
 def state(path: str | Path) -> State:
@@ -92,6 +107,7 @@ def _state(parts: dict[str, bytes], path: Path, snapshot: bool) -> State:
     """
     by_part: dict[str, int] = {}
     by_author: dict[str, int] = {}
+    word_only: dict[str, int] = {}
     for name in TEXT_PARTS:
         blob = parts.get(name)
         if not blob:
@@ -106,6 +122,9 @@ def _state(parts: dict[str, bytes], path: Path, snapshot: bool) -> State:
             who = _AUTHOR_RE.search(chunk)
             if who:
                 by_author[who.group(1)] = by_author.get(who.group(1), 0) + 1
+            named = _KIND_RE.match(chunk)
+            if named and (tag := named.group(1)) in revisions.WORD_ONLY:
+                word_only[tag] = word_only.get(tag, 0) + 1
     unordered = {}
     doc = parts.get(DOCUMENT, b"").decode("utf-8", "replace")
     for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
@@ -117,7 +136,8 @@ def _state(parts: dict[str, bytes], path: Path, snapshot: bool) -> State:
         if moved:
             unordered[kind] = moved
     return State(path=path, by_part=by_part, by_author=by_author,
-                 notes_unordered=unordered, from_snapshot=snapshot)
+                 notes_unordered=unordered, word_only=word_only,
+                 from_snapshot=snapshot)
 
 
 def _drifted(before: dict[str, bytes], after: dict[str, bytes]) -> list[str]:
@@ -189,6 +209,18 @@ class StatusReport:
         question does not exit 0 — 1 is what the lock produced before
         the check was named, so nothing gating on the command changes
         its mind.
+
+        A file whose pending revisions include one only Word can clear
+        (:attr:`State.word_only`) exits 1 too, and that is a decision:
+        an exit code says what to DO, and there is nothing new to do.
+        The file is a proposal, it must not be built on or baselined,
+        and the author resolves it — which is true of every pending
+        revision, because this tool never adjudicates on their behalf.
+        A code of its own would send a paper that is merely waiting for
+        its author down whatever branch a script keeps for codes it
+        does not know. What that case needs is the explanation, and
+        that is what `word_only` carries into the report and into the
+        refusals that read it.
         """
         if self.stale:
             return 4

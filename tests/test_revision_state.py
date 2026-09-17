@@ -14,6 +14,15 @@ formatting and section changes — reported "0 pending -> TRUTH".
 the short one is wrong ("a guard that looked for insertions alone called
 the table clean"). `_table_layout` had learned it. The protocol's own
 truth test had not, which is the one place the cost is the author's work.
+
+The same lesson one level up, 2026-09-18: `KINDS` below held eight
+documents and `_REVISION_NAMES` holds fourteen, so the guards here ran
+over a subset that happened to exclude the one kind the SIMULATOR
+cannot apply. `w:cellMerge` is counted as pending and survives both
+accept and reject, which made a manuscript carrying one a proposal for
+ever. It now carries all fourteen, with that kind declared as the
+exception it is — `revisions.WORD_ONLY`, reported by `state` and named
+by the refusals, because the way out of it is Word.
 """
 from __future__ import annotations
 
@@ -25,37 +34,76 @@ from docxkit.revisions import (
     _CONTENT_MARKERS,
     _PROPERTY_MARKERS,
     _REVISION_NAMES,
+    WORD_ONLY,
     _has_revisions,
     revision_elements,
 )
 
 D = 'w:id="7" w:author="Reviewer" w:date="2026-01-01T00:00:00Z"'
 
-#: One document per way Word records an unresolved change. Built here
-#: rather than from the conftest helpers so every kind carries the SAME
-#: author, which is what the attribution test below is about.
+CELL = para(run("cell"))
+
+#: One document per way Word records an unresolved change, KEYED BY THE
+#: ELEMENT NAME — so `test_every_revision_name_has_a_document_here` can
+#: compare this set with `_REVISION_NAMES` and fail the day one grows
+#: without the other.
+#:
+#: It held eight of the fourteen until 2026-09-18, and the six table
+#: kinds were therefore never asked the property the three guards below
+#: exist to enforce. Five of them hold it. `cellMerge` does not, and
+#: nothing had said so: BACKLOG S1, found by an audit of the lists this
+#: package parametrizes over, because a list of kinds cannot notice the
+#: kind it does not name.
+#:
+#: Built here rather than from the conftest helpers so every kind
+#: carries the SAME author, which is what the attribution test is about
+#: — bar `tblGridChange`, whose element has no author to carry (see
+#: :data:`NAMELESS`).
 KINDS = {
-    "insertion": f'<w:p><w:ins {D}>{run("added")}</w:ins></w:p>',
-    "deletion": (f'<w:p><w:del {D}>'
-                 f"<w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"),
-    "move-to": f'<w:p><w:moveTo {D}>{run("moved")}</w:moveTo></w:p>',
-    "move-from": (f'<w:p><w:moveFrom {D}>'
-                  f"<w:r><w:delText>moved</w:delText></w:r></w:moveFrom>"
-                  f"</w:p>"),
-    "run formatting": (f"<w:p><w:r><w:rPr><w:i/>"
-                       f"<w:rPrChange {D}><w:rPr/></w:rPrChange></w:rPr>"
-                       f"<w:t>styled</w:t></w:r></w:p>"),
-    "paragraph formatting": (f'<w:p><w:pPr><w:jc w:val="center"/>'
-                             f"<w:pPrChange {D}><w:pPr/></w:pPrChange>"
-                             f"</w:pPr>{run('aligned')}</w:p>"),
-    "section formatting": (f"<w:p>{run('body')}</w:p><w:sectPr>"
-                           f"<w:sectPrChange {D}><w:sectPr/>"
-                           f"</w:sectPrChange></w:sectPr>"),
-    "table cell formatting": (f"<w:tbl><w:tr><w:tc><w:tcPr>"
-                              f"<w:tcPrChange {D}><w:tcPr/></w:tcPrChange>"
-                              f"</w:tcPr>{para(run('cell'))}</w:tc></w:tr>"
-                              f"</w:tbl>"),
+    "ins": f'<w:p><w:ins {D}>{run("added")}</w:ins></w:p>',
+    "del": (f'<w:p><w:del {D}>'
+            f"<w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"),
+    "moveTo": f'<w:p><w:moveTo {D}>{run("moved")}</w:moveTo></w:p>',
+    "moveFrom": (f'<w:p><w:moveFrom {D}>'
+                 f"<w:r><w:delText>moved</w:delText></w:r></w:moveFrom>"
+                 f"</w:p>"),
+    "rPrChange": (f"<w:p><w:r><w:rPr><w:i/>"                  # a run's own
+                  f"<w:rPrChange {D}><w:rPr/></w:rPrChange></w:rPr>"
+                  f"<w:t>styled</w:t></w:r></w:p>"),
+    "pPrChange": (f'<w:p><w:pPr><w:jc w:val="center"/>'       # a paragraph's
+                  f"<w:pPrChange {D}><w:pPr/></w:pPrChange>"
+                  f"</w:pPr>{run('aligned')}</w:p>"),
+    "sectPrChange": (f"<w:p>{run('body')}</w:p><w:sectPr>"    # a section's
+                     f"<w:sectPrChange {D}><w:sectPr/>"
+                     f"</w:sectPrChange></w:sectPr>"),
+    "tcPrChange": (f"<w:tbl><w:tr><w:tc><w:tcPr>"             # a cell's
+                   f"<w:tcPrChange {D}><w:tcPr/></w:tcPrChange>"
+                   f"</w:tcPr>{CELL}</w:tc></w:tr></w:tbl>"),
+    "trPrChange": (f"<w:tbl><w:tr><w:trPr>"                   # a row's
+                   f"<w:trPrChange {D}><w:trPr/></w:trPrChange>"
+                   f"</w:trPr><w:tc>{CELL}</w:tc></w:tr></w:tbl>"),
+    "tblPrChange": (f"<w:tbl><w:tblPr>"                       # the table's
+                    f"<w:tblPrChange {D}><w:tblPr/></w:tblPrChange>"
+                    f"</w:tblPr><w:tr><w:tc>{CELL}</w:tc></w:tr></w:tbl>"),
+    "tblGridChange": (f'<w:tbl><w:tblGrid><w:gridCol w:w="4675"/>'
+                      f'<w:tblGridChange w:id="7"><w:tblGrid/>'
+                      f"</w:tblGridChange></w:tblGrid><w:tr><w:tc>{CELL}"
+                      f"</w:tc></w:tr></w:tbl>"),
+    "cellIns": (f"<w:tbl><w:tr><w:tc><w:tcPr><w:cellIns {D}/></w:tcPr>"
+                f"{CELL}</w:tc></w:tr></w:tbl>"),
+    "cellDel": (f"<w:tbl><w:tr><w:tc><w:tcPr><w:cellDel {D}/></w:tcPr>"
+                f"{CELL}</w:tc></w:tr></w:tbl>"),
+    "cellMerge": (f"<w:tbl><w:tr><w:tc><w:tcPr>"
+                  f'<w:cellMerge {D} w:vMerge="cont"/></w:tcPr>'
+                  f"{CELL}</w:tc></w:tr></w:tbl>"),
 }
+
+#: The kinds whose element carries no author. `CT_TblGridChange` is a
+#: `CT_Markup`: it has `w:id` and nothing else, so a document whose only
+#: revision is a grid change is pending and attributed to nobody. That
+#: is the format's doing, and reporting it as "by: (unknown)" would be
+#: this test file inventing a name Word never wrote.
+NAMELESS = ("tblGridChange",)
 
 
 @pytest.mark.parametrize("kind", sorted(KINDS))
@@ -74,12 +122,25 @@ def test_a_document_with_nothing_tracked_is_truth(tmp_path):
     assert st.pending == 0 and st.is_truth and st.label == "truth"
 
 
-@pytest.mark.parametrize("kind", sorted(KINDS))
+@pytest.mark.parametrize("kind", sorted(set(KINDS) - set(NAMELESS)))
 def test_the_reviewer_is_named_for_every_kind(kind, tmp_path):
     """`status` prints who a pending change belongs to. Reading the author
     off `<w:ins>` alone left the new kinds attributed to nobody."""
     path = write(tmp_path / "working.docx", make_parts(KINDS[kind]))
     assert set(revision.state(path).by_author) == {"Reviewer"}
+
+
+@pytest.mark.parametrize("kind", NAMELESS)
+def test_a_grid_change_is_pending_and_belongs_to_NOBODY(kind, tmp_path):
+    """The exception to the test above, pinned rather than left to be
+    rediscovered: `w:tblGridChange` carries an id and nothing else, so
+    there is a pending revision here and no author to print beside it."""
+    path = write(tmp_path / "working.docx", make_parts(KINDS[kind]))
+
+    st = revision.state(path)
+
+    assert st.pending == 1 and not st.is_truth
+    assert st.by_author == {}
 
 
 def test_a_formatting_change_in_a_footnote_is_reported_as_hidden(tmp_path):
@@ -111,12 +172,21 @@ def test_a_move_is_counted_once_not_once_per_range_marker(tmp_path):
 
 
 def test_several_revisions_are_counted_separately(tmp_path):
-    body = KINDS["insertion"] + KINDS["deletion"] + KINDS["run formatting"]
+    body = KINDS["ins"] + KINDS["del"] + KINDS["rPrChange"]
     path = write(tmp_path / "working.docx", make_parts(body))
     assert revision.state(path).pending == 3
 
 
 # ------------------------------------------------------ the drift guard --
+
+
+def test_every_revision_name_has_a_document_here():
+    """The audit's own finding, as a guard. `KINDS` held eight of the
+    fourteen names, so the three properties below were enforced on a
+    SUBSET — and the one kind that breaks them was in the half nobody
+    asked. A name added to `_REVISION_NAMES` without a document here
+    fails this instead of being tested by nothing."""
+    assert set(KINDS) == set(_REVISION_NAMES)
 
 
 def test_the_two_definitions_of_a_revision_cannot_drift():
@@ -142,7 +212,7 @@ def test_anything_has_revisions_calls_dirty_is_something_state_counts(kind):
     assert revision_elements(xml), f"{kind}: dirty, but nothing counted"
 
 
-@pytest.mark.parametrize("kind", sorted(KINDS))
+@pytest.mark.parametrize("kind", sorted(set(KINDS) - set(WORD_ONLY)))
 @pytest.mark.parametrize("view", ["accept", "reject"])
 def test_anything_state_counts_is_something_the_simulator_applies(kind, view):
     """The third face of the same guard, and the one that was missing.
@@ -152,12 +222,71 @@ def test_anything_state_counts_is_something_the_simulator_applies(kind, view):
     built on those views: `reject-all == baseline` could not fail on a
     formatting-only batch, and an XML-accepted file still counted as a
     proposal because the marker was still in it.
+
+    :data:`revisions.WORD_ONLY` is the declared exception, and the test
+    below is what holds it to being one.
     """
     from docxkit import revisions as R
 
     applied = getattr(R, view)(KINDS[kind])
     assert not revision_elements(applied), (
         f"{kind}: {view} left the revision standing")
+
+
+@pytest.mark.parametrize("kind", WORD_ONLY)
+@pytest.mark.parametrize("view", ["accept", "reject"])
+def test_a_WORD_ONLY_kind_survives_both_views_and_is_reported_as_such(
+        kind, view, tmp_path):
+    """The documented exception, pinned from both ends.
+
+    `w:cellMerge` records a merge or a split rather than an appearance
+    or a disappearance: applying one means recomputing `gridSpan` and
+    `vMerge` across the row, no manuscript in the corpus carries one to
+    measure against, and `revisions._CELL_FLAG` leaves it out on
+    purpose. So this is not a hole to be plugged by teaching the
+    simulator a fourteenth kind — it is a kind the toolkit counts and
+    cannot clear, and the file has to SAY so, because otherwise the
+    manuscript is a proposal for ever and every refusal quotes a number
+    the author cannot act on (BACKLOG S1, 2026-09-18).
+    """
+    from docxkit import revisions as R
+
+    assert revision_elements(getattr(R, view)(KINDS[kind])), (
+        f"{kind}: the simulator applied it — if that is now true, take "
+        f"it out of WORD_ONLY and the exception with it")
+
+    path = write(tmp_path / "working.docx", make_parts(KINDS[kind]))
+    st = revision.state(path)
+
+    assert st.pending == 1, "counted, because it IS an open verdict"
+    assert st.word_only == {kind: 1}, "and named as not ours to clear"
+
+
+def test_an_ordinary_proposal_has_nothing_only_word_can_clear(tmp_path):
+    """The field is empty for every kind the simulator applies, so a
+    reader who sees it knows they are looking at the exception."""
+    path = write(tmp_path / "working.docx",
+                 make_parts(KINDS["ins"] + KINDS["tcPrChange"]))
+
+    st = revision.state(path)
+
+    assert st.pending == 2 and st.word_only == {}
+
+
+def test_a_word_only_kind_is_counted_among_the_pending_not_beside_them(
+        tmp_path):
+    """It is still an open verdict: Word's Compare rebuilds a redline
+    from ACCEPTED content, so a baseline taken with a merge pending
+    flattens it exactly as it would flatten an insertion. The separate
+    field says who can clear it, not whether it counts."""
+    path = write(tmp_path / "working.docx",
+                 make_parts(KINDS["ins"] + KINDS["cellMerge"]))
+
+    st = revision.state(path)
+
+    assert st.pending == 2
+    assert st.word_only == {"cellMerge": 1}
+    assert not st.is_truth and st.label == "proposal"
 
 
 # ------------------------------------------ a baseline taken mid-save ----
@@ -196,7 +325,7 @@ def test_force_does_not_override_the_lock(tmp_path, monkeypatch):
     A locked file is not a decision the author made."""
     from docxkit.errors import DocumentLocked
 
-    paper = _scaffold(tmp_path, KINDS["insertion"])
+    paper = _scaffold(tmp_path, KINDS["ins"])
     monkeypatch.setattr("docxkit.package.is_locked", lambda p: True)
     with pytest.raises(DocumentLocked):
         revision.baseline(paper, force=True)
@@ -225,7 +354,7 @@ def test_drift_sees_what_counting_pending_revisions_cannot(tmp_path):
     working = write(tmp_path / "working.docx",
                     make_parts(para(run("The paper, as accepted."))))
     prev = write(tmp_path / "prev.docx",
-                 make_parts(KINDS["insertion"]))
+                 make_parts(KINDS["ins"]))
     assert revision.state(working).is_truth
     assert revision.drift(working, prev) == ["word/document.xml"]
 
