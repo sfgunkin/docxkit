@@ -262,6 +262,81 @@ def test_an_orphan_holding_LEGACY_content_is_not_a_shell(inner):
     assert b'w:id="2"' in parts["word/footnotes.xml"]
 
 
+#: The carriers `_NOTE_CONTENT_RE` has named since it was written, and
+#: which nothing pinned until 2026-09-18. Cosmic-ray plans NO mutant on
+#: a regex — the sweep of that day placed none on any of the four lines
+#: the pattern spans — so no survival figure grades them, and the module
+#: read 0.6% with these open. Deleting each alternative by hand
+#: (`kill_check`, twelve cases) left the whole harness green for
+#: `w:hyperlink`, `w:drawing`, `w:tbl` and `m:oMath`, while every legacy
+#: twin added the day before was killed by the test above. Under the
+#: deletion a note holding one of them and no words reads as a shell,
+#: and `prune_orphans` cuts it: the link, the figure or the equation
+#: goes off the page with it.
+#:
+#: Each fixture holds ONE carrier and nothing else a reader sees. With
+#: two, dropping either alternative leaves the note occupied by the
+#: other and the case says nothing about the one it aimed at.
+MODERN = {
+    # the label deleted and the deletion accepted: the run is emptied
+    # and the link element stays, its `r:id` still naming a relationship
+    # in footnotes.xml.rels
+    "link_with_no_label": ('<w:hyperlink r:id="rId7"><w:r><w:t/></w:r>'
+                           "</w:hyperlink>"),
+    "picture": ('<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.'
+                'openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
+                '<wp:docPr id="7" name="Figure 1"/></wp:inline></w:drawing>'
+                "</w:r>"),
+    # An equation with no glyph in it, which is the only shape that
+    # reaches this question: `visible_text` reads `m:t` as well as
+    # `w:t`, so an equation that HAS its glyphs gives the note TEXT and
+    # is not a shell for that reason instead — leaving the carrier
+    # untested exactly as it is today.
+    "equation": "<m:oMath><m:r><m:t/></m:r></m:oMath>",
+}
+
+
+@pytest.mark.parametrize("inner", MODERN.values(), ids=MODERN.keys())
+def test_an_orphan_holding_a_MODERN_carrier_is_not_a_shell(inner):
+    """A link whose words are gone, a figure and an empty equation are
+    each something to lose, and none of them is anything
+    `visible_text` reads. The legacy twins were named beside these
+    because these were already there; that they were never pinned is
+    what the hand-mutation of the pattern found."""
+    parts = _paper(para(run("A claim.")), _note(NOTE_MARK + inner))
+
+    (orphan,) = fn.orphans(parts)
+
+    assert (orphan.text, orphan.carriers, orphan.empty) == ("", 1, False)
+    assert fn.prune_orphans(parts) == []
+    assert b'w:id="2"' in parts["word/footnotes.xml"]
+
+
+#: A table with nothing to read in it — the grid is still ruled lines on
+#: the page. `w:tblPr` is deliberately in the fixture: `<w:tbl\b` does
+#: not match it, so the carrier count stays 1 and the case isolates the
+#: alternative it aims at.
+TABLE = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+         '<w:tr><w:tc><w:p w14:paraId="33333333"/></w:tc>'
+         '<w:tc><w:p w14:paraId="44444444"/></w:tc></w:tr></w:tbl>')
+
+
+def test_an_orphan_holding_only_a_TABLE_is_not_a_shell():
+    """The fourth carrier, and the one that cannot sit where the others
+    do: a `w:tbl` is a sibling of the paragraphs, not a child of one, so
+    this note is built by hand rather than through `_note` — and it ends
+    in the paragraph Word writes after a table."""
+    inner = (f'<w:footnote w:id="2">{para(NOTE_MARK)}{TABLE}'
+             f'{para(pid="55555555")}</w:footnote>')
+    parts = _paper(para(run("A claim.")), inner)
+
+    (orphan,) = fn.orphans(parts)
+
+    assert (orphan.text, orphan.carriers, orphan.empty) == ("", 1, False)
+    assert fn.prune_orphans(parts) == []
+    assert b'w:id="2"' in parts["word/footnotes.xml"]
+
+
 def test_an_orphan_whose_words_are_all_DELETED_is_not_a_shell():
     """Deleted words are content on every document `prune_orphans` can
     meet. The package's own callers simulate a view first, and neither
