@@ -14,6 +14,51 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `repack` blames one exhibit by NAME and moves another when two share it~~ — FIXED 17.09, `e590f23`
+
+<!-- status: fixed -->
+
+Found 2026-09-15 triaging the first whole mutation sweep of `repack.py`,
+and measured on the live source:
+
+    Figure 1 shows it. | Figure 1. First | IMG | z | Figure 1. Second |
+    IMG | y
+
+    blamed    {2: 'Figure 1', 4: 'Figure 1'}, 2 trials
+    trial 1   Figure 1 shows it. | z | Figure 1. Second | IMG | y |
+              Figure 1. First | IMG
+    trial 2   the manuscript, unchanged
+
+`repack` resolves a blamed exhibit by its name (`by_name = {x.name: x}`,
+so the LAST one wins), computes the move span and the places for that
+exhibit, and then asks `_moved` for `x.key`, which moves the FIRST exhibit
+with that key. A trial therefore moves the other figure to a place chosen
+for this one, or renders the manuscript unchanged, and both are measured
+and ranked as placements with nothing said. `tried` is keyed on `x.key`
+too, so the two exhibits share one record of what was tried.
+
+Two exhibits with one number are a numbering defect in their own right,
+which is why this is filed and not fixed (the user's call, 2026-09-15).
+The fix, when it is taken up: resolve the blame, the search and the move
+by the exhibit's position (`caption_at`) rather than its name or key, and
+hand `_moved` the exhibit. That expires the claim on `repack`'s `continue
+# tried for an earlier short sheet`, whose argument is that no exhibit is
+met twice with a different list of places.
+
+Workaround: renumber the duplicate before running `repack`.
+
+**Fixed 17.09 in `e590f23`** (on the user's instruction to fix every
+open entry). Blame is an index into the landings, mentions a list parallel
+to the exhibits, `_candidates` offers a same-named twin's end as a place
+(`y is not x`), `tried` is keyed on the caption's body index, and `_moved`
+takes that index and returns where the caption landed, which is how the
+trial's render finds the landing of the SAME exhibit. The name is only
+what the report prints. The claim on `continue # tried for an earlier
+short sheet` did not expire after all: keyed on the position, one exhibit
+has one list of places, which is its argument. Test:
+`test_two_exhibits_sharing_a_NAME_are_each_moved_as_THEMSELVES`, the
+entry's own repro, red on the old code with a trial that rendered the
+manuscript unchanged. The workaround (renumber first) is no longer needed.
 ### ~~S4 — no supported path to replace a promoted batch the author has not opened~~ — FIXED 17.09, `06af3d2`
 
 <!-- status: fixed -->

@@ -777,40 +777,6 @@ backtick is optional now.
 
 ---
 
-### S2 — `repack` blames one exhibit by NAME and moves another when two share it
-<!-- status: open -->
-
-Found 2026-09-15 triaging the first whole mutation sweep of `repack.py`,
-and measured on the live source:
-
-    Figure 1 shows it. | Figure 1. First | IMG | z | Figure 1. Second |
-    IMG | y
-
-    blamed    {2: 'Figure 1', 4: 'Figure 1'}, 2 trials
-    trial 1   Figure 1 shows it. | z | Figure 1. Second | IMG | y |
-              Figure 1. First | IMG
-    trial 2   the manuscript, unchanged
-
-`repack` resolves a blamed exhibit by its name (`by_name = {x.name: x}`,
-so the LAST one wins), computes the move span and the places for that
-exhibit, and then asks `_moved` for `x.key`, which moves the FIRST exhibit
-with that key. A trial therefore moves the other figure to a place chosen
-for this one, or renders the manuscript unchanged, and both are measured
-and ranked as placements with nothing said. `tried` is keyed on `x.key`
-too, so the two exhibits share one record of what was tried.
-
-Two exhibits with one number are a numbering defect in their own right,
-which is why this is filed and not fixed (the user's call, 2026-09-15).
-The fix, when it is taken up: resolve the blame, the search and the move
-by the exhibit's position (`caption_at`) rather than its name or key, and
-hand `_moved` the exhibit. That expires the claim on `repack`'s `continue
-# tried for an earlier short sheet`, whose argument is that no exhibit is
-met twice with a different list of places.
-
-Workaround: renumber the duplicate before running `repack`.
-
----
-
 ### S4 — no helper to replace a span AROUND the links inside it; four `edit` helpers unexported
 <!-- status: open -->
 
