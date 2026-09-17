@@ -3233,6 +3233,55 @@ def test_an_integrity_flag_says_which_PART_of_the_built_doc_it_is_in(
                for f in flags)
 
 
+def test_every_part_label_this_package_can_build_sorts_AFTER_body():
+    """The PREMISE two claims in `tools/equivalents.toml` stand on, which
+    nothing else would notice losing.
+
+    Both are on the line above — `"BUILT" if part.label == "body"` read
+    as `<= "body"` and as `is "body"` — and both are arguments about a
+    VOCABULARY rather than about this module: `Part.label` is assigned in
+    exactly one place, `_compare_read.Part.__init__`, as the literal
+    `body` for the document and the part's own stem for everything else,
+    and `TEXT_PART_RE` is what says which stems exist. Every one of them
+    today begins d/e/f/h, so each sorts strictly after `body` and none
+    equals it: `<=` is true exactly where `==` is, and the only `body` in
+    the package is an interned literal, which is what makes `is` agree.
+
+    Add one part type whose stem sorts BEFORE `body` — `appendix`, say —
+    and both claims become false while every test in this file still
+    passes, because no fixture has such a part and `verify_equivalents`
+    can only re-run the claims it was given. That is the failure a
+    vocabulary has: the set gains a member and the code that reasons
+    about its members by hand does not notice. So the enumeration is read
+    from the pattern rather than written out here, and a stem added to it
+    arrives in this test the day it is added.
+    """
+    from docxkit._compare_read import TEXT_PART_RE, Part
+
+    alternatives = re.search(r"\(([^)]+)\)", TEXT_PART_RE.pattern)
+    assert alternatives is not None, TEXT_PART_RE.pattern
+    names = sorted({f"word/{stem.replace(chr(92) + 'd*', digits)}.xml"
+                    for stem in alternatives.group(1).split("|")
+                    for digits in ("", "2")})
+    # the enumeration is only worth anything if the pattern still admits
+    # what it produced — a rewritten pattern must land here, not pass
+    for name in names:
+        assert TEXT_PART_RE.match(name), f"{name} is not one of the parts"
+
+    labels = {name: Part(name, "<w:p/>").label for name in names}
+
+    assert [n for n, label in labels.items() if label == "body"] == [
+        "word/document.xml"], labels
+    assert all(label > "body" for name, label in labels.items()
+               if name != "word/document.xml"), labels
+    # `$` matches before a trailing newline too, so a zip entry can carry
+    # one and still be admitted. The stem is then `document.`, which is
+    # after `body` like the rest — the claims hold on it as well.
+    odd = "word/document.xml\n"
+    assert TEXT_PART_RE.match(odd), "the pattern no longer admits it"
+    assert Part(odd, "<w:p/>").label > "body"
+
+
 def test_a_part_that_was_REMOVED_carries_an_extract_of_itself(tmp_path):
     """`pa.blob[:110]`: the label alone is "header1", which says nothing
     about what was in it. A hundred and ten characters is enough to
