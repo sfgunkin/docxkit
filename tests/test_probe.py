@@ -108,9 +108,13 @@ def test_what_probe_reports_is_what_the_two_tools_actually_do(tmp_path):
         para_slice(doc, "where  denotes")
     assert rep.view_split["where x denotes"][0] == [0]
 
-    # what `edit` sees is the second, and it is the other way round
-    replace_in_para(MATHY, "where  denotes", "REPLACED")
-    with pytest.raises(AnchorError):
+    # what `edit` sees is the second, and it is the other way round: the
+    # maths-less spelling is LOCATED — the refusal is about the equation
+    # it crosses, not "not in paragraph". Writing it was allowed until
+    # 2026-09-17, and moved the equation to the end of the replacement.
+    with pytest.raises(AnchorError, match="crosses an equation"):
+        replace_in_para(MATHY, "where  denotes", "REPLACED")
+    with pytest.raises(AnchorError, match="not in paragraph"):
         replace_in_para(MATHY, "where x denotes", "REPLACED")
     assert rep.view_split["where  denotes"][1] == [0]
 

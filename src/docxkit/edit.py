@@ -594,20 +594,49 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
     need not find them again by a text search, which cannot tell two
     equal pieces of one paragraph apart. Every guard is the same one:
     this is where they live.
+
+    **A field's result is a label** as a hyperlink's is — the one
+    definition, :func:`_label_spans_in`, that `replace_keeping_links`
+    edits around. Until 2026-09-17 this asked only for the Hyperlink
+    style or a ``w:hyperlink`` element, and Word's own cross-reference
+    (``REF _Ref… \\h``) writes an unstyled result: the match emptied it
+    and put its words in the run before, and the next field update wrote
+    "Table 3" back beside the new text. A field-only label gets its own
+    refusal wording and the same ``allow_hyperlink`` opt-in; everything
+    the old question caught is refused exactly as before.
+
+    **A match may not CROSS an equation** (:func:`_refuse_crossed_maths`).
     """
     at, end = match
     link_spans = [(m.start(), m.end())
                   for m in HYPERLINK_ANY_RE.finditer(para_xml)]
+    label_of = {i: label for label in _label_spans_in(para_xml, runs, spans)
+                for i in range(label.first, label.last + 1)}
 
-    def labels_a_link(run: re.Match[str]) -> bool:
+    def a_hyperlink(run: re.Match[str]) -> bool:
         return (_HYPERLINK_RUN in run.group(0)
                 or span_holding(run.start(), link_spans) is not None)
 
-    def label_end(idx: int) -> int:
+    def labels_a_link(idx: int, run: re.Match[str]) -> bool:
+        return a_hyperlink(run) or idx in label_of
+
+    def field_only(idx: int, run: re.Match[str]) -> str | None:
+        """The field's instruction, when only the field makes it a label."""
+        label = label_of.get(idx)
+        if a_hyperlink(run) or label is None or label.field is None:
+            return None
+        lo, hi = label.field
+        return " ".join(unescape(t).strip()
+                        for t in INSTR_RE.findall(para_xml[lo:hi]))[:40]
+
+    def label_end(idx: int, run: re.Match[str]) -> int:
+        if field_only(idx, run) is not None:
+            return label_of[idx].end
         return _label_end(idx, runs, spans, link_spans)
 
     if not allow_notes:
         _refuse_crossed_note(runs, spans, (at, end), new, who)
+    _refuse_crossed_maths(para_xml, runs, spans, (at, end), new, who=who)
 
     edits, first = [], True
     for idx, ((start, stop), run) in enumerate(zip(spans, runs, strict=True)):
@@ -616,8 +645,19 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
         run_xml = run.group(0)
         body = visible_text(run_xml)
         tail = body[end - start:] if stop > end else ""
+        instruction = field_only(idx, run)
+        if instruction is not None and not allow_hyperlink:
+            raise AnchorError(
+                f"{who}: the match {'starts in' if first else 'crosses'} "
+                f"the result of a field ({instruction}) -- Word writes "
+                f"that result back on its next update, so "
+                f"{visible_text(run_xml)[:30]!r} would return beside the "
+                f"new words. Replace on each side of the field "
+                f"(replace_keeping_links does), or pass "
+                f"allow_hyperlink=True to rewrite the cached result "
+                f"deliberately.")
         if first:
-            if not allow_hyperlink and labels_a_link(run):
+            if not allow_hyperlink and labels_a_link(idx, run):
                 raise AnchorError(
                     f"{who}: the match starts inside a hyperlink "
                     "run -- the replacement would bleed into the link. "
@@ -630,8 +670,8 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
             # on past the link ends with the label owning words that
             # were outside it (Parental Style's Table 4 caption, two
             # thirds of it drawn as a link).
-            if (labels_a_link(run) and not grow_link_label
-                    and end > label_end(idx)):
+            if (labels_a_link(idx, run) and not grow_link_label
+                    and end > label_end(idx, run)):
                 raise AnchorError(
                     f"{who}: the match starts in a hyperlink's "
                     f"label and ends outside it -- writing {new[:40]!r} "
@@ -644,7 +684,7 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
                                             + tail)))
             first = False
         else:
-            if not allow_hyperlink and labels_a_link(run):
+            if not allow_hyperlink and labels_a_link(idx, run):
                 raise AnchorError(
                     f"{who}: the match spans a hyperlink -- "
                     f"emptying {visible_text(run_xml)[:30]!r} would leave "
@@ -661,10 +701,54 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
     return out
 
 
+def _refuse_crossed_maths(para_xml: str, runs: list[re.Match[str]],
+                          spans: list[tuple[int, int]],
+                          match: tuple[int, int], new: str, *,
+                          who: str) -> None:
+    """Refuse a match that CROSSES an equation.
+
+    The match is found in EDITABLE text — the runs' — and an inline
+    ``m:oMath`` is a sibling of the runs, not in one, so a phrase with
+    maths in the middle of it reads as contiguous there. Written the
+    ordinary way, the replacement goes into the run before the equation
+    and the runs after it are emptied, so the EQUATION MOVES to the end
+    of the new text. Measured 2026-09-17: "where [x] is the rate." with
+    "where  is" -> "here, is" became "here, isx the rate.", and nothing
+    that reads prose order in a gate reads maths.
+
+    Where the maths sits is read off the two walks together: a seam
+    between two runs is an equation exactly when the READER's offsets
+    (:func:`run_spans`, which count maths) jump across it. Touching the
+    equation at either edge is not crossing it.
+    """
+    at, end = match
+    _vruns, vspans, _cursor = run_spans(para_xml)
+    for i in range(len(runs) - 1):
+        if at < spans[i][1] < end and vspans[i + 1][0] > vspans[i][1]:
+            maths = visible_text(para_xml[runs[i].end():runs[i + 1].start()])
+            raise AnchorError(
+                f"{who}: the match crosses an equation ({maths[:30]!r}) -- "
+                f"it was found in the runs' text, where the maths is not, "
+                f"so writing {new[:40]!r} would put the equation after "
+                f"the new words. Anchor on one side of the equation.")
+
+
+class _Label(NamedTuple):
+    """What a link or a field SHOWS, in editable offsets and run indices."""
+
+    start: int
+    end: int
+    first: int
+    last: int
+    #: the XML span of the field that makes this a label, when a field
+    #: does (the outermost one); None for an element or a styled run
+    field: tuple[int, int] | None
+
+
 def _label_spans_in(para_xml: str, runs: list[re.Match[str]],
                     spans: list[tuple[int, int]],
-                    ) -> list[tuple[int, int, int, int]]:
-    """``(start, end, first run, last run)`` of every LABEL, in order.
+                    ) -> list[_Label]:
+    """Every LABEL in the paragraph, in order.
 
     A label is the text a link or a field SHOWS: the visible runs inside
     one ``w:hyperlink`` element, the visible runs of one fldChar field
@@ -673,24 +757,26 @@ def _label_spans_in(para_xml: str, runs: list[re.Match[str]],
     styled neighbours. Runs of ONE link merge into one label; two links
     side by side stay two, so words can still go between them.
 
-    Wider than `replace_in_para`'s refusal, deliberately: that one asks
-    for the Hyperlink style or an element, and an unstyled result of
-    Word's own ``REF _Ref… \\h`` is neither. A field's result is what
-    Word regenerates on update, so words written into it were never the
-    author's to keep — a label, for the purpose of editing around one.
-    Offsets are EDITABLE, the spans `runs` / `spans` carry.
+    A field's result is what Word regenerates on update, so words
+    written into it were never the author's to keep: a label, for
+    `replace_keeping_links` to edit around and for `replace_in_para`
+    (through :func:`_rewrite_span`) to refuse. Word's own
+    ``REF _Ref… \\h`` states no style on its result, which is why the
+    style alone was never the answer. Offsets are EDITABLE, the spans
+    `runs` / `spans` carry.
     """
     elements = [(m.start(), m.end())
                 for m in HYPERLINK_ANY_RE.finditer(para_xml)]
     # outermost first: `field_spans` sorts by (start, -end), so the first
     # holding span of a nested pair is the parent
     fields = [(lo, hi) for lo, hi, _ in field_spans(para_xml)]
-    out: list[tuple[int, int, int, int]] = []
+    out: list[_Label] = []
     last_key: object = None
     for idx, (run, (start, stop)) in enumerate(zip(runs, spans, strict=True)):
         if start == stop:
             continue                # zero width: never splits a label
         key: object
+        fld: tuple[int, int] | None = None
         if (element := span_holding(run.start(), elements)) is not None:
             key = ("element", element)
         elif (fld := span_holding(run.start(), fields)) is not None:
@@ -700,11 +786,10 @@ def _label_spans_in(para_xml: str, runs: list[re.Match[str]],
         else:
             last_key = None
             continue
-        if out and key == last_key and out[-1][1] == start:
-            lo, _hi, first, _last = out[-1]
-            out[-1] = (lo, stop, first, idx)
+        if out and key == last_key and out[-1].end == start:
+            out[-1] = out[-1]._replace(end=stop, last=idx)
         else:
-            out.append((start, stop, idx, idx))
+            out.append(_Label(start, stop, idx, idx, fld))
         last_key = key
     return out
 
@@ -759,8 +844,9 @@ def replace_keeping_links(para_xml: str, old: str, new: str, *,
     * `old` is not in the paragraph, or is there more than once;
     * a label STRADDLES an edge of `old` (half of it cannot be kept);
     * `new` drops a label, or carries them in a different order;
-    * new words for an empty piece would land where an EQUATION sits
-      between two labels, or straight after a label an equation follows;
+    * a rewritten piece crosses an EQUATION (as in `replace_in_para`), or
+      new words for an empty piece would land between two labels with
+      an equation between them;
     * a note, endnote or comment REFERENCE is crossed by a rewritten
       piece — the same refusal, for the same reason, as
       `replace_in_para`'s — or sits exactly where an empty piece's new
@@ -778,26 +864,27 @@ def replace_keeping_links(para_xml: str, old: str, new: str, *,
     at, end = _locate_anchor(para_xml, visible, old, normalize=normalize,
                              who="replace_keeping_links")
     labels = [lab for lab in _label_spans_in(para_xml, runs, spans)
-              if overlaps(lab[:2], (at, end))]
+              if overlaps((lab.start, lab.end), (at, end))]
     if not labels:
         return replace_in_para(para_xml, old, new, allow_notes=allow_notes,
                                normalize=normalize)
 
-    for lo, hi, _first, _last in labels:
-        if lo < at or hi > end:
+    for lab in labels:
+        if lab.start < at or lab.end > end:
             raise AnchorError(
                 f"replace_keeping_links: the link label "
-                f"{visible[lo:hi]!r} straddles the "
-                f"{'start' if lo < at else 'end'} of {old[:60]!r} — half "
-                f"a label cannot be kept whole by editing around it. "
-                f"Widen `old` to take the whole label, or narrow it to "
-                f"leave the label out.")
+                f"{visible[lab.start:lab.end]!r} straddles the "
+                f"{'start' if lab.start < at else 'end'} of {old[:60]!r} "
+                f"— half a label cannot be kept whole by editing around "
+                f"it. Widen `old` to take the whole label, or narrow it "
+                f"to leave the label out.")
 
     old_text = visible[at:end]
     placed: list[tuple[int, int]] = []          # each label's span in `new`
     after = 0
-    for lo, hi, _first, _last in labels:
-        label = visible[lo:hi]
+    for lab in labels:
+        lo = lab.start
+        label = visible[lo:lab.end]
         in_old = [s for s, _e in _hits(old_text, label, normalize)]
         in_new = _hits(new, label, normalize)
         if not in_new:
@@ -822,7 +909,8 @@ def replace_keeping_links(para_xml: str, old: str, new: str, *,
         after = where[1]
 
     # the pieces: before the first label, between labels, after the last
-    bounds = [at] + [x for lab in labels for x in lab[:2]] + [end]
+    bounds = [at] + [x for lab in labels for x in (lab.start, lab.end)] \
+        + [end]
     cuts = [0] + [x for span in placed for x in span] + [len(new)]
     pieces = [((bounds[2 * i], bounds[2 * i + 1]),
                new[cuts[2 * i]:cuts[2 * i + 1]])
@@ -857,12 +945,12 @@ def _insert_between_labels(para_xml: str, runs: list[re.Match[str]],
     """
     labels = _label_spans_in(para_xml, runs, spans)
     left = right = None
-    for lo, hi, first, last in labels:
-        if hi == at:
-            left = last
-        if lo == at:
-            right = first
-    _vruns, vspans, cursor = run_spans(para_xml)
+    for lab in labels:
+        if lab.end == at:
+            left = lab.last
+        if lab.start == at:
+            right = lab.first
+    _vruns, vspans, _cursor = run_spans(para_xml)
     places = ({vspans[left][1]} if left is not None else set()) \
         | ({vspans[right][0]} if right is not None else set())
     if len(places) != 1:
@@ -872,15 +960,6 @@ def _insert_between_labels(para_xml: str, runs: list[re.Match[str]],
             f"maths or after it is not something the text can say. Edit "
             f"that gap by hand, or anchor on one label.")
     (place,) = places
-    if place != cursor and not any(lo == place for lo, _hi in vspans):
-        # the reader's offset has no run starting at it: an equation (or
-        # other between-run content) follows the label directly, and
-        # `insert_in_para` has no answer there but a bare ValueError
-        raise AnchorError(
-            f"replace_keeping_links: {words[:40]!r} would go straight "
-            f"after a link label that an equation follows, where no run "
-            f"starts to insert beside. Put the words after the maths in "
-            f"a separate edit, or insert a run by hand.")
     if not allow_notes:
         for run, (lo, hi) in zip(runs, spans, strict=True):
             if lo == hi == at and (note := _note_in(run.group(0))):
@@ -893,8 +972,7 @@ def _insert_between_labels(para_xml: str, runs: list[re.Match[str]],
                     f"it).")
     # the face the words take: the nearest PLAIN run, before them if
     # there is one — prose the sentence already has, never a label
-    in_label = {i for _lo, _hi, first, last in labels
-                for i in range(first, last + 1)}
+    in_label = {i for lab in labels for i in range(lab.first, lab.last + 1)}
     plain = [i for i, (lo, hi) in enumerate(spans)
              if lo < hi and i not in in_label]
     before = [i for i in plain if spans[i][1] <= at]
@@ -1264,6 +1342,16 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
         return _split_run(para_xml, runs[inside[0]], at - inside[1], content,
                           protected=protected,
                           allow_hyperlink=allow_hyperlink, at=at)
+    if at != cursor and not any(s == at < e for s, e in spans):
+        # No run holds the offset and no VISIBLE one starts there, so the
+        # next thing a reader sees is MATHS: the reader's offsets count an
+        # equation and it lives in no w:r. `_between_runs` asked for the
+        # last run starting here and raised a bare ValueError when there
+        # was none (2026-09-17) — the ordinary case of "insert before the
+        # maths" — and, with only a zero-width marker starting here, put
+        # the words BEFORE the marker it means to go after.
+        pos = _shielded(runs, at, _maths_start(para_xml, at), protected)
+        return para_xml[:pos] + content + para_xml[pos:]
     if not runs:
         close = para_xml.rindex("</w:p>")
         return para_xml[:close] + content + para_xml[close:]
@@ -1313,6 +1401,45 @@ def _between_runs(runs: list[re.Match[str]], spans: list[tuple[int, int]],
     pos = (runs[-1].end() if at == cursor else
            max(r.start() for r, (s, _) in zip(runs, spans, strict=True)
                if s == at))
+    return _shielded(runs, at, pos, protected)
+
+
+#: How every equation opens: `m:oMathPara` (display) starts with it too,
+#: and holds its `m:oMath`, so the FIRST occurrence at an offset is the
+#: outermost element there.
+_OMATH_OPEN = "<m:oMath"
+
+
+def _maths_start(para_xml: str, at: int) -> int:
+    """The XML offset of the equation that BEGINS at visible offset `at`.
+
+    A run goes before the outermost element — before an ``m:oMathPara``,
+    never between it and its ``m:oMath``. An offset no equation begins
+    at, and no run holds, is inside the maths itself: refused, since a
+    run inside ``m:oMath`` is not something Word opens.
+    """
+    pos = para_xml.find(_OMATH_OPEN)
+    while pos >= 0:
+        before = len(visible_text(para_xml[:pos]))
+        if before == at:
+            return pos
+        if before > at:
+            break
+        pos = para_xml.find(_OMATH_OPEN, pos + 1)
+    raise AnchorError(
+        f"insert_in_para: offset {at} falls inside an equation (m:oMath) — "
+        f"a run cannot go inside the maths. Insert before or after the "
+        f"equation.")
+
+
+def _shielded(runs: list[re.Match[str]], at: int, pos: int,
+              protected: _Protected) -> int:
+    """`pos` moved OUTSIDE any protected region it merely touches.
+
+    At an edge the same place on the page is available outside the link,
+    field or bookmark; strictly inside, with its content on both sides,
+    it is refused unless that region's flag allows it.
+    """
     for regions, allowed, what in protected:
         if (span := _enclosing(regions, pos)) is None:
             continue

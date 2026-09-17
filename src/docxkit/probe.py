@@ -124,7 +124,9 @@ class Probe:
                 out.append(f"    ** the two views disagree: find/para_slice "
                            f"{seen or 'nothing'}, edit/replace_in_para "
                            f"{editable or 'nothing'} — a phrase spanning an "
-                           f"equation is visible to one and not the other")
+                           f"equation is visible to one and not the other, "
+                           f"and replace_in_para writes across the maths "
+                           f"in neither spelling: anchor beside it")
         return "\n".join(out)
 
 

@@ -299,16 +299,19 @@ def test_an_EQUATION_between_two_labels_is_refused():
         replace_keeping_links(p, "Table 3Table 4", "Table 3, Table 4")
 
 
-def test_words_after_a_label_an_EQUATION_follows_are_refused_not_crashed():
-    """The one place the reader's offset has no run starting at it: a
-    label with an inline equation straight after it. `insert_in_para`
-    raises a bare ValueError there ("max() iterable argument is
-    empty"), which names nothing the caller did; this says what it is."""
+def test_words_after_a_label_an_EQUATION_follows_go_BETWEEN_the_two():
+    """A label with an inline equation straight after it: the reader's
+    offset has no run starting at it. `insert_in_para` raised a bare
+    ValueError there until 2026-09-17; the words now go between the
+    link and the maths, outside both."""
     table = link_element("Table3", "Table 3")
     p = para(run("see "), table, OMATH, run(" below."))
 
-    with pytest.raises(AnchorError, match="equation"):
-        replace_keeping_links(p, "Table 3", "Table 3 with")
+    out = replace_keeping_links(p, "Table 3", "Table 3 with ")
+
+    assert visible_text(out) == "see Table 3 with x below."
+    assert table in out
+    assert out.index(table) < out.index("with ") < out.index("<m:oMath>")
 
 
 def test_the_guard_flags_are_KEYWORD_only():
@@ -346,6 +349,142 @@ def test_normalize_matches_through_Word_s_glyphs_and_writes_new_verbatim():
 
     assert visible_text(out) == "The workers’ own view (Sen 1999)."
     assert SEN in out
+
+
+# ------------------------ three defects found writing the helper above
+#
+# All three in `edit` itself, measured 2026-09-17 while building
+# `replace_keeping_links` on top of `replace_in_para` and
+# `insert_in_para`, and fixed where they live.
+
+
+REF_TABLE3 = link_field("", "Table 3", instr="REF _Ref1 \\h", styled=False)
+
+
+def test_replace_in_para_REFUSES_to_write_through_an_UNSTYLED_cross_ref():
+    """Word's Insert > Cross-reference writes `REF _Ref… \\h` with a
+    result run that states no style, and `replace_in_para` asked only
+    about the Hyperlink style and the `w:hyperlink` element. Measured:
+
+        replace_in_para(see [REF: Table 3] for detail,
+                        "see Table 3 for", "consult Table 4 for")
+        -> no refusal; the field's result run EMPTIED, "Table 4" in the
+           plain run before it
+
+    The page read correctly until the next field update, when Word
+    writes "Table 3" back into the empty result beside the new words.
+    It is a label for the same reason a hyperlink's is."""
+    p = para(run("see "), REF_TABLE3, run(" for detail"))
+
+    with pytest.raises(AnchorError, match="field"):
+        replace_in_para(p, "see Table 3 for", "consult Table 4 for")
+    with pytest.raises(AnchorError, match="field"):
+        replace_in_para(p, "Table 3 for", "Table 4 for")
+
+
+def test_a_match_WHOLLY_inside_a_field_result_needs_the_same_opt_in():
+    """Inside the label, as for a hyperlink: `allow_hyperlink=True` is the
+    deliberate retitle, and the default refuses."""
+    p = para(run("see "), REF_TABLE3, run(" for detail"))
+
+    with pytest.raises(AnchorError, match="field"):
+        replace_in_para(p, "Table 3", "Table 4")
+
+    out = replace_in_para(p, "Table 3", "Table 4", allow_hyperlink=True)
+    assert visible_text(out) == "see Table 4 for detail"
+    assert "REF _Ref1" in out
+
+
+def test_a_match_beside_a_field_result_is_still_an_ordinary_replace():
+    p = para(run("see "), REF_TABLE3, run(" for detail"))
+
+    out = replace_in_para(p, "for detail", "for the detail")
+
+    assert visible_text(out) == "see Table 3 for the detail"
+    assert REF_TABLE3 in out
+
+
+def test_replace_in_para_REFUSES_a_match_that_crosses_an_inline_EQUATION():
+    """The anchor is matched in the runs' text, where an equation is not,
+    so "where  is" matched across the maths. Measured:
+
+        replace_in_para(where [x] is the rate., "where  is", "here, is")
+        -> 'here, isx the rate.'
+
+    The replacement went into the run before the equation and the words
+    after it were emptied: the equation moved to the end of the new
+    text, and no gate reads maths order in prose."""
+    p = para(run("where "), OMATH, run(" is the rate."))
+
+    with pytest.raises(AnchorError, match="equation"):
+        replace_in_para(p, "where  is", "here, is")
+
+
+@pytest.mark.parametrize("old,new,want", [
+    ("where ", "here ", "here x is the rate."),
+    (" is the", " was the", "where x was the rate."),
+])
+def test_a_match_that_only_TOUCHES_the_equation_is_not_refused(old, new, want):
+    p = para(run("where "), OMATH, run(" is the rate."))
+
+    assert visible_text(replace_in_para(p, old, new)) == want
+
+
+def test_a_piece_of_replace_keeping_links_that_crosses_maths_is_refused():
+    """The pieces are written by the same `_rewrite_span`, so the
+    equation guard reaches them too."""
+    p = para(run("where "), OMATH, run(" is ("), SEN, run(")."))
+
+    with pytest.raises(AnchorError, match="equation"):
+        replace_keeping_links(p, "where  is (Sen 1999)",
+                              "here, is (Sen 1999)")
+
+
+def test_insert_in_para_goes_BEFORE_an_inline_equation_at_its_offset():
+    """Measured: `insert_in_para(where [x] is it., 6, "now ")` raised
+    `ValueError: max() iterable argument is empty` — no run STARTS at
+    the offset where an equation does. The words go in as a run right
+    before the `m:oMath`."""
+    p = para(run("where "), OMATH, run(" is it."))
+
+    out = edit.insert_in_para(p, 6, "now ")
+
+    assert visible_text(out) == "where now x is it."
+    assert out.index("now ") < out.index("<m:oMath>")
+    assert "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>" in out
+
+
+def test_insert_before_an_equation_goes_AFTER_a_marker_that_ends_there():
+    """"At offset N" means after everything that ended there — the rule
+    `_between_runs` states. A note marker is a zero-width run AT the
+    offset, and the maths after it is where the words go."""
+    p = para(run("where"), FN_REF, OMATH, run(" is it."))
+
+    out = edit.insert_in_para(p, 5, " now ")
+
+    assert visible_text(out) == "where now x is it."
+    assert (out.index("footnoteReference") < out.index(" now ")
+            < out.index("<m:oMath>"))
+
+
+def test_insert_before_a_DISPLAY_equation_lands_outside_the_oMathPara():
+    """`m:oMathPara` holds its `m:oMath`, and both begin at the same
+    offset: a run inside the display block is not a place Word accepts."""
+    display = f"<m:oMathPara>{OMATH}</m:oMathPara>"
+    p = para(display, run(" defines x."))
+
+    out = edit.insert_in_para(p, 0, "Here, ")
+
+    assert visible_text(out) == "Here, x defines x."
+    assert out.index("Here, ") < out.index("<m:oMathPara>")
+
+
+def test_an_offset_INSIDE_an_equation_is_refused_in_the_package_s_words():
+    p = para(run("where "), "<m:oMath><m:r><m:t>xy</m:t></m:r></m:oMath>",
+             run(" is it."))
+
+    with pytest.raises(AnchorError, match="inside an equation"):
+        edit.insert_in_para(p, 7, "now ")
 
 
 # ------------------------------------------------------------ rstrip_para
