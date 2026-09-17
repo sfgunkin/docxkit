@@ -246,6 +246,11 @@ def test_a_note_reference_with_NO_id_is_named_by_its_kind():
         == "footnote 11"
     assert _note_in("<w:r><w:footnoteReference/></w:r>") == "footnote"
     assert _note_in("<w:r><w:t>plain</w:t></w:r>") is None
+    # Two markers in one run — a word carrying two footnotes — and the
+    # name is the one a reader meets FIRST, as every message that quotes
+    # a paragraph names what comes first in it.
+    assert _note_in('<w:r><w:footnoteReference w:id="11"/><w:t>x</w:t>'
+                    '<w:footnoteReference w:id="12"/></w:r>') == "footnote 11"
 
 
 # --- the run of 2026-09-17: fields, notes and maths at their edges -------

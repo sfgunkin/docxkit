@@ -222,6 +222,20 @@ def test_the_END_of_a_LONG_paragraph_is_still_its_end():
     assert text_of(out) == LONG + "Table 4 has it."
 
 
+def test_the_END_of_a_long_paragraph_that_ENDS_on_an_equation():
+    """The paragraph's end is `len(visible_text(...))` and the caller's
+    offset is its own int: equal past 256 and not the same object, where
+    an identity test sent the words to the maths search instead, to be
+    refused as an offset inside an equation the paragraph has ended."""
+    assert len(LONG) > 256, "the fixture no longer tests what it says"
+    p = "<w:p>" + run(LONG) + MATH.format("x") + "</w:p>"
+
+    out = insert_in_para(p, len(LONG) + 1, " holds")
+
+    assert text_of(out) == LONG + "x holds"
+    assert out.index("</m:oMath>") < out.index("holds")
+
+
 def test_a_run_BOUNDARY_in_a_long_paragraph_is_still_a_boundary():
     """The same identity trap, on the other comparison: the run whose
     span starts exactly at the offset is found with `s == at`."""

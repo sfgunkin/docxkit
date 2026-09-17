@@ -755,6 +755,76 @@ def test_a_match_that_only_TOUCHES_an_empty_field_is_not_refused(old, new,
     assert visible_text(replace_in_para(p, old, new)) == want
 
 
+@pytest.mark.parametrize("lead,old,new,want", [
+    pytest.param("", "now", "later", "A claim here and later.",
+                 id="wholly_after_it"),
+    pytest.param("", "A cl", "The cl", "The claim here and now.",
+                 id="wholly_before_it"),
+    pytest.param(PAST_THE_CACHE, "A claim", "The point",
+                 "The point here and now.", id="ending_on_it_past_256"),
+])
+def test_a_match_that_does_not_REACH_an_empty_field_is_not_refused(lead, old,
+                                                                   new, want):
+    """The guard's two inequalities, each from the side the crossing
+    cases leave open: a field the match has not got to, one it stopped
+    before — and one it ends exactly on, past the small-int cache, where
+    "is not" and "!=" part company on two equal offsets."""
+    p = para(run(lead + "A claim"), EMPTY_RESULT_REF,
+             run(" here and now.", preserve=True))
+
+    assert visible_text(replace_in_para(p, old, new)) == lead + want
+
+
+def test_an_empty_field_PAST_256_characters_is_still_EMPTY():
+    """A run shows nothing when its span starts and ends at one offset —
+    equal, and past 256 not the same object, which read as a field with
+    a result and let the match through."""
+    p = para(run(PAST_THE_CACHE + "A claim"), EMPTY_RESULT_REF,
+             run(" here."))
+
+    with pytest.raises(AnchorError, match="shows nothing yet"):
+        replace_in_para(p, "claim here", "point made")
+
+
+def test_a_field_WITH_a_result_does_not_end_the_search():
+    """The paragraph's first field is an ordinary cross-reference and
+    nothing to do with the match; the empty one after it is the
+    question. Stopping at the first field answered about the wrong
+    one."""
+    p = para(run("See "), REF_TABLE3, run(" and a claim"),
+             EMPTY_RESULT_REF, run(" here."))
+
+    with pytest.raises(AnchorError, match="shows nothing yet"):
+        replace_in_para(p, "claim here", "point made")
+
+
+def test_an_empty_field_BESIDE_the_match_does_not_end_the_search():
+    """Nor does an empty field the match never reaches: the scan is over
+    every field in the paragraph, and the one that matters here is the
+    second."""
+    p = para(run("See "), EMPTY_RESULT_REF, run(" and a claim"),
+             NO_RESULT_REF, run(" here."))
+
+    with pytest.raises(AnchorError, match="shows nothing yet"):
+        replace_in_para(p, "claim here", "point made")
+
+
+def test_a_field_WHOLE_in_one_run_is_read_at_that_run():
+    """A field need not be four runs. `begin`, the instruction,
+    `separate` and `end` in ONE run is valid WordprocessingML — a
+    generator writes it, Word rewrites it on save — and then the field
+    has a single run to be read at, not a second one to ask."""
+    one_run = ('<w:r><w:fldChar w:fldCharType="begin"/>'
+               '<w:instrText xml:space="preserve"> REF _Ref9 \\h '
+               "</w:instrText>"
+               '<w:fldChar w:fldCharType="separate"/>'
+               '<w:fldChar w:fldCharType="end"/></w:r>')
+    p = para(run("A claim"), one_run, run(" here."))
+
+    with pytest.raises(AnchorError, match="shows nothing yet"):
+        replace_in_para(p, "claim here", "point made")
+
+
 @pytest.mark.parametrize("new,want", [
     pytest.param("see Sen 1999", "(see Sen 1999).", id="before_the_label"),
     pytest.param("Sen 1999 and others", "(Sen 1999 and others).",
@@ -842,6 +912,21 @@ def test_a_marker_where_the_words_go_is_seen_WHEREVER_it_sits(before, after,
 
     out = replace_keeping_links(p, "Sen 1999", new, allow_notes=True)
     assert visible_text(out) == want
+
+
+def test_a_marker_inside_a_run_that_does_not_OPEN_the_paragraph():
+    """Where the marker sits is the run's start PLUS its offset within
+    it, and a bitwise sum agrees with that only while one of the two is
+    zero — which every other fixture makes true, by giving the marker
+    the first run or a run of its own. Here the run starts at 3 and the
+    marker is 7 characters into it: 3 + 7 is the label's start, 3 ^ 7
+    and 3 | 7 are not."""
+    prose = ('<w:r><w:t xml:space="preserve">claim (</w:t>'
+             '<w:footnoteReference w:id="11"/></w:r>')
+    p = para(run("A ("), prose, SEN, run(")."))
+
+    with pytest.raises(AnchorError, match="footnote 11 sits exactly where"):
+        replace_keeping_links(p, "Sen 1999", "see Sen 1999")
 
 
 def test_a_marker_where_new_words_go_PAST_256_characters_is_refused():
