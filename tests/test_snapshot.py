@@ -9,7 +9,9 @@ an anchor that resolves exactly once, in the paragraph the protocol names.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -153,6 +155,21 @@ def test_a_cell_with_several_paragraphs_and_a_NESTED_table():
     assert got.structure["body"]["tables"] == 1
 
 
+def test_a_SECOND_table_is_T2_numbered_among_the_tables_alone():
+    """`T<k>` is the k-th top-level table, whatever paragraphs stand
+    between. A first table alone cannot tell `index + 1` from `index | 1`
+    or `index ^ 1` — all three give 1 at index 0 — so the fixture holds
+    the second one, where they give 2, 1 and 0."""
+    parts = make_parts(table(row("a")) + para(run("between"))
+                       + table(row("b", "c")))
+
+    got = snap.snapshot(parts)
+
+    assert got.lines == ("[T1]", "[T1:1,1] a", "[P1] between",
+                         "[T2]", "[T2:1,1] b", "[T2:1,2] c")
+    assert got.structure["body"]["tables"] == 2
+
+
 def test_the_notes_are_named_by_KIND_and_id_and_the_shells_are_left_out():
     """Footnotes AND endnotes — which store a journal uses is house style —
     with Word's separators and an empty definition skipped, as DSI's dump
@@ -227,6 +244,74 @@ def test_a_NESTED_field_keeps_its_own_target_and_its_parent_its_own():
 
     assert body["ref_fields"] == {"_Ref9": 1}
     assert body["hyperlink_fields"] == {"Inner": 1}
+
+
+def test_a_field_nested_in_a_RESULT_keeps_its_SPLIT_instruction_whole():
+    """An instruction belongs to the INNERMOST open field: here the outer
+    REF is past its separator and the inner HYPERLINK is not. Asking the
+    OUTERMOST field instead reads each half of the split inner instruction
+    on its own, and neither half names a target. The test above cannot
+    tell: its inner instruction is one run, a target read either way."""
+    nested = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+              '<w:r><w:instrText xml:space="preserve"> REF _Ref9 \\h '
+              "</w:instrText></w:r>"
+              '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+              + hyperlink_field("Inner", "inner", split=True)
+              + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+    body = snap.snapshot(make_parts(para(nested))).structure["body"]
+
+    assert body["hyperlink_fields"] == {"Inner": 1}
+    assert body["ref_fields"] == {"_Ref9": 1}
+
+
+def test_an_instruction_in_a_field_RESULT_is_not_joined_to_its_own():
+    """A REF whose result holds a HYPERLINK instruction an edit cut the
+    `begin` off. Past its separator the REF collects nothing more: joined,
+    it reads `REF _Ref9 \\h  HYPERLINK \\l "Orphan"`, the HYPERLINK
+    pattern claims that first, and the cross-reference drops out of the
+    record. The orphan fixtures above hold no instruction BEFORE their
+    separator, so joining and not joining read the same there."""
+    cut = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText xml:space="preserve"> REF _Ref9 \\h '
+           "</w:instrText></w:r>"
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           '<w:r><w:instrText> HYPERLINK \\l "Orphan" </w:instrText></w:r>'
+           + run("label")
+           + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+    body = snap.snapshot(make_parts(para(cut))).structure["body"]
+
+    assert body["ref_fields"] == {"_Ref9": 1}
+    assert body["hyperlink_fields"] == {"Orphan": 1}
+
+
+def test_an_OUTER_instruction_resumes_after_a_field_nested_INSIDE_it():
+    """Word nests a field in another's INSTRUCTION half too, and when the
+    inner one ends the words after it are the outer instruction again —
+    that is the stack's pop. An `end` that only marks its field done, or
+    a `separate` / `end` taken for a new field, leaves `"Outer"` to be
+    read on its own and the target is lost. The name comes AFTER the
+    nested field on purpose: before it, the outer instruction would hold
+    the whole target whichever frame the rest went to."""
+    inner = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText>'
+             "</w:r>"
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             + run("4")
+             + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    outer = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l '
+             "</w:instrText></w:r>"
+             + inner
+             + '<w:r><w:instrText>"Outer" </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             + LINK_RUN.format("label")
+             + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+    body = snap.snapshot(make_parts(para(outer))).structure["body"]
+
+    assert body["hyperlink_fields"] == {"Outer": 1}
 
 
 def test_a_field_that_is_not_a_link_and_one_left_OPEN_are_read_as_they_are():
@@ -367,6 +452,53 @@ def test_INSERTIONS_the_document_cannot_hold_are_refused():
         snap.snapshot(make_parts(body), insertions=(9,))
 
 
+@pytest.mark.parametrize("count,insertions,said", [
+    pytest.param(4, (1, 3), "after baseline ¶3, and this document runs out "
+                 "at baseline ¶3 with 4 paragraphs", id="owed_at_the_last"),
+    pytest.param(3, (4, 9), "after baseline ¶9, and this document runs out "
+                 "at baseline ¶3 with 3 paragraphs", id="the_latest_named"),
+])
+def test_INSERTIONS_still_OWED_at_the_end_are_refused_naming_the_LATEST(
+        count, insertions, said):
+    """`1,3` on four paragraphs labels P1, P1a, P2, P3 and runs out with
+    the insertion after ¶3 still owed. Nothing past the end is named, so
+    only the `used < owed` half of the test says so — the ¶9 case above
+    never reaches it — and the ¶ it names is one AT the last baseline
+    paragraph, not merely past it. Of several, the message names the
+    latest: two distinct numbers, since one cannot tell first from last."""
+    body = "".join(para(run(f"p{i}")) for i in range(1, count + 1))
+
+    with pytest.raises(AnchorError, match=re.escape(said)):
+        snap.snapshot(make_parts(body), insertions=insertions)
+
+
+def test_INSERTIONS_count_PARAGRAPHS_and_a_TABLE_is_not_one():
+    """Two paragraphs with a table between them are P1 and P2, with no
+    room left for a paragraph inserted after ¶2. Counting the table as a
+    paragraph labels a third that is not there and lets the list pass."""
+    body = para(run("p1")) + table(row("cell")) + para(run("p2"))
+
+    with pytest.raises(AnchorError, match="with 2 paragraphs in all"):
+        snap.snapshot(make_parts(body), insertions=(2,))
+
+
+def test_INSERTIONS_past_256_at_ONE_place_are_counted_by_VALUE():
+    """CPython caches the ints up to 256, so an identity test on the
+    counts reads as `<` until the 257th insertion at one place, where the
+    two 257s — one counted by `Counter`, one by the walk — are different
+    objects. Two baseline paragraphs with 257 each: an identity test
+    mislabels ¶2 as one more insertion after ¶1, or refuses the list at
+    its end, when it fits exactly."""
+    n = 257
+    body = "".join(para(run("x")) for _ in range(2 * (n + 1)))
+
+    got = snap.snapshot(make_parts(body), insertions=(1,) * n + (2,) * n)
+
+    assert [line.split("]")[0][1:] for line in got.lines] == (
+        ["P1"] + [f"P1{snap._letters(i)}" for i in range(n)]
+        + ["P2"] + [f"P2{snap._letters(i)}" for i in range(n)])
+
+
 def test_a_NEGATIVE_insertion_is_refused():
     with pytest.raises(AnchorError, match="-1"):
         snap.snapshot(make_parts(para(run("x"))), insertions=(-1,))
@@ -397,6 +529,26 @@ def test_a_stem_WITH_a_suffix_keeps_it_rather_than_losing_it(tmp_path):
         tmp_path / "round.v2")
 
     assert written[0].name == "round.v2.txt"
+
+
+def test_write_makes_EVERY_missing_directory_above_the_stem(tmp_path):
+    """Two levels, because one missing directory under an existing one is
+    all a `mkdir` without `parents` can make."""
+    written = snap.snapshot(make_parts(para(run("x")))).write(
+        tmp_path / "rounds" / "r3" / "baseline")
+
+    assert all(p.is_file() for p in written)
+
+
+def test_the_structure_file_keeps_a_NON_ASCII_name_readable(tmp_path):
+    """DSI's bookmarks are Cyrillic, and the record is read by people and
+    searched with grep: `\\u0422\\u0430…` is a name neither finds."""
+    body = para('<w:bookmarkStart w:id="1" w:name="Таблица1"/>', run("x"),
+                '<w:bookmarkEnd w:id="1"/>')
+
+    written = snap.snapshot(make_parts(body)).write(tmp_path / "baseline")
+
+    assert '"Таблица1"' in written[2].read_text(encoding="utf-8")
 
 
 # ================================================================ anchors
@@ -448,6 +600,36 @@ def test_a_scope_that_names_NOTHING_is_its_own_stop():
     assert r.target == ""
 
 
+def test_a_scope_that_names_NOTHING_measures_NOTHING():
+    """No target, so no facts to report — even when the LAST place in the
+    document has an equation, a link and a trailing space, which is the
+    place a target of -1 would index. `paper_parts` ends in an endnote
+    with none of the three, where measuring it and not agree."""
+    parts = make_parts(para(run("x"))
+                       + para(MATH.format("y"), element_link("Tbl1", "T 1"),
+                              run("end ", preserve=True)))
+
+    (r,) = _resolve("P9=x", parts=parts)
+
+    assert (r.target, r.math, r.links, r.trailing, r.crossing,
+            r.formats) == ("", 0, (), "", (), 0)
+    assert len(r.format().splitlines()) == 1
+
+
+def test_a_scope_of_SEVERAL_places_targets_the_one_holding_the_anchor():
+    """`T1` is four cells: the target is the cell the anchor is in, and
+    the scope's FIRST place only when none holds it. A one-paragraph scope
+    cannot tell the place found from the fallback — its first place is
+    the only one."""
+    (found,) = _resolve("T1=Poland")
+    (missing,) = _resolve("T1=Latvia")
+    (star,) = _resolve("*=are outputs")
+
+    assert found.target == "T1:2,1"
+    assert missing.target == "T1:1,1"
+    assert (star.target, star.math) == ("P3", 2)
+
+
 @pytest.mark.parametrize("kind", ["append", "insert_after"])
 def test_APPEND_wants_the_scope_to_END_with_it_trailing_space_excepted(kind):
     """¶5 ends `shows it. ` — the trailing space is excepted and reported,
@@ -458,6 +640,28 @@ def test_APPEND_wants_the_scope_to_END_with_it_trailing_space_excepted(kind):
     assert ok.ok and ok.trailing == " "
     assert not not_end.ok
     assert not_end.reason == "P5 does not END with it"
+
+
+def test_APPEND_measures_the_span_that_ENDS_the_paragraph():
+    """An append's span starts `len(anchor)` characters before the
+    paragraph's end: 40 - 16 = 24, where the italic run begins, so it
+    covers two formats and no link. The lengths are chosen so no other
+    operator on 40 and 16 starts there — `^` gives 56, `%` 8, `&` 0 — and
+    every other start meets something else: the link, the plain prose
+    alone, or nothing at all."""
+    parts = make_parts(para(
+        LINK_RUN.format("Sen 1999"),
+        run(" argues that the", preserve=True),
+        '<w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve"> growth</w:t>'
+        "</w:r>",
+        '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve"> matters.'
+        "</w:t></w:r>"))
+
+    (r,) = snap.resolve(parts, [snap.Anchor("P1", "append",
+                                            " growth matters.")])
+
+    assert r.ok
+    assert (r.crossing, r.formats) == ((), 2)
 
 
 def test_APPEND_that_ends_its_scope_and_ALSO_occurs_elsewhere_stops():
@@ -508,6 +712,20 @@ def test_a_count_of_two_in_ONE_place_is_written_with_its_multiplier():
     assert r.reason == "occurs 2 times: P1 ×2"
 
 
+def test_an_anchor_in_TWO_paragraphs_of_one_CELL_occurs_twice_there():
+    """A cell's paragraphs share its label, so the count per label is a
+    SUM over them. Every other fixture here adds to a label once, where
+    `+`, `|` and `^` onto zero agree."""
+    cell = ("<w:tc>" + para(run("Poland")) + para(run("Poland, again"))
+            + "</w:tc>")
+    parts = make_parts(f"<w:tbl><w:tr>{cell}</w:tr></w:tbl>")
+
+    (r,) = _resolve("T1:1,1=Poland", parts=parts)
+
+    assert (r.ok, r.total, r.where) == (False, 2, (("T1:1,1", 2),))
+    assert r.reason == "occurs 2 times: T1:1,1 ×2"
+
+
 def test_CROSSING_names_the_link_label_the_anchor_span_overlaps():
     """What an apply script needs before it writes: `replace_in_para`
     refuses a match that crosses a label, so the edit has to go around
@@ -536,6 +754,45 @@ def test_a_label_Word_FRAGMENTED_across_runs_is_one_label():
     (r,) = _resolve("P1=As Sen", parts=parts)
 
     assert r.crossing == ("Sen 1999",)
+
+
+#: Three hundred characters of prose: past 256, where CPython stops
+#: caching ints and an identity test on two offsets stops reading as `==`.
+FILLER = "word " * 60
+
+
+def test_CROSSING_names_each_of_TWO_links_whole_far_into_a_paragraph():
+    """Two links, the second fragmented across runs, and an anchor that
+    crosses only the second. Its runs are one label because the second
+    starts where the LAST label ended — not the first label, and not
+    merely somewhere after the last, which would swallow the prose
+    between the two links into one label. Past offset 256 for `is`."""
+    fragmented = ('<w:hyperlink w:anchor="Deaton2013">'
+                  + LINK_RUN.format("Deaton ") + LINK_RUN.format("2013")
+                  + "</w:hyperlink>")
+    parts = make_parts(para(run(FILLER, preserve=True),
+                            element_link("Sen1999", "Sen 1999"),
+                            run(" and ", preserve=True), fragmented,
+                            run(" agree.", preserve=True)))
+
+    (r,) = _resolve("P1=and Deaton 2013 agree", parts=parts)
+
+    assert r.crossing == ("Deaton 2013",)
+
+
+def test_a_note_MARKER_inside_the_span_is_not_a_FORMAT():
+    """A footnote reference is a run of no visible width with properties
+    of its own, and it formats no character the anchor holds, so it is
+    skipped. Past offset 256: below it a zero-width run's start and end
+    are one cached int, and an identity test skips it just the same."""
+    marker = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+              '<w:footnoteReference w:id="2"/></w:r>')
+    parts = make_parts(para(run(FILLER, preserve=True), run("claim"),
+                            marker, run(" continues", preserve=True)))
+
+    (r,) = _resolve("P1=claim continues", parts=parts)
+
+    assert r.ok and r.formats == 1
 
 
 def test_FORMATS_counts_the_distinct_run_properties_the_span_covers():
@@ -593,6 +850,14 @@ def test_a_SPEC_line_is_scope_kind_anchor_with_an_optional_name_first():
     ]
 
 
+def test_a_THREE_column_SPEC_line_keeps_a_TAB_inside_its_anchor():
+    """The anchor is the rest of the line, tabs included, in the
+    three-column form as in the four — split once too often, the tab in
+    the anchor reads as a fourth column and the kind as a scope."""
+    assert snap.parse_spec("P5\tappend\tends with\ta tab\n") == [
+        snap.Anchor("P5", "append", "ends with\ta tab")]
+
+
 @pytest.mark.parametrize("line,why", [
     ("P31\tswap\tx", "line 1"),
     ("P31 replace x", "line 1"),
@@ -643,6 +908,19 @@ def test_format_says_the_verdict_first_and_the_facts_after():
     assert spaced.format().splitlines()[1] == "      math 2 · formats 1"
     (tail,) = _resolve("append@P5=shows it.")
     assert tail.format().splitlines()[1].endswith("· trailing ' '")
+
+
+def test_what_snapshot_and_resolve_hand_back_is_FROZEN():
+    """A snapshot is the state a round starts from and a resolution is a
+    verdict on it; neither is a record a caller amends in place."""
+    parts = make_parts(para(run("x")))
+    anchor = snap.Anchor("P1", "replace", "x")
+    (verdict,) = snap.resolve(parts, [anchor])
+
+    for obj, attr in ((snap.snapshot(parts), "lines"), (anchor, "text"),
+                      (verdict, "ok")):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(obj, attr, None)
 
 
 # ================================================================ the CLI
