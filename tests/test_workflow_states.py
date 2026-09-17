@@ -23,6 +23,7 @@ question.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -300,7 +301,8 @@ def test_WITHDRAW_refuses_while_word_holds_the_manuscript(promoted_round,
 # the fixtures above do not, on both sides where both are reachable.
 
 
-def _content_hashing(build, *, below: str | None = None,
+def _content_hashing(build: Callable[[int], bytes], *,
+                     below: str | None = None,
                      above: str | None = None) -> bytes:
     """Bytes from `build(n)` whose sha256 sorts as asked.
 
@@ -319,7 +321,7 @@ def _content_hashing(build, *, below: str | None = None,
     raise AssertionError("no content hashed to the side asked for")
 
 
-def _a_docx(scratch: Path, text: str):
+def _a_docx(scratch: Path, text: str) -> Callable[[int], bytes]:
     """A builder for `_content_hashing`: a one-paragraph .docx."""
     def build(n: int) -> bytes:
         write(scratch, make_parts(para(run(f"{text} {n}"))))
