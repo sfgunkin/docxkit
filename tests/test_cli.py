@@ -21,6 +21,7 @@ seam for tracked.py.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 from conftest import make_parts, para, run, write
@@ -2090,6 +2091,21 @@ def _mentions(text: str, command: str) -> bool:
                for line in text.splitlines())
 
 
+#: Every way a reader meets a command in these two documents: listed at
+#: the start of a line, as the CLI itself sets them out, and in
+#: backticks, as a sentence names one. It read only the first until
+#: 2026-09-18, so "Run `docxkit frobnicate` to frobnicate a manuscript"
+#: — a command that does not exist, in the form prose uses for it — was
+#: invisible to the test whose whole subject that is (BACKLOG).
+_NAMED = re.compile(r"(?:^[ \t]*|`)docxkit ((?:revision )?[a-z][a-z-]+)",
+                    re.MULTILINE)
+
+
+def _documented(text: str) -> set[str]:
+    """The commands `text` names, as the parser would spell them."""
+    return {m.group(1) for m in _NAMED.finditer(text)}
+
+
 @WRITTEN
 def test_every_command_is_written_down(monkeypatch, capsys, written):
     """The two lists are all there is: argparse's own `--help` names a
@@ -2126,19 +2142,25 @@ def test_no_command_is_written_down_that_the_parser_does_not_HAVE(
         monkeypatch, capsys, written):
     """The other direction, and the one a rename breaks: a documented
     command that no longer exists sends a reader to an error message.
-    Both sides are read from the parser, so neither list can be edited
-    into agreement without the other."""
-    import re
 
-    top = set(_command_names(monkeypatch, capsys))
-    steps = set(_command_names(monkeypatch, capsys, "revision"))
-    text = written()
-    documented = set(re.findall(r"^\s*docxkit ([a-z]+)", text, re.MULTILINE))
-    rev_documented = set(re.findall(r"^\s*docxkit revision ([a-z]+)", text,
-                                    re.MULTILINE))
+    The parser's side is asked of the parser. The document's side is a
+    pattern, and it was `^\\s*docxkit ([a-z]+)` — which sees the listed
+    form and nothing else, so a command named in a sentence stayed
+    documented forever after it was removed. Both forms now, and the
+    set it found is asserted to be non-empty: a pattern that matches
+    nothing reads exactly like a document with nothing wrong in it.
+    """
+    have = set(_command_names(monkeypatch, capsys)) | {
+        f"revision {step}"
+        for step in _command_names(monkeypatch, capsys, "revision")}
 
-    assert documented <= top, f"gone from the CLI: {documented - top}"
-    assert rev_documented <= steps, f"gone: {rev_documented - steps}"
+    documented = _documented(written())
+
+    assert len(documented) > 10, (
+        f"only {sorted(documented)} were read out of a document that "
+        f"lists every command — the pattern, not the document")
+    assert documented <= have, (
+        f"gone from the CLI: {sorted(documented - have)}")
 
 
 # --- what the commands PRINT, which is all a person gets ----------------
