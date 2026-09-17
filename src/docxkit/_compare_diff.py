@@ -23,6 +23,7 @@ from ._compare_read import (
 )
 from ._xml import (
     BOOKMARK_END_ID_RE,
+    BOOKMARK_START_ID_RE,
     INSTR_ANCHOR_RE,
     INSTR_RE,
     normalize_glyphs,
@@ -308,17 +309,17 @@ def integrity(xml: str, label: str,
         names = bookmark_names(xml)
     # `\b[^>]*` before each w:id: attribute order is not meaningful in
     # XML, and hard-coding it made the INTEGRITY layer find no bookmarks
-    # at all on a conforming document — which reads as "balanced".
-    bs = re.findall(
-        r'<w:bookmarkStart\b[^>]*w:id="(\d+)"[^>]*?(?:\s+w:name="([^"]*)")?',
-        xml)
-    be = BOOKMARK_END_ID_RE.findall(xml)
-    starts, ends = Counter(i for i, _ in bs), Counter(be)
+    # at all on a conforming document — which reads as "balanced". The
+    # names are read on their own for the same reason: an optional
+    # `w:name` straight after `w:id` named nothing on a start written
+    # name-first, and its links read as dangling (2026-09-17).
+    starts = Counter(BOOKMARK_START_ID_RE.findall(xml))
+    ends = Counter(BOOKMARK_END_ID_RE.findall(xml))
     imbalance = [i for i in set(starts) | set(ends)
                  if starts[i] != ends[i]]
     if imbalance:
         issues.append(f"{label}: bookmark id imbalance {imbalance}")
-    known = set(names) | {n for _, n in bs if n}
+    known = set(names) | bookmark_names(xml)
     # REASSEMBLE THE FIELD INSTRUCTION BEFORE READING ITS TARGET. Word splits
     # one instruction across runs on save — `HYPERLINK` in the first,
     # ` \l "Munda2009" \h` in the next — and a pattern run over the raw XML
@@ -349,7 +350,11 @@ def integrity(xml: str, label: str,
     last_text = ""
     for i, p in enumerate(paras):
         depth = 0
-        for m in re.finditer(r'<w:fldChar w:fldCharType="(begin|end)"/>', p):
+        # Any spelling of the marker: `<w:fldChar w:fldCharType="begin"
+        # />` from another producer, or a locked field's `w:fldLock`, was
+        # not counted and left its partner unbalanced.
+        for m in re.finditer(r'<w:fldChar\b[^>]*\bw:fldCharType="(begin|end)"'
+                             r"[^>]*/>", p):
             depth += 1 if m.group(1) == "begin" else -1
         text = html.unescape("".join(WT_RE.findall(p)))
         if depth != 0:
@@ -374,7 +379,8 @@ def integrity(xml: str, label: str,
 #: the machine build showed none only because it had never been through
 #: Word).
 _FIELD_END_RE = (r'<w:r\b[^>]*>(?:<w:rPr\b(?:[^<]|<(?!/w:rPr>))*</w:rPr>|'
-                 r'<w:rPr\b[^>]*/>)?<w:fldChar w:fldCharType="end"/>')
+                 r'<w:rPr\b[^>]*/>)?<w:fldChar\b[^>]*\bw:fldCharType="end"'
+                 r"[^>]*/>")
 
 
 def hyperlink_labels(xml: str) -> Counter[str]:
@@ -386,9 +392,13 @@ def hyperlink_labels(xml: str) -> Counter[str]:
     """
     # The element form, then the field form, and ONE reading of a label
     # for both: a fix to how a label is read lands on both forms at once.
-    forms = (r"<w:hyperlink\b[^>]*>(.*?)</w:hyperlink>",
-             r'<w:fldChar w:fldCharType="separate"/>\s*</w:r>(.*?)'
-             + _FIELD_END_RE)
+    # `(?<!/)>`: a self-closing ghost `<w:hyperlink …/>` labels nothing,
+    # and read as an open tag it lent the prose up to the NEXT link's close
+    # to that link. The field markers in any spelling, as `integrity`
+    # counts them.
+    forms = (r"<w:hyperlink\b[^>]*(?<!/)>(.*?)</w:hyperlink>",
+             r'<w:fldChar\b[^>]*\bw:fldCharType="separate"[^>]*/>\s*</w:r>'
+             r"(.*?)" + _FIELD_END_RE)
     return Counter(html.unescape("".join(WT_RE.findall(m.group(1))))
                    for form in forms
                    for m in re.finditer(form, xml, re.DOTALL))

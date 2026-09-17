@@ -2310,6 +2310,68 @@ def test_a_balanced_field_is_no_finding():
     assert _integrity(xml) == []
 
 
+#: A field marker as other producers write one: a space before the close
+#: (369 in 9 of 2,954 corpus packages), or a locked field (`w:fldLock`, 9
+#: in 2). The patterns read only `<w:fldChar w:fldCharType="…"/>`.
+_OTHER_BEGINS = ('<w:fldChar w:fldCharType="begin" />',
+                 '<w:fldChar w:fldCharType="begin" w:fldLock="1"/>')
+
+
+@pytest.mark.parametrize("begin", _OTHER_BEGINS)
+def test_a_balanced_field_in_ANOTHER_spelling_is_no_finding(begin):
+    """Not counted, its begin left the end alone at depth -1, and a
+    field that renders perfectly was reported as literal field code."""
+    xml = (f"<w:p><w:r>{begin}</w:r>"
+           r'<w:r><w:instrText> PAGE </w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           "<w:r><w:t>4</w:t></w:r>"
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+
+    assert _integrity(xml) == []
+
+
+@pytest.mark.parametrize("marker", ["separate", "end"])
+def test_a_field_LABEL_is_read_whatever_its_markers_spelling(marker):
+    """The label sits between `separate` and `end`, and either marker
+    written ` />` hid it: the link was not on the list, so a relabelled
+    field-form citation went unseen."""
+    from docxkit._compare_diff import hyperlink_labels
+    from docxkit.citations import hyperlink_field
+
+    field = hyperlink_field("Hao2008", "Hao et al. (2008)").replace(
+        f'<w:fldChar w:fldCharType="{marker}"/>',
+        f'<w:fldChar w:fldCharType="{marker}" />')
+    assert f'"{marker}" />' in field
+
+    assert hyperlink_labels(f"<w:p>{field}</w:p>") == {"Hao et al. (2008)": 1}
+
+
+def test_a_GHOST_link_does_not_lend_its_label_to_the_prose_after_it():
+    """`<w:hyperlink w:anchor="…"/>` is an empty ghost Word leaves behind
+    (49 in 35 corpus packages). Read as an open tag it ran on to the NEXT
+    link's close, and the prose between them read as that link's label."""
+    from docxkit._compare_diff import hyperlink_labels
+
+    xml = ('<w:p><w:hyperlink w:anchor="Gone2020"/>'
+           "<w:r><w:t>Prose between them. </w:t></w:r>"
+           '<w:hyperlink w:anchor="Smith2020"><w:r><w:t>Smith (2020)</w:t>'
+           "</w:r></w:hyperlink></w:p>")
+
+    assert hyperlink_labels(xml) == {"Smith (2020)": 1}
+
+
+def test_a_bookmark_written_NAME_FIRST_is_a_target_its_links_reach():
+    """The part's own bookmark names were read as an optional `w:name`
+    straight after `w:id`, so a start written name-first (97 in 7 corpus
+    packages) named nothing, and the link to it read as dangling when
+    the caller's `names` did not already hold it."""
+    xml = ('<w:p><w:bookmarkStart w:name="T1" w:id="1"/>'
+           '<w:bookmarkEnd w:id="1"/><w:hyperlink w:anchor="T1"><w:r>'
+           "<w:t>Table 1</w:t></w:r></w:hyperlink></w:p>")
+
+    assert _integrity(xml, set()) == []
+
+
 def test_the_unbalanced_field_report_QUOTES_the_paragraph_it_is_in():
     """Forty characters of it: a document with three unbalanced fields
     is three paragraphs to find, and the id is not in the text."""
