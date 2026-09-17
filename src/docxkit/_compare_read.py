@@ -30,7 +30,6 @@ from ._xml import (
     PARA_RE,
     T_PARTS_RE,
     WT_RE,
-    field_spans,
     live_properties,
     own_properties,
     printed_text,
@@ -587,58 +586,89 @@ def _mask_text(xml: str, token: str) -> str:
     return T_PARTS_RE.sub(sub, xml)
 
 
-def _own_separator(body: str) -> re.Match[str] | None:
-    r"""The ``separate`` that belongs to THIS field, not to a nested one.
+#: One field's own marks: its ``begin``, its ``separate`` if it has a
+#: cached result, and its ``end``.
+_Marks = tuple[re.Match[str], re.Match[str] | None, re.Match[str]]
 
-    This was ``SEPARATE_RE.search(body)`` — the FIRST separator in the
-    span — and a field Word writes inside another's INSTRUCTION half
-    puts its own separator there first. The mask then began at the INNER
-    field's cached result, so on a `PAGEREF` whose instruction half
-    holds a `REF _Toc1`:
+
+def _field_marks(xml: str) -> list[_Marks]:
+    r"""Every fldChar field in `xml` as its OWN marks, in the order the
+    fields begin — so a parent comes before anything nested in it.
+
+    The separator was once ``SEPARATE_RE.search(body)`` — the FIRST one
+    in the field's span — and a field Word writes inside another's
+    INSTRUCTION half puts its own separator there first. The mask then
+    began at the INNER field's cached result, so on a `PAGEREF` whose
+    instruction half holds a `REF _Toc1`:
 
         in :  …<w:fldChar separate/>…<w:t>Table 3</w:t>…<w:t>17</w:t>
         out:  …<w:fldChar separate/>…<w:t>«F:PAGEREF»</w:t>…<w:t></w:t>
 
-    The cross-reference a reader sees was overwritten with the OUTER
-    field's name, and the outer's own page number — the one thing here
-    exists to neutralise — was blanked instead of masked. `compare`
-    mangles both sides identically, so an edit turning that "Table 3"
-    into "Table 5" reached no layer and `--expect-clean` printed OK over
-    it: a false negative in the gate the revision protocol rests on
-    (backlog S1, 2026-09-16). The same nesting under a NON-volatile
-    outer comes back untouched, which is what pins it to the nesting
-    rather than to masking in general.
+    `compare` mangles both sides identically, so an edit turning that
+    "Table 3" into "Table 5" reached no layer and `--expect-clean`
+    printed OK over it (backlog S1, 2026-09-16).
 
-    So the separator is paired with the field's own ``begin`` by DEPTH,
-    the way :func:`_xml.field_spans` pairs its ``end`` — the same walk
-    over the same `FLDCHAR_RE`, asked a different question. A span from
-    `field_spans` opens on this field's begin and closes on its end, so
-    depth 1 is this field and anything deeper belongs to somebody else.
+    dc8bdc8 paired the separator with the field's begin by depth, but it
+    walked the span :func:`_xml.field_spans` hands back, and those spans
+    have RUN boundaries: from the ``<w:r>`` of the run holding the begin
+    to the ``</w:r>`` of the run holding the end. CT_R allows any number
+    of run-content elements in one run, and a document Word did not
+    write puts several there, so both edges carried someone else's
+    content (2026-09-17):
+
+    * after the ``end``, prose. The mask ran on to the ``</w:r>`` and
+      blanked " of the 2024 report." after a page number, and an edit to
+      it passed `--expect-clean` — the same false negative from the
+      other side.
+    * before the ``begin``, another field's ``fldChar``. An earlier
+      ``end`` put this field's own separator at depth 0, where it was
+      never found, and the page number stayed in the text: a TEXT change
+      between any two copies, and a regression, since `SEPARATE_RE`
+      had masked it. A parent's ``begin`` there made the walk return
+      the PARENT's separator instead.
+
+    So the marks are paired here, in one walk over the whole part, by a
+    stack of the fields still open: a ``separate`` belongs to the
+    innermost of them (the first one it meets — a second is not a
+    result's start), and an ``end`` closes that field. No run boundary
+    enters into it. `field_spans` answers which RUNS a field occupies,
+    for the callers that splice runs; this one asks where a cached
+    result begins and ends, which is a question about the marks. A
+    field whose ``end`` never comes is not returned, the same refusal
+    `field_spans` makes.
     """
-    depth = 0
-    for m in FLDCHAR_RE.finditer(body):
+    out: list[_Marks] = []
+    open_fields: list[tuple[re.Match[str], re.Match[str] | None]] = []
+    for m in FLDCHAR_RE.finditer(xml):
         kind = m.group(1)
         if kind == "begin":
-            depth += 1
-        elif kind == "end":
-            depth -= 1
-        elif kind == "separate" and depth == 1:
-            return m
-    return None
+            open_fields.append((m, None))
+        elif kind == "end" and open_fields:
+            begin, sep = open_fields.pop()
+            out.append((begin, sep, m))
+        elif kind == "separate" and open_fields and open_fields[-1][1] is None:
+            open_fields[-1] = (open_fields[-1][0], m)
+    return sorted(out, key=lambda marks: marks[0].start())
 
 
 def mask_volatile_fields(xml: str) -> str:
-    """Neutralise cached PAGE/DATE/... results, leaving the field intact."""
+    """Neutralise cached PAGE/DATE/... results, leaving the field intact.
+
+    A cached result is what lies between a field's own ``separate`` and
+    its own ``end``, and the field's type is read from the instructions
+    between its ``begin`` and ``end`` — both measured at the marks, not
+    at the runs that hold them (see :func:`_field_marks`).
+    """
     regions: list[tuple[int, int, str]] = []
-    for start, end, body in field_spans(xml):
-        kw = _keyword(" ".join(INSTR_RE.findall(body)))
+    for begin, sep, end in _field_marks(xml):
+        instr = INSTR_RE.findall(xml, begin.end(), end.start())
+        kw = _keyword(" ".join(instr))
         if kw not in VOLATILE_FIELDS:
             continue
-        sep = _own_separator(body)
-        if not sep:                      # no cached result to mask
+        if sep is None:                  # no cached result to mask
             continue
-        result_at = start + sep.end()
-        # field_spans yields outermost-first, so a nested field whose
+        result_at = sep.end()
+        # _field_marks yields outermost-first, so a nested field whose
         # result falls INSIDE a region already claimed is covered by it.
         # One in the parent's INSTRUCTION half is not: it sits before
         # that region and carries a cached value of its own, which two
@@ -648,7 +678,7 @@ def mask_volatile_fields(xml: str) -> str:
         # rightmost, and the regions are no longer in document order.
         if any(s <= result_at < e for s, e, _ in regions):
             continue
-        regions.append((result_at, end, kw))
+        regions.append((result_at, end.start(), kw))
     out = xml
     for s, e, kw in sorted(regions, reverse=True):  # right to left
         out = out[:s] + _mask_text(out[s:e], f"«F:{kw}»") + out[e:]

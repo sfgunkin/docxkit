@@ -4703,15 +4703,19 @@ def test_an_edit_inside_a_nested_cross_reference_is_SEEN(tmp_path):
 # number of run-content elements, and writers other than Word use that.
 # The other six are argued equivalent.
 
-#: A cached date long enough that masking it SHRINKS the text by 27
-#: characters — the distance a stale region end then overshoots by.
-_STAMP = "Tuesday, 15 September 2026 at 22:01"
+#: A cached result long enough that masking it SHRINKS the text by more
+#: than the markup between a region's end and the text after the field —
+#: the distance a stale end then overshoots by. It was a 35-character
+#: date, which carried 27 characters past a region ending after the
+#: `</w:r>`; the region ends at the `end` MARK now, 38 characters
+#: earlier, and the fixture has to reach that much further.
+_CACHED = ("D:\\OneDrive\\Papers\\_Submitted\\Life_Expectancy\\"
+           "LE13_tracked_changes_2026-09-15.docx")
 
 
 def _covered(tail: str) -> str:
-    """A DATE nested in a PAGEREF's RESULT half, then prose."""
-    return (_wrapping("PAGEREF _Toc1",
-                      field('DATE \\@ "dddd, d MMMM yyyy"', _STAMP))
+    """A FILENAME nested in a PAGEREF's RESULT half, then prose."""
+    return (_wrapping("PAGEREF _Toc1", field("FILENAME \\p", _CACHED))
             + run(tail))
 
 
@@ -4725,22 +4729,25 @@ def test_a_field_in_a_claimed_region_claims_no_region_of_its_own(lead):
     That region lies inside the parent's and is applied first, and the
     parent's stored end goes stale by however much the inner rewrite
     changed the length. With a one-character page number the end lands
-    seven characters early, in tag text, and nothing shows. With this
-    35-character date it lands 27 characters LATE, and the whole
-    ` (draft)` run after the field — 24 characters of markup and text —
-    falls inside the parent's mask and is blanked. The length assertions
-    are what keep the fixture able to see that.
+    early, in tag text, and nothing shows. With this cached path it
+    lands LATE — past the `end` mark, past the `</w:r>` after it, and
+    over the whole ` (draft)` run — so that run falls inside the
+    parent's mask and is blanked. The `reach` assertion is what keeps
+    the fixture able to see that, and it is not decoration: the same
+    mutants stopped being killed the moment the region stopped ending
+    after the `</w:r>`, and only the fixture had to change.
     """
     from docxkit._compare_read import mask_volatile_fields
 
-    assert len(_STAMP) - len("«F:DATE»") == 27
-    assert len(run(" (draft)")) - len("</w:r>") <= 27
+    reach = (len('<w:fldChar w:fldCharType="end"/></w:r>')
+             + len(run(" (draft)")) - len("</w:r>"))
+    assert len(_CACHED) - len("«F:FILENAME»") >= reach
     xml = ("<w:p>" + (run(lead) if lead else "") + _covered(" (draft)")
            + "</w:p>")
 
     out = mask_volatile_fields(xml)
 
-    assert out == xml.replace(f"<w:t>{_STAMP}</w:t>",
+    assert out == xml.replace(f"<w:t>{_CACHED}</w:t>",
                               "<w:t>«F:PAGEREF»</w:t>"), out
 
 
@@ -4765,10 +4772,13 @@ def _sharing_a_run(outer: str, shown: str, inner: str, result: str, *,
     `whole`, the outer `begin` and instruction as well.
 
     Word gives every `fldChar` a run of its own; the schema does not ask
-    for that, and a generated document puts them together. `field_spans`
-    opens the inner span at that run's `<w:r>`, so the walk in
-    `_own_separator` meets the OUTER field's separator before this
-    field's begin.
+    for that, and a generated document puts them together. This said
+    "`field_spans` opens the inner span at that run's `<w:r>`, so the
+    walk in `_own_separator` meets the OUTER field's separator before
+    this field's begin" — true until the same day, when that walk was
+    found to miscount on exactly this shape and replaced by
+    `_field_marks`, which pairs the marks themselves. The tests on this
+    fixture now pin that the answers they assert did not move with it.
     """
     begin = '<w:fldChar w:fldCharType="begin"/>'
     instr = f'<w:instrText xml:space="preserve"> {outer} </w:instrText>'
@@ -4796,6 +4806,10 @@ def test_a_separator_ahead_of_the_field_s_begin_is_not_its_own(lead):
     opens at the TOC's separator — the entry text a reader sees becomes
     `«F:PAGEREF»` and the page number is blanked. The TOC is not volatile
     and claims no region, so nothing else would have masked that text.
+
+    The line that mutant respelled is gone: `_field_marks` gives a
+    `separate` to the innermost field still open, and the TOC's is met
+    while the TOC is. What this pins now is that answer.
     """
     from docxkit._compare_read import mask_volatile_fields
 
@@ -4844,6 +4858,13 @@ def test_a_field_whose_walk_lands_on_its_PARENT_s_separator_is_covered(lead):
     and blanks it — an edit there would reach no layer. With a run per
     `fldChar` the inner field finds its own separator strictly inside
     the region and the two spellings agree.
+
+    Withdrawn in part the same day. The walk that returned the PARENT's
+    separator was the defect `test_a_field_whose_BEGIN_shares_its_parent_
+    s_run_is_masked_as_itself` describes, and with the marks paired by
+    `_field_marks` every field finds its own separator on this fixture
+    too — so `<` and `<=` agree here now and the mutant is argued
+    equivalent. The output asserted is still the right one, and stays.
     """
     from docxkit._compare_read import mask_volatile_fields
 
@@ -4862,6 +4883,221 @@ def test_a_field_whose_walk_lands_on_its_PARENT_s_separator_is_covered(lead):
         f'<w:t xml:space="preserve">{shown}</w:t>',
         '<w:t xml:space="preserve">«F:PAGEREF»</w:t>').replace(
         "<w:t>7</w:t>", "<w:t></w:t>"), out
+
+
+# --- a field is its fldChars, not their runs (2026-09-17) -----------------
+#
+# The same sweep's two defects. `mask_volatile_fields` took its fields from
+# `field_spans`, whose spans have RUN boundaries — right for a caller that
+# splices whole runs, wrong for one that asks where a cached result begins
+# and ends. A run holding more than one run-content element moved both
+# edges: the mask ran on to the `</w:r>` after the `end`, over prose, and
+# the separator walk started counting at the `<w:r>` before the `begin`,
+# over somebody else's `fldChar`.
+
+_END_RUN_BEGIN = ('<w:r><w:fldChar w:fldCharType="end"/>'
+                  '<w:fldChar w:fldCharType="begin"/></w:r>')
+
+
+def _page_then_prose(page: str, tail: str) -> str:
+    """A PAGE field whose `end` shares its run with the prose after it."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run(page)
+            + '<w:r><w:fldChar w:fldCharType="end"/>'
+            f'<w:t xml:space="preserve">{tail}</w:t></w:r>')
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_prose_after_a_field_s_END_in_the_same_run_is_not_masked(lead):
+    """The mask ended at the `</w:r>` closing the run that holds `end`, so
+    text after the `end` in that run was inside it and came back blank.
+    It is not the field's cached result: it is the sentence the page
+    number sits in."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _page_then_prose("7", " of the 2024 report.") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
+
+
+def test_an_edit_after_a_field_s_END_in_the_same_run_is_SEEN(tmp_path):
+    """The gate, and why the defect above is an S1: both sides were
+    masked alike, so "2024" against "2019" left two blank strings and
+    `--expect-clean` exited 0 over a real edit."""
+    a, b = docs(tmp_path,
+                BASE + para(_page_then_prose("7", " of the 2024 report.")),
+                BASE + para(_page_then_prose("7", " of the 2019 report.")))
+
+    report = compare(a, b)
+
+    assert report["text"], "the edit reached no layer"
+    assert render(report, expect_clean=True) == 1
+
+
+def _ref_then_page(page: str) -> str:
+    """A REF, then a PAGE whose `begin` shares a run with the REF's `end`."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> REF _Ref1 </w:instrText>'
+            "</w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run("Table 3") + _END_RUN_BEGIN
+            + '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText>'
+            "</w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run(page)
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_field_whose_BEGIN_shares_a_run_with_an_earlier_END_is_masked(lead):
+    """The separator walk counted depth from the `<w:r>` of the run holding
+    the `begin`. The REF's `end` in that run took it to -1, the PAGE's
+    `begin` back to 0, and the PAGE's own separator sat at depth 0, where
+    `depth == 1` never found it: the page number was left in the text.
+    A regression from dc8bdc8 — the `SEPARATE_RE.search` it replaced
+    found the only separator in the span and masked this correctly."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "") + _ref_then_page("7")
+           + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
+
+
+def test_a_page_number_after_a_shared_END_BEGIN_run_compares_clean(tmp_path):
+    """Two copies of one document that disagree only about the page the
+    field was last laid out on. Unmasked, that is a TEXT change on every
+    round — the crying wolf this masking exists to stop."""
+    a, b = docs(tmp_path, BASE + para(_ref_then_page("7")),
+                BASE + para(_ref_then_page("9")))
+
+    report = compare(a, b)
+
+    assert report["text"] == [], report["text"]
+    assert render(report, expect_clean=True) == 0
+
+
+def _page_in_a_shared_instruction(page: str) -> str:
+    """`{ PAGEREF _Toc1 { PAGE } }`, the inner `begin` in the run that
+    holds the outer `begin` and instruction."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/>'
+            '<w:instrText xml:space="preserve"> PAGEREF _Toc1 </w:instrText>'
+            '<w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run(page)
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run("17")
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_a_field_whose_BEGIN_shares_its_parent_s_run_is_masked_as_itself(
+        lead):
+    """The same miscount the other way. Counting from the shared run, the
+    inner walk met the PARENT's `begin` first, reached its own separator
+    at depth 2, skipped it, and returned the parent's — so the inner
+    field was judged covered by the parent's region, which lies AFTER
+    its page number. Nothing masked the `7`."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + (run(lead) if lead else "")
+           + _page_in_a_shared_instruction("7") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace(
+        "<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>").replace(
+        "<w:t>17</w:t>", "<w:t>«F:PAGEREF»</w:t>"), out
+
+
+def test_a_page_number_in_a_shared_instruction_run_compares_clean(tmp_path):
+    a, b = docs(tmp_path, BASE + para(_page_in_a_shared_instruction("7")),
+                BASE + para(_page_in_a_shared_instruction("9")))
+
+    report = compare(a, b)
+
+    assert report["text"] == [], report["text"]
+    assert render(report, expect_clean=True) == 0
+
+
+def _one_run(first: str, between: str, total: str) -> str:
+    """"Page { PAGE } of { NUMPAGES }" with both fields and the prose
+    between them in ONE run — the shape a generated document gets when
+    every element is appended to the run it already has."""
+    def fld(instr: str, result: str) -> str:
+        return ('<w:fldChar w:fldCharType="begin"/>'
+                f'<w:instrText xml:space="preserve"> {instr} </w:instrText>'
+                '<w:fldChar w:fldCharType="separate"/>'
+                f"<w:t>{result}</w:t>"
+                '<w:fldChar w:fldCharType="end"/>')
+    return ("<w:r>" + fld("PAGE", first)
+            + f'<w:t xml:space="preserve">{between}</w:t>'
+            + fld("NUMPAGES", total) + "</w:r>")
+
+
+@pytest.mark.parametrize("lead", _LEADS)
+def test_two_fields_and_the_prose_between_them_in_ONE_run(lead):
+    """Both defects at once. Every span here was the whole run, so both
+    fields walked from the PAGE's `begin`, both took the PAGE's
+    separator, and one mask ran from there to the run's end: " of " was
+    blanked with the page count."""
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = "<w:p>" + (run(lead) if lead else "") + _one_run("3", " of ", "12")
+    xml += "</w:p>"
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>3</w:t>", "<w:t>«F:PAGE»</w:t>").replace(
+        "<w:t>12</w:t>", "<w:t>«F:NUMPAGES»</w:t>"), out
+
+
+def test_one_run_holding_two_fields_shows_prose_and_hides_numbers(tmp_path):
+    """The gate on the same run: a different page count is not a change,
+    and a different word between the two fields is."""
+    a, b = docs(tmp_path, BASE + para(_one_run("3", " of ", "12")),
+                BASE + para(_one_run("4", " of ", "13")))
+    report = compare(a, b)
+    assert report["text"] == [], report["text"]
+    assert render(report, expect_clean=True) == 0
+
+    a, c = docs(tmp_path, BASE + para(_one_run("3", " of ", "12")),
+                BASE + para(_one_run("3", " from ", "12")))
+    report = compare(a, c)
+    assert report["text"], "the edit reached no layer"
+    assert render(report, expect_clean=True) == 1
+
+
+@pytest.mark.parametrize("stray", ["end", "separate"])
+def test_a_fldChar_with_no_field_open_is_passed_over(stray):
+    """A part whose marks do not balance. `compare` reads the copy the
+    author sends back, and a `separate` or an `end` with nothing open is
+    what a half-deleted field leaves behind; the walk keeps a stack, and
+    without the `open_fields` guard on both branches the stray mark
+    indexes an empty list and the whole comparison raises.
+
+    Passing over it is also the answer `field_spans` gives, and the
+    field AFTER the stray must still be masked: a damaged paragraph is
+    not a reason to compare every page number in the part by value.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>" + run("A sentence. ")
+           + f'<w:r><w:fldChar w:fldCharType="{stray}"/></w:r>'
+           + run("More prose. ") + field("PAGE", "7") + "</w:p>")
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
 
 
 def _captioned(texts: list[str | None]) -> dict[str, bytes]:
