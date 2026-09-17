@@ -777,37 +777,6 @@ backtick is optional now.
 
 ---
 
-### S4 — no helper to replace a span AROUND the links inside it; four `edit` helpers unexported
-<!-- status: open -->
-
-**Observed** (DSI, UNFPA-definition batch A, 16.09.2026). A protocol replaces a
-whole paragraph whose text contains a linked citation (¶29 «…(Sen 1999).»,
-¶43 «…(Bongaarts and Bulatao 1999).»). `edit.replace_in_para` rightly refuses a
-match that crosses a link and says *split the replacement into one call on each
-side of the link* — and every caller then hand-rolls the split: find the label
-spans inside the anchor, require the replacement to carry each label in order,
-edit the segments right to left, and turn "segment only grows" into an
-`insert_in_para` rather than a replace (a bare `").")` segment is not unique).
-The same batch also needed "drop the trailing whitespace-only runs" (¶43's
-trailing space), which nothing offers.
-
-To write it, the paper imported `edit.run_spans`, `edit.field_spans`,
-`edit.own_properties` and `edit.internal_links` — public names, documented,
-and **not in `edit.__all__`**, so Pyright reports `reportPrivateImportUsage` on
-each (`is_field_run` is the only one exported).
-
-**Workaround:** `replace_around_links`, `link_label_spans` and
-`strip_trailing_whitespace_runs` in `DSI/revision/scripts/apply_unfpa_A.py`
-(archived to `D:\PaperAttic\DSI\revision_applied\`), guarded by a per-paragraph
-contract (text after == text before with Old swapped for New).
-
-**Fix sketch:** `edit.replace_keeping_links(para_xml, old, new)` doing exactly the
-above and refusing when `new` drops or reorders a label; `edit.rstrip_para`;
-add the four helpers to `__all__` (or re-export them where they are meant to be
-used from).
-
----
-
 ### S4 — every protocol round re-writes the same snapshot and anchor-index scripts
 <!-- status: open -->
 

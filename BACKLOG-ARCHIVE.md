@@ -14,6 +14,52 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — no helper to replace a span AROUND the links inside it; four `edit` helpers unexported~~ — FIXED 17.09, `43331e6`
+
+<!-- status: fixed -->
+
+**Observed** (DSI, UNFPA-definition batch A, 16.09.2026). A protocol replaces a
+whole paragraph whose text contains a linked citation (¶29 «…(Sen 1999).»,
+¶43 «…(Bongaarts and Bulatao 1999).»). `edit.replace_in_para` rightly refuses a
+match that crosses a link and says *split the replacement into one call on each
+side of the link* — and every caller then hand-rolls the split: find the label
+spans inside the anchor, require the replacement to carry each label in order,
+edit the segments right to left, and turn "segment only grows" into an
+`insert_in_para` rather than a replace (a bare `").")` segment is not unique).
+The same batch also needed "drop the trailing whitespace-only runs" (¶43's
+trailing space), which nothing offers.
+
+To write it, the paper imported `edit.run_spans`, `edit.field_spans`,
+`edit.own_properties` and `edit.internal_links` — public names, documented,
+and **not in `edit.__all__`**, so Pyright reports `reportPrivateImportUsage` on
+each (`is_field_run` is the only one exported).
+
+**Workaround:** `replace_around_links`, `link_label_spans` and
+`strip_trailing_whitespace_runs` in `DSI/revision/scripts/apply_unfpa_A.py`
+(archived to `D:\PaperAttic\DSI\revision_applied\`), guarded by a per-paragraph
+contract (text after == text before with Old swapped for New).
+
+**Fix sketch:** `edit.replace_keeping_links(para_xml, old, new)` doing exactly the
+above and refusing when `new` drops or reorders a label; `edit.rstrip_para`;
+add the four helpers to `__all__` (or re-export them where they are meant to be
+used from).
+
+**Fixed 17.09 in `43331e6`.** `edit.replace_keeping_links(para, old, new,
+*, normalize=False, allow_notes=False)` splits `old` at every label inside it,
+requires `new` to carry each label in order, and edits the pieces between BY
+OFFSET, right to left — so the bare `").")` piece DSI's version refused works.
+A changed piece is written through `_rewrite_span`, the write `replace_in_para`
+uses, so every guard is the same one; an empty piece gets a run of its own
+outside the link and its bookmark, with the nearest plain run's live
+properties. Refused: `old` not unique, a label straddling an edge, a dropped
+or reordered label, a label count that differs between `old` and `new`, a
+note or comment marker crossed or where new words go (`allow_notes`). An
+`old` crossing no label is `replace_in_para`'s answer byte for byte.
+`edit.rstrip_para` drops trailing whitespace runs and trims the last text run,
+stopping at anything that is not plain prose. `run_spans`, `field_spans`,
+`own_properties` and `internal_links` are in `edit.__all__`. 45 tests in
+`tests/test_edit_links_replace.py`, which joined edit.py's harness. Building
+it found three defects in `edit.py`, filed and fixed in `e495ee1`.
 ### ~~S1 — `reject` restores NO formatting when an element sits ahead of the formatting snapshot~~ — FIXED 17.09, `0719950`
 
 <!-- status: fixed -->
