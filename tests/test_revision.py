@@ -43,6 +43,7 @@ from docxkit.errors import (
     MathResolved,
     ProtocolError,
     StaleBatch,
+    WorkingPending,
 )
 from docxkit.revision import (
     _link_changes,
@@ -1208,14 +1209,21 @@ def test_the_deleted_links_warning_TRIMS_a_longer_one(project, monkeypatch):
 
 def test_build_hands_tracked_the_settings_the_PROTOCOL_depends_on(
         project, monkeypatch):
-    """Four constants, each load-bearing and each invisible in the
-    output, so a round mutated all four and the suite noticed none.
+    """Five constants, each load-bearing and each invisible in the
+    output, so a round mutated all five and the suite noticed none.
 
     `verify_in_word` is what makes a batch openable at all;
     `reject_check=False` is the asymmetry this module's own comment
     argues for at length — the protocol REPORTS an unrejectable
     paragraph and lets gate 5 judge it, because refusing here would
     leave the author paragraph names and no file to look at.
+
+    `moves` joined them on 2026-09-18, from the same measurement: its
+    default survived being flipped to False. Word's move detection off
+    by default is the OTHER trade — a compression round wants it off
+    (Aging_Well, 2026-08-31, where a move accepted to a paragraph that
+    stopped mid-sentence), and every other round wants the shorter
+    redline it gives.
     """
     clean = write(project.build_dir / "clean.docx",
                   make_parts(para(run("edit"))))
@@ -1230,6 +1238,7 @@ def test_build_hands_tracked_the_settings_the_PROTOCOL_depends_on(
         "comment above the call")
     assert fake.kwargs["resolve_math"] is True, "the default"
     assert fake.kwargs["force"] is False, "the default"
+    assert fake.kwargs["moves"] is True, "the default"
 
 
 def test_build_PASSES_ON_the_two_switches_it_is_given(project, monkeypatch):
@@ -1349,6 +1358,59 @@ def test_build_refuses_a_baseline_with_pending_revisions(project,
         revision.build(project, project.working)
     assert not fake.called_with, "Word Compare ran anyway"
     assert not project.batch.exists()
+
+
+@pytest.mark.parametrize("carried", ["insertions", "deletions"])
+def test_build_refuses_a_MANUSCRIPT_carrying_either_half_of_a_batch(
+        project, monkeypatch, carried):
+    """The live file's pending check, and EITHER side alone is pending.
+
+    The guard reads "insertions OR deletions", and every fixture that
+    had reached it carried both — a promoted round is two of each — so
+    `or` and `and` were the same test, and with `and` a batch of pure
+    insertions (a round that only adds a sentence, which is most of
+    them) walked straight past the refusal into a Compare that flattens
+    it in as accepted, unreviewable text. Found by mutation, 2026-09-18.
+    """
+    mark = (ins("a proposal") if carried == "insertions"
+            else dele("a proposal"))
+    write(project.working,
+          make_parts(para(run("The paper as it stands. "), mark)))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    with pytest.raises(WorkingPending, match="not adjudicated"):
+        revision.build(project, clean)
+
+    assert not fake.called_with, "Word Compare ran on a pending manuscript"
+    assert not project.batch.exists()
+
+
+def test_build_asks_the_pending_question_only_of_a_manuscript_THAT_EXISTS(
+        project, monkeypatch):
+    """No manuscript, nothing pending — the two zeros the count falls
+    back to when `working` is absent are the whole of that claim, and
+    nothing pinned them.
+
+    Mutation put a 1 and a -1 in each of them (2026-09-18) and the build
+    then refused a paper whose manuscript is not there, quoting a
+    pending batch that cannot exist — a refusal naming counts from a
+    file the author cannot open, telling them to adjudicate it. `prev`
+    and the clean edit are what a build actually reads; the live file is
+    only asked a question.
+    """
+    project.working.unlink()
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    revision.build(project, clean)              # must not raise
+
+    assert fake.called_with, "the build never reached Compare"
+    assert project.batch.exists()
 
 
 def test_build_pending_baseline_can_be_absorbed_deliberately(project,
@@ -4593,6 +4655,32 @@ def test_a_promote_RECORDS_how_long_it_took(project):
     assert [s["name"] for s in runs[0]["steps"]][-1] == "total"
     assert runs[0]["steps"][-1]["seconds"] >= 0
     assert dataclasses.is_dataclass(project)
+
+
+def test_a_BUILD_is_timed_and_names_the_two_phases_it_MARKS(project,
+                                                            monkeypatch):
+    """`@timed("build")` on the verb, and the two `mark`s inside it.
+
+    Every test above times a `promote`, which is a different decorator
+    on a different module, so `build`'s could be taken off and nothing
+    said — measured by mutation, 2026-09-18. It is the one worth having:
+    `mark("compare")` closes a Word Compare that ran 141 s cold against
+    40 s warm on Aging_Well, the most expensive step of the protocol and
+    the reason this module records anything at all. Without the
+    decorator there is no session, so `mark` is a no-op and the whole
+    round leaves no row.
+    """
+    from docxkit import timings
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    revision.build(project, clean)
+
+    (record,) = timings.read(project.root / timings.FOLDER, kind="build")
+    assert record["outcome"] == "ok"
+    assert [s["name"] for s in record["steps"]] == ["preflight", "compare",
+                                                    "total"]
 
 
 def test_a_REFUSED_command_records_the_refusal_as_its_outcome(project):
