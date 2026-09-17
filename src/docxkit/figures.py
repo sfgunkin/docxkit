@@ -53,7 +53,15 @@ __all__ = [
 
 EMU_PER_INCH = 914400
 _EMBED_RE = re.compile(r'r:embed="([^"]+)"')
-_EXTENT_RE = re.compile(r'<wp:extent cx="(\d+)" cy="(\d+)"/>')
+# A drawing's extent in either attribute order and either close: `cy`
+# may come first, and other producers write ` />` (52 in 4 of 2,954
+# corpus packages). Read only as `cx="…" cy="…"/>`, neither `set_extent`
+# nor a replacement's height fix touched the drawing, and the new
+# picture was stretched to the old box (2026-09-17). `cx` is captured in
+# the lookahead, so the groups stay (cx, cy).
+_EXTENT_RE = re.compile(
+    r'<wp:extent\b(?=[^>]*\bcx="(\d+)")[^>]*\bcy="(\d+)"[^>]*/>')
+_A_EXT_RE = re.compile(r'<a:ext\b(?=[^>]*\bcx="\d+")[^>]*\bcy="\d+"[^>]*/>')
 _PGSZ_RE = re.compile(r'<w:pgSz([^/]*)/>')
 # A caption is a label, a number, then a separator: "Figure 7." or
 # "Рисунок 2:". Merely STARTING with "Figure" is not enough — an in-text
@@ -238,7 +246,11 @@ def shared_relationships(doc_xml: str) -> dict[str, int]:
 
 
 def _relationship_target(rels_xml: str, rid: str) -> str:
-    m = re.search(rf'Id="{rid}"[^>]*Target="([^"]+)"', rels_xml)
+    # Either attribute order: 247 relationships in 23 of 2,954 corpus
+    # packages put `Target` before `Id`, and `Id="…"[^>]*Target=` refused
+    # the replacement there as "not found" (2026-09-17).
+    m = re.search(rf'<Relationship\b(?=[^>]*\bId="{re.escape(rid)}")'
+                  r'[^>]*\bTarget="([^"]+)"', rels_xml)
     if not m:
         raise PackageError(f"relationship {rid} not found in document rels")
     return "word/" + m.group(1).lstrip("/")
@@ -459,8 +471,7 @@ def set_extent(block: str, cx: int, cy: int) -> str:
     ``<wp:extent>`` silently resizes every other figure too.
     """
     block = _EXTENT_RE.sub(f'<wp:extent cx="{cx}" cy="{cy}"/>', block, count=1)
-    return re.sub(r'<a:ext cx="\d+" cy="\d+"/>',
-                  f'<a:ext cx="{cx}" cy="{cy}"/>', block, count=1)
+    return _A_EXT_RE.sub(f'<a:ext cx="{cx}" cy="{cy}"/>', block, count=1)
 
 
 def scale_to_width(block: str, image: str | Path, width_inches: float) -> str:

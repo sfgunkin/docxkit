@@ -184,6 +184,62 @@ def test_set_extent_touches_only_its_own_block():
     assert 'cx="5486400"' in doc               # the document is unchanged
 
 
+#: A drawing's two extents as other producers write them: closed ` />`
+#: (52 `wp:extent` and 43 `a:ext` in 4 of 2,954 corpus packages), or
+#: `cy` before `cx`, which the schema allows.
+_EXTENT_SPELLINGS = {
+    "closed with a space": lambda xml: re.sub(
+        r'(<(?:wp:extent|a:ext) cx="\d+" cy="\d+")/>', r"\1 />", xml),
+    "cy first": lambda xml: re.sub(
+        r'<(wp:extent|a:ext) (cx="\d+") (cy="\d+")/>', r"<\1 \3 \2/>", xml),
+}
+
+
+@pytest.mark.parametrize("spelling", sorted(_EXTENT_SPELLINGS))
+def test_set_extent_sets_both_extents_in_ANOTHER_spelling(spelling):
+    """Both extents were matched as `<… cx="…" cy="…"/>`, so in any other
+    spelling neither was rewritten: the drawing kept its old size, and
+    `replace_image` stretched the new picture to the old box."""
+    block = _EXTENT_SPELLINGS[spelling](drawing("rId7"))
+    assert block != drawing("rId7")
+
+    resized = set_extent(block, 111, 222)
+
+    assert resized.count('cx="111"') == 2, resized
+    assert resized.count('cy="222"') == 2, resized
+
+
+def test_replacement_fixes_the_height_of_an_extent_in_ANOTHER_spelling(
+        tmp_path):
+    new = tmp_path / "new.png"
+    new.write_bytes(png(800, 200))            # 4:1
+    spaced = _EXTENT_SPELLINGS["closed with a space"](_doc())
+    parts = _parts(spaced)
+
+    replace_image(parts, "Figure 1.", new)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert f'<wp:extent cx="5486400" cy="{round(5486400 / 4)}"' in doc
+
+
+def test_an_image_is_found_through_a_relationship_written_TARGET_FIRST(
+        tmp_path):
+    """`Id="rId7"[^>]*Target=` demanded the Id first. 247 relationships in
+    23 of 2,954 corpus packages are written Target-first, and there the
+    replacement refused: "relationship rId7 not found"."""
+    new = tmp_path / "new.png"
+    new.write_bytes(png(800, 400))
+    parts = _parts()
+    parts["word/_rels/document.xml.rels"] = re.sub(
+        r'<Relationship (Id="[^"]+") (Target="[^"]+")/>',
+        r"<Relationship \2 \1/>", RELS).encode("utf-8")
+
+    target = replace_image(parts, "Figure 1.", new)
+
+    assert target == "word/media/image1.png"
+    assert parts[target] == png(800, 400)
+
+
 def test_scale_to_width_uses_the_image_aspect(tmp_path):
     img = tmp_path / "i.png"
     img.write_bytes(png(1000, 250))
