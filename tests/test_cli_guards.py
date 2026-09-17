@@ -11,6 +11,7 @@ answer for every command rather than one per command.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import zipfile
@@ -340,19 +341,62 @@ def test_the_save_path_protects_edge_whitespace_for_every_command(tmp_path):
 # -------------------------------------------------- report serialisation --
 
 
+def _json_dumps(node: ast.AST) -> list[ast.Call]:
+    """Every ``json.dump`` / ``json.dumps`` call anywhere under `node`."""
+    return [c for c in ast.walk(node) if isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr in {"dump", "dumps"}
+            and isinstance(c.func.value, ast.Name)
+            and c.func.value.id == "json"]
+
+
 def test_every_json_report_goes_through_the_resilient_encoder():
     """A source-level rule, because the trap is a future edit rather than
     today's data: `_json_default` exists so a set, a Path or a dataclass
     in a report cannot lose the whole run at the final step, and four
     commands called `json.dumps` directly and would not have been covered
     by it. A layering nobody checks is a layering that will not hold.
+
+    An ast walk since 2026-09-18, and it is the third of this round's
+    source-greps to be replaced by asking the structure instead of the
+    text (BACKLOG). The line version read `text.split("def _write_json",
+    1)[1]`, so anything ABOVE that function was outside the rule, and it
+    matched the string `json.dumps`, so `json.dump(payload, fh)` — the
+    file form, which `_json_default` covers exactly as little — passed
+    anywhere in the file. Both were demonstrated. A walk has no region
+    and no spelling: it sees the call.
     """
-    text = SRC.read_text(encoding="utf-8")
-    body = text.split("def _write_json", 1)[1].split("\ndef ", 1)[1]
-    stray = [ln.strip() for ln in body.splitlines() if "json.dumps" in ln]
+    tree = ast.parse(SRC.read_text(encoding="utf-8"))
+    writer = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef)
+                   and n.name == "_write_json"), None)
+    assert writer is not None, "the one place allowed to call it is gone"
+    allowed = {c.lineno for c in _json_dumps(writer)}
+    assert allowed, (
+        "the walk found no json call inside _write_json — it would find "
+        "none anywhere else either, and pass")
+
+    stray = sorted(c.lineno for c in _json_dumps(tree)
+                   if c.lineno not in allowed)
+
     assert not stray, (
-        f"{stray} — write reports through _write_json, which carries "
-        f"_json_default")
+        f"cli.py:{stray} calls json.dump(s) outside _write_json — write "
+        f"reports through it, because it carries _json_default")
+
+
+def test_the_encoder_cannot_be_SIDESTEPPED_by_importing_the_name():
+    """`from json import dumps` puts the call beyond any rule written
+    about `json.dumps`, and the module is imported for `_write_json`
+    already — so the only honest way to hold the rule above is to keep
+    the name where the walk can see it."""
+    tree = ast.parse(SRC.read_text(encoding="utf-8"))
+
+    imported = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                and n.module == "json"]
+
+    assert not imported, (
+        "import json and call json.dumps through the module, so the rule "
+        "above can see the call")
 
 
 def test_the_resilient_encoder_copes_with_what_a_report_may_hold(tmp_path):
