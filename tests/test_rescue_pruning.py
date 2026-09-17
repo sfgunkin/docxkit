@@ -85,6 +85,34 @@ def test_a_stamped_rescue_is_not_sorted_by_its_NAME(tmp_path):
         f"looks for what to delete: {order}")
 
 
+REDLINES_STAMPED = ("working_redline_20260917-235728-542622.docx",
+                    "working_redline_20260918-004209-873509.docx")
+REDLINE_BY_HAND = "working_redline_R1_withdrawn.docx"
+
+
+def test_a_redline_is_ordered_by_its_STAMP_like_a_rescue(tmp_path):
+    """The same defect one folder over, and worse there: NOTHING prunes
+    `build/redlines/`, so a copy a session leaves in it is part of the
+    listing for good. Every letter sorts above the digits a stamp
+    starts with, so sorting the names puts a hand-named copy last —
+    where `withdraw` reads the file the last promote wrote."""
+    paper = _paper(tmp_path)
+    paper.redline_dir.mkdir(parents=True, exist_ok=True)
+    made = []
+    for name in (REDLINE_BY_HAND, *REDLINES_STAMPED):
+        path = paper.redline_dir / name
+        write(path, make_parts(para(run(name))))
+        made.append(path)
+    # the hand-named copy is of an EARLIER round; with no stamp to read,
+    # its mtime is the best available answer and it is only an ordering
+    old = datetime(2026, 9, 17, 18, 44).timestamp()
+    os.utime(made[0], (old, old))
+
+    order = [p.name for p in paper.redlines()]
+
+    assert order == [REDLINE_BY_HAND, *REDLINES_STAMPED], order
+
+
 def test_stamped_copies_sort_chronologically_among_themselves(tmp_path):
     paper = _paper(tmp_path)
     _fill(paper,

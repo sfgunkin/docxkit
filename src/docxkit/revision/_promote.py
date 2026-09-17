@@ -5,7 +5,6 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
-import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -15,7 +14,7 @@ from .. import guard as _guard
 from .. import package
 from ..errors import DocumentLocked, ProtocolError, StaleBatch
 from . import _ledger, _timing
-from ._common import _RESCUE_GLOB, _RESCUE_STAMP
+from ._common import _RESCUE_GLOB, _RESCUE_STAMP, _stamp_of, _written_at
 from ._config import Paper
 
 # -------------------------------------------------------------- promote
@@ -80,18 +79,6 @@ def _stamped(paper: Paper, folder: Path, kind: str,
         f"no free {kind} name near {moment:%Y-%m-%d %H:%M:%S} in {folder}")
 
 
-#: The stamp `_stamped` writes, read back. `%Y%m%d-%H%M%S-%f` is
-#: uniform width, so these sort chronologically as strings — but only
-#: among THEMSELVES, which is the whole of the S1 below.
-_STAMPED_RE = re.compile(r"_rescue_(\d{8}-\d{6}-\d{6})(?=\.|$)")
-
-
-def _stamp_of(path: Path) -> str | None:
-    """The moment this rescue was written, or None if we did not write it."""
-    m = _STAMPED_RE.search(path.stem + ".")
-    return m.group(1) if m else None
-
-
 def rescues(paper: Paper) -> list[Path]:
     """Every rescue copy in the folder, oldest first.
 
@@ -106,36 +93,23 @@ def rescues(paper: Paper) -> list[Path]:
     newest file read as the oldest, and `prune_rescues` deleted it.
     Twice on Aging_Well, 2026-08-31 and 2026-09-01, each time taking the
     undo for the promote that had just run.
+
+    The reading itself is :func:`_common._written_at`, because the kept
+    redlines are named the same way and had the same defect (2026-09-18).
     """
     if not paper.rescue_dir.is_dir():
         return []
     return sorted(paper.rescue_dir.glob(
-        _RESCUE_GLOB + paper.working.suffix), key=_written_at)
-
-
-def _written_at(path: Path) -> datetime:
-    """When a rescue was made: its stamp, or failing that its mtime.
-
-    The stamp is preferred wherever there is one, and that is the whole
-    reason `_stamped` writes one — an mtime is rewritten by a copy, and
-    these folders live on a sync-on-demand drive. For a copy the tool
-    did not write there is no stamp and the mtime is the best available
-    answer; it is only used to ORDER the listing, never to decide a
-    deletion.
-    """
-    stamp = _stamp_of(path)
-    if stamp is not None:
-        return datetime.strptime(stamp, _RESCUE_STAMP)
-    return datetime.fromtimestamp(path.stat().st_mtime)
+        _RESCUE_GLOB + paper.working.suffix),
+        key=lambda path: _written_at(path, "rescue"))
 
 
 def redlines(paper: Paper) -> list[Path]:
     """Every kept redline, oldest first.
 
-    The counterpart of :func:`rescues`, and it exists for the same reason
-    that one does: the copies are stamped rather than numbered, so sorting
-    them as strings sorts them chronologically, and a caller should not
-    have to know that to list them.
+    The counterpart of :func:`rescues`, ordered the same way and for the
+    same reason: the copies are stamped, the stamp is what says when one
+    was written, and a caller should not have to know that to list them.
 
     The asymmetry with rescues is deliberate and worth stating here, since
     the two folders sit side by side. A rescue is TRANSIENT — it undoes the
@@ -181,7 +155,7 @@ def prune_rescues(paper: Paper, keep: int | None = None, *,
     """
     limit = paper.rescue_keep if keep is None else keep
     limit = max(0, limit)
-    ours = [p for p in rescues(paper) if _stamp_of(p) is not None]
+    ours = [p for p in rescues(paper) if _stamp_of(p, "rescue") is not None]
     surplus = len(rescues(paper)) - limit
     doomed = [p for p in ours[:max(0, surplus)] if p != protect]
     for path in doomed:
@@ -426,12 +400,20 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
     for candidate in (live, paper.prev):
         if not candidate.exists():
             raise ProtocolError(f"missing: {candidate}")
-    kept = paper.redlines()
+    # The copies PROMOTE wrote, which is not everything the folder
+    # holds: nothing prunes it, and a copy a session left there under a
+    # name of its own is not a proposal this tool put on the
+    # manuscript. Taking the last entry of the whole listing refused a
+    # withdrawal that was in order and said the author had saved a
+    # proposal they never opened (2026-09-18) — the same distinction
+    # `prune_rescues` makes before it deletes anything.
+    kept = [r for r in paper.redlines()
+            if _stamp_of(r, "redline") is not None]
     if not kept:
         raise ProtocolError(
             f"nothing has been promoted onto {live.name}: "
-            f"{paper.redline_dir.name}/ keeps no redline, so there is no "
-            f"proposal here to withdraw.")
+            f"{paper.redline_dir.name}/ keeps no redline `promote` wrote, "
+            f"so there is no proposal here to withdraw.")
     newest, live_hash = kept[-1], _guard.sha256(live)
     if _guard.sha256(newest) != live_hash:
         raise ProtocolError(

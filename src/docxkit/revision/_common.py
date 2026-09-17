@@ -6,7 +6,8 @@ is part of :mod:`docxkit.revision`; import from there.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 
 from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
 
@@ -97,6 +98,42 @@ _RESCUE_STAMP = "%Y%m%d-%H%M%S-%f"
 
 
 _RESCUE_GLOB = "*_rescue_*"
+
+
+#: The stamp `_promote._stamped` writes into a copy's name, read back.
+#: One expression for BOTH kinds — the rescue copies and the kept
+#: redlines are named the same way and have to be read the same way,
+#: and the reading lives here because `_config` lists the redlines and
+#: sits below `_promote`, which lists the rescues.
+_STAMPED_RE = re.compile(r"_(rescue|redline)_(\d{8}-\d{6}-\d{6})(?=\.|$)")
+
+
+def _stamp_of(path: Path, kind: str) -> str | None:
+    """The moment this copy was written, or None if we did not write it.
+
+    `kind` is `"rescue"` or `"redline"`, and it is checked rather than
+    matched loosely: the two folders are listed separately, and a name
+    carrying the other word is a copy somebody made, not one of ours.
+    """
+    m = _STAMPED_RE.search(path.stem + ".")
+    return m.group(2) if m is not None and m.group(1) == kind else None
+
+
+def _written_at(path: Path, kind: str) -> datetime:
+    """When a copy was made: its stamp, or failing that its mtime.
+
+    The stamp is preferred wherever there is one, and that is the whole
+    reason the names carry one — an mtime is rewritten by a copy, and
+    these folders live on a sync-on-demand drive. For a copy the tool
+    did not write there is no stamp and the mtime is the best available
+    answer; it is only used to ORDER a listing, never to decide what a
+    promote wrote or what a prune may delete. Both of those ask
+    :func:`_stamp_of` instead.
+    """
+    stamp = _stamp_of(path, kind)
+    if stamp is not None:
+        return datetime.strptime(stamp, _RESCUE_STAMP)
+    return datetime.fromtimestamp(path.stat().st_mtime)
 
 
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"

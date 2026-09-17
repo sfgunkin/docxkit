@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import ProtocolError
-from ._common import _CONFIG, _DIR, _DOCTOR_SPENT, RESCUE_KEEP, WORD_DEADLINE
+from ._common import (
+    _CONFIG,
+    _DIR,
+    _DOCTOR_SPENT,
+    RESCUE_KEEP,
+    WORD_DEADLINE,
+    _written_at,
+)
 
 # --------------------------------------------------------------- config
 
@@ -139,13 +146,28 @@ class Paper:
         answer to where the redlines are. :func:`docxkit.revision.
         redlines` is this, under the name callers already use.
 
-        Stamped rather than numbered, so sorting the names as strings
-        sorts them chronologically. See :data:`_RESCUE_STAMP`.
+        **Ordered by the parsed stamp, not by the string.** Sorting the
+        names was true of the names `promote` writes and false the
+        moment the folder holds anything else — and nothing prunes this
+        one, so a copy a session leaves in it stays. Every letter sorts
+        above the digits a stamp starts with, so
+        ``working_redline_R1_withdrawn.docx`` came LAST, where
+        `withdraw` reads the file the last promote wrote: it then
+        compared the manuscript with a copy of an older round and told
+        the author they had saved a proposal they never opened
+        (2026-09-18). The same defect `rescues` was fixed for on
+        2026-08-31, and the same reading — :func:`_common._written_at`.
+
+        A copy this tool did not write carries no stamp and is ordered
+        by its mtime, which is an ordering and nothing more: what a
+        PROMOTE wrote is asked with :func:`_common._stamp_of`, by
+        `withdraw`, as `prune_rescues` asks it before deleting.
         """
         if not self.redline_dir.is_dir():
             return []
         return sorted(self.redline_dir.glob(
-            f"{self.working.stem}_redline_*{self.working.suffix}"))
+            f"{self.working.stem}_redline_*{self.working.suffix}"),
+            key=lambda path: _written_at(path, "redline"))
 
     @property
     def rescue_dir(self) -> Path:

@@ -354,6 +354,53 @@ def test_WITHDRAW_takes_back_the_NEWEST_of_several_kept_redlines(
     assert paper.working.read_bytes() == paper.prev.read_bytes()
 
 
+def test_WITHDRAW_reads_the_last_PROMOTE_not_the_last_name_in_the_folder(
+        promoted_round):
+    """`build/redlines/` is the record of every round and nothing prunes
+    it, so a copy a session leaves there stays. A name that is not a
+    stamp sorts where its first character puts it — every letter above
+    the digits a stamp starts with — and its mtime says whatever the
+    copy said, so neither can make it the last promote. Read as one, it
+    had `withdraw` compare the manuscript with the wrong file and tell
+    the author they saved a proposal they never opened."""
+    import os
+    import shutil
+
+    paper = promoted_round.paper
+    revision.withdraw(paper, why="the first proposal was wrong")
+    write(paper.batch, make_parts(para(run("the corrected proposal"))))
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    revision.promote(paper)
+    first, newest = paper.redlines()
+    labelled = (paper.redline_dir
+                / f"{paper.working.stem}_redline_R1_withdrawn.docx")
+    shutil.copy2(first, labelled)
+    os.utime(labelled, None)         # kept just now, and of the old round
+
+    report = revision.withdraw(paper, why="the second was wrong too")
+
+    assert report.withdrawn == newest
+    assert paper.working.read_bytes() == paper.prev.read_bytes()
+    assert labelled.is_file(), "the session's own copy is not this to touch"
+
+
+def test_WITHDRAW_does_not_take_a_hand_named_copy_for_a_promote(held_round):
+    """The same reading at the other end. A file somebody put in the
+    folder is not a proposal this tool put on the manuscript, and there
+    is nothing to withdraw — `prune_rescues` makes the same distinction
+    before it deletes anything."""
+    paper = held_round.paper
+    paper.redline_dir.mkdir(parents=True, exist_ok=True)
+    write(paper.redline_dir / f"{paper.working.stem}_redline_by_hand.docx",
+          make_parts(para(run("a copy somebody kept"))))
+    before = paper.working.read_bytes()
+
+    with pytest.raises(ProtocolError, match="nothing has been promoted"):
+        revision.withdraw(paper, why="not a promote")
+
+    assert paper.working.read_bytes() == before
+
+
 def test_WITHDRAW_refuses_a_saved_manuscript_that_sorts_BELOW_the_redline(
         promoted_round, tmp_path):
     """A manuscript that is not the promoted bytes has been opened and
