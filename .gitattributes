@@ -1,0 +1,15 @@
+# Line endings are LF in the index AND in every working tree.
+#
+# Git for Windows sets `core.autocrlf=true` in its SYSTEM config, so a
+# plain `git worktree add` wrote CRLF here while D:/docxkit itself was
+# LF. The mutation tools compare a module's BYTES against a `.pristine`
+# snapshot, so that difference reads as "the module changed after this
+# run": `mutation_survivors` printed STALE and a replay refused, in a
+# worktree where nothing had been edited at all (2026-09-18).
+#
+# Pinned here rather than left to each checkout's config, because the
+# trap is invisible — the tools are right to refuse, and the reason is
+# nowhere near them. D:/docxkit's own tree is still mixed from before
+# this file existed; it is normalized separately, when no sweep is
+# mirroring from it.
+* text=auto eol=lf
