@@ -50,9 +50,16 @@ def annotation_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
         found: list[ast.expr] = []
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             args = node.args
-            found = [a.annotation for a in
-                     args.args + args.posonlyargs + args.kwonlyargs
-                     if a.annotation is not None]
+            # `vararg` and `kwarg` too: `def lint(*roots: _Element | None)`
+            # annotates a parameter like any other, and leaving the two out
+            # presented 22 of `lint.py`'s 65 survivors as questions — its
+            # real survival was 5.0 %, not the 7.5 % the round was briefed
+            # on (2026-09-17). A discount that is incomplete does not read
+            # as incomplete; it reads as a module with more to answer for.
+            every = [*args.args, *args.posonlyargs, *args.kwonlyargs,
+                     args.vararg, args.kwarg]
+            found = [a.annotation for a in every
+                     if a is not None and a.annotation is not None]
             if node.returns is not None:
                 found.append(node.returns)
         elif isinstance(node, ast.AnnAssign):

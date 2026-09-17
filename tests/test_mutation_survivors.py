@@ -705,6 +705,34 @@ def test_a_claimed_mutant_inside_an_ANNOTATION_is_discounted_ONCE(tmp_path,
     assert counts.base == 0
 
 
+@pytest.mark.parametrize("source,wanted", [
+    pytest.param("def f(a: int) -> None:\n    pass\n", ["int", "None"],
+                 id="ordinary"),
+    pytest.param("def f(*roots: int | None) -> None:\n    pass\n",
+                 ["int | None", "None"], id="vararg"),
+    pytest.param("def f(**kw: str) -> None:\n    pass\n", ["str", "None"],
+                 id="kwarg"),
+])
+def test_the_annotation_discount_covers_STAR_ARGS_too(source, wanted):
+    """PEP 563 never evaluates an annotation, so a mutant inside one is
+    equivalent by construction and comes out of the denominator. The
+    discount was built from `args + posonlyargs + kwonlyargs` and never
+    looked at `vararg` or `kwarg` — so `def lint(*roots: _Element | None)`
+    and `def audit(*roots: ...)` presented 22 of `lint.py`'s 65 survivors
+    as questions (2026-09-17). Its real survival was 5.0 %, and the round
+    was briefed on 7.5 %: a discount that is incomplete does not read as
+    incomplete, it reads as a module with more to answer for."""
+    import ast
+
+    tool = _tool_module()
+    text = source.splitlines()
+    spans = tool.annotation_spans(ast.parse(source))
+    found = [text[row - 1][col:end_col]
+             for row, col, _end_row, end_col in spans]
+
+    assert sorted(found) == sorted(wanted)
+
+
 def test_the_verifier_REFUSES_a_claim_whose_line_is_ambiguous(tmp_path):
     """`kill_check` needs the line as it really appears, and insists its
     anchor occur exactly once. A stripped claim matching two lines would
