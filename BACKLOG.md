@@ -46,154 +46,129 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S1 — a cell merge is counted as pending and cannot be cleared by any toolkit path
+### S1 — revision build asks about 2 of the 14 revision kinds, so baseline refuses what build allowed
 
 <!-- status: open -->
 
-Found 2026-09-18 by a parametrized-list audit — the follow-on from the
-`_compare_render` round, which had found fourteen survivors with one cause:
-a list of layers cannot notice the layer it does not name.
+Found 2026-09-18 while fixing the `cellMerge` defect, one module over, and
+it is wider than that fix.
 
-`tests/test_revision_state.py`'s `KINDS` holds eight documents.
-`revisions._REVISION_NAMES` holds fourteen. The three guards in that file
-parametrize over `KINDS`, so the six TABLE kinds are never asked the
-property those guards exist to enforce. Five of the six behave when probed
-(`cellIns`, `cellDel`, `tblPrChange`, `tblGridChange`, `trPrChange`: counted,
-and accept or reject leaves nothing behind). `cellMerge` does not.
+`revision build`'s own pending gates read
+`tracked.package_counts(...)["insertions"]` and `["deletions"]`
+(`src/docxkit/revision/_build.py:118-127` and `:144-158`) rather than asking
+`state`. There are fourteen names in `revisions._REVISION_NAMES`; those two
+counts see two of them.
 
-**`w:cellMerge` is counted as pending, and survives BOTH accept and
-reject.** Verified in the source: it is a member of `_REVISION_NAMES`, so
-`revision_elements` counts it, and it is deliberately absent from
-`_CELL_FLAG`, so neither verb can apply it.
+So a manuscript or a baseline whose only tracked change is a cell merge — or
+a `pPrChange`, an `rPrChange`, a `sectPrChange`, a `tblPrChange`, a
+`tblGridChange`, a `trPrChange`, a `tcPrChange`, a `moveFrom` or a
+`moveTo` — passes BOTH of `build`'s refusals, while `baseline` refuses the
+same file. Compare is then handed a document carrying an unadjudicated
+verdict and flattens it, which is exactly what those refusals exist to
+prevent: the author is never offered the change, and the redline that comes
+back does not contain it as a proposal.
 
-The exclusion itself is right, and `revisions.py:463` argues it well — a
-merge or a split is not an appearance or a disappearance, applying one means
-recomputing `gridSpan` and `vMerge` across the row, and no manuscript in the
-corpus carries one to measure against. Nothing here proposes implementing
-it.
+It is the same defect `state` was just taught the full list for (see the
+`cellMerge` entry), one module over. `state` now knows all fourteen names
+and which of them only Word can clear; `build` still asks a question about
+two.
 
-The defect is the COLLISION between that exclusion and the counting
-contract. A document whose only tracked change is a cell merge reads as a
-proposal permanently: `state` says pending, `revision/_baseline.py` refuses
-to promote while anything is pending, and no path through this toolkit can
-clear it. `accept` reports success and changes nothing — a silent wrong
-answer, which is what makes this S1 rather than an ergonomics note. The
-author's only way out is to open the file in Word, and the refusal does not
-say so.
+**Why it was not fixed in that round, and what the judgement is.** Making
+`build` ask `state` would mean a formatting-only batch — a manuscript
+carrying nothing but a `pPrChange`, say — newly REFUSES a build that
+succeeds today. That may well be right: an unadjudicated formatting change
+is still unadjudicated, and the reason `baseline` refuses it is the reason
+`build` should. But it changes what the protocol accepts, on real papers
+mid-round, and it deserves its own round with the corpus measured first:
+how many of the manuscripts on this machine carry a formatting-only tracked
+change, and how many rounds would newly refuse.
 
-The shape of the fix, which is a judgement about the protocol rather than a
-test gap:
+Filed so the two halves are not fixed one at a time by accident.
 
-* `state` reports a kind this toolkit cannot apply SEPARATELY from the
-  pending count — pending, and not this tool's to clear.
-* the `_baseline` refusal NAMES that kind and says Word is the way out,
-  instead of repeating a count the author cannot act on.
-* `KINDS` then carries all fourteen, with `cellMerge` declared as the
-  documented exception, so the guard covers the set instead of a subset of
-  it — which is the whole point of the audit that found this.
-
-Probe: `scratchpad\agents\compare_read\revision_kinds_probe.py`. The audit
-scripts are `list_audit.py` and `unnamed_members.py` beside it; they run over
-the whole package in about two seconds and are worth keeping.
-
-### S1 — eight defects in edit.py's link and insertion readers
+### S3 — the lint gate refuses six write commands and a tracked build, with no route out
 
 <!-- status: open -->
 
-Eight defects, found 2026-09-18 by the two `edit.py` survivor rounds
-(389 survivors between them, against the corrected harness). They are filed
-together because they are one cluster: every one of them is a reader of
-`edit.py`'s link and insertion machinery answering a question about a RUN
-when the question was about a construct that does not respect run
-boundaries. Repros are in `scratchpad\agents\edit_links\defect_1..5.py` and
-`scratchpad\agents\edit_replace\defect_1..4.py`.
+Found 2026-09-18 by an audit of every refusal this package raises, asking
+of each: does it name a concrete next action, can that action actually be
+taken, and is there a reachable state where every route out refuses?
 
-**S1 — `insert_in_para` puts words AFTER a paragraph that is only an
-equation, and refuses that paragraph's true end.** `run_spans`' cursor stops
-at the last `w:r`, so maths after it is outside the paragraph as
-`insert_in_para` counts. A display-equation paragraph
-(`<w:p><m:oMathPara>…</m:oMathPara></w:p>`) has cursor 0, offset 0 falls to
-the `not runs` branch, and the words land before `</w:p>` — after the
-equation, silently, never reaching the `_maths_start` branch that e495ee1
-added for exactly this. In `"where [x]"` the end offset 7 is refused as
-"outside the paragraph's 6 visible characters". Measured `'xLet '` for both
-the display and the inline case. `test_insert_spans.py::
-test_the_END_of_a_paragraph_counts_the_equation_too` states the intent this
-violates — with a paragraph that ends on a run. (edit_replace defect_3.py)
+**Two refusals have no route out at all, and both are the lint gate.**
 
-**S2 — `_plain_runs` deletes everything in a label that is not a `w:t`
-run.** A `footnoteReference` inside an element label or a field result, and a
-`w:br` inside a label, are dropped by `remove_link` and by the `remove_links`
-sweep, leaving the note orphaned in `footnotes.xml`. Found independently by
-both rounds. (edit_links defect_4.py, edit_replace defect_1.py — one defect,
-counted once)
+**STUCK 1 — every mutating CLI command refuses on a lint finding it did not
+cause and cannot repair.** `cli._save` (`cli.py:837`) is THE shared write
+path for `link --write`, `refstyle --fix`, `crossrefs --write`,
+`tasks --done`, `smarten --write` and `authors --set --write`. It lints the
+WHOLE package after the edit and prints
 
-**S3 — a field with an EMPTY cached result is crossed and moved.**
-`_label_spans_in` skips zero-width runs, so a REF field whose result is empty
-is neither a label nor a marker: the match is written into the run before it
-and the field's four zero-width runs stay after the new words, so Word writes
-`"Table 3"` back in the wrong place on its next update. Measured through both
-`replace_in_para` and `replace_keeping_links`. An empty `w:hyperlink` element
-in the same position IS refused, so the two forms of one construct get
-opposite answers. (edit_replace defect_2.py)
+    REFUSED: the package would not open cleanly in Word; nothing was written
 
-**S4 — the "a marker sits exactly where the new words go" refusal only sees
-a marker with a run to itself.** `_insert_between_labels` tests
-`lo == hi == at`, so a reference sharing a run with prose at that offset is
-missed: one ENDING the prose run before the label gets no refusal and the
-words go after it; one STARTING the run after the label gets no refusal and
-the words go BEFORE it — the reading `allow_notes=True` promises it never
-picks. The same two paragraphs with the marker in its own run are refused.
-(edit_replace defect_4.py)
+naming no command, no tool and no Word step. `preserve_space` runs first and
+clears exactly ONE lint class (check 3b) — which is this same defect, fixed
+for that class alone; `_save`'s own docstring records it.
 
-**S5 — `_restyle` duplicates a run's tab or note reference.** (edit_links
-defect_1.py)
+Measured over 400 real manuscripts under `F:\...\Papers`: **20 of them
+(5.0 %) carry a finding that survives `preserve_space`** — 15 an empty
+`m:oMath` shell, 10 an empty `w:ins`, 5 an empty math object, 2 an empty
+`w:del` — including `ROIW_submission_revised.docx` and the whole Missing
+Market series. **No docxkit verb repairs any of those classes.** `hygiene`
+and `edit` have nothing for them and there is no repair command. So on one
+paper in twenty, every one of those six commands reports its work and then
+refuses, leaving the file byte-identical. Repro:
+`scratchpad\agents\audit\stuck_1_lint_bricks_every_write.py`, where
+`smarten` and `authors` both do exactly that.
 
-**S6 — `_shielded` asks only the FIRST enclosing bookmark.** (edit_links
-defect_3.py)
+**STUCK 2 — the tracked build's lint gate has no action, no flag and no
+parameter.** `tracked.py:666` raises "the package would not open cleanly in
+Word" and writes nothing, so the round leaves no artefact to look at either.
+Its three sibling gates one screen below EACH name an escape
+(`reject_check=False`, `accept_check=False`, `_ACCEPT_ESCAPE`); this one
+takes no parameter at all, and none of `revision build`'s nine flags reaches
+it. The repro refused under defaults, `force`, `resolve_math`, `moves`,
+`reject_check` and `accept_check`:
+`scratchpad\agents\audit\stuck_2_build_lint_has_no_escape.py`.
 
-**S7 — `_links_to` mispairs a nested field.** It still pairs with
-`_FIELD_RE`, the first-`end` pairing that `effef6c` replaced everywhere else
-with the depth-paired `_xml.fields`. Re-verified after that landed: it
-still reproduces. (edit_links defect_5.py — numbering per that round)
+**The premise is the thing to fix first.** Those 20 files OPEN in Word —
+they are live papers and one is a submission — so for an empty `w:ins`,
+an empty `w:del` or an empty `m:oMath` shell, "the package would not open
+cleanly in Word" looks simply FALSE. That is the bookmark check's S3 shape
+again: a gate nobody can satisfy, under a message that is not true of the
+file in front of them. Moving those classes from `lint` (refusal) to `audit`
+(advisory) retires STUCK 1 and STUCK 2 together. **Confirm with
+`docxkit verify` on a copy of one of the 20 first** — the audit did not run
+Word.
 
-**S8 — `remove_links` splices nested links with stale offsets.** (edit_links
-defect_5.py)
+Failing that, the fallback is to give both refusals a route: lint's own
+check-3b message already carries one, and for the rest say plainly that Word
+is the repair.
 
-The through-line is the one the open `citations.remove_outer_field` entry
-names too: a span whose bounds are RUN boundaries is the right answer to
-"where is this, roughly" and the wrong one for any caller that SPLICES,
-DELETES or INSERTS at those bounds. `_xml.fields` (effef6c) is the reader
-that answers with the construct's own offsets, and the callers here have not
-been moved onto it.
+**Two dead ends, one line each.** `_tracked_report.py:120` tells the reader
+to "pass `accept_check=False` to build the file anyway" while its three
+siblings append `_ACCEPT_ESCAPE`, which says the CLI has no flag for this on
+purpose — so a CLI user reads it as a flag that exists. And
+`revision/_build.py:319` (`MathResolved`) says "rebuild with
+`resolve_math=False`" and never names the CLI spelling `--keep-math`,
+although the convention exists two files away (`tracked.py:734` names
+`revision build --no-moves`).
 
-### S1 — `citations.remove_outer_field` deletes the prose sharing a field's run
+**What the audit found to be sound.** A mechanical pass first checked that
+every `docxkit ...` command, `--flag`, `[section] key` and
+`module.function()` named in any refusal resolves against the real argparse
+tree, `_config.KNOWN` and the package: **zero dangling references**. So
+these are not typos. And no "makes it worse" case survives — the archived
+drift→baseline one is closed, because `baseline` now refuses a pending
+working file, which is what `withdraw` was added for.
 
-<!-- status: open -->
+About twenty further refusals are merely TERSE — correct but naming no
+action. They are listed in the audit report and deliberately NOT filed: a
+package full of chatty errors is not the goal. The ones worth a line
+eventually are `_promote.py:413`/`:419` (withdraw becomes unreachable once
+the author opens the file in Word and saves, and the remaining route —
+reject-all then baseline — is named nowhere) and `word.py:306` ("run with no
+deadline", whose spelling is `[batch] word_deadline = 0`).
 
-Found 2026-09-18 beside the `_compare_read` masking defects, by the same
-question: what else in this package assumes a field OWNS the runs its
-markers sit in?
-
-`remove_outer_field` splices out `xml[s:e]` of a `_xml.field_spans` span.
-Those bounds are RUN boundaries — which is the right answer to what
-`field_spans` is asked, and the wrong question for a caller that deletes
-what it gets back. When the begin or end marker shares its run with
-prose, that prose goes with the field:
-
-    "As Smith (2020) found, the index rose."   ->   "Smith (2020)"
-
-Silent, in a write path, with no diff to show for it — and the words are
-simply gone from the manuscript. `_xml.field_spans` is NOT the thing to
-change: its run boundaries are correct for what it answers, and the
-nested-field fix (`effef6c`) already gave the package a walk that reports
-each field's own marker offsets. This caller has to ask that one instead,
-and splice from the markers rather than from the runs.
-
-Repro: `scratchpad\agents\compare_read\defect_3_field_spans_callers.py`.
-The other callers of `field_spans` still need the same audit — the round
-found this one by reading, not by a sweep, so the list is not known to be
-complete.
+Scripts: `scratchpad\agents\audit\advice_check.py`, `cli_map.py`,
+`measure_save_refusals.py`, and the two repros above.
 
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->

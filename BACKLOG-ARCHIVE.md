@@ -14,6 +14,237 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — a cell merge is counted as pending and cannot be cleared by any toolkit path~~ — FIXED 18.09, `89afbbf`
+<!-- status: fixed -->
+
+Found 2026-09-18 by a parametrized-list audit — the follow-on from the
+`_compare_render` round, which had found fourteen survivors with one cause:
+a list of layers cannot notice the layer it does not name.
+
+`tests/test_revision_state.py`'s `KINDS` holds eight documents.
+`revisions._REVISION_NAMES` holds fourteen. The three guards in that file
+parametrize over `KINDS`, so the six TABLE kinds are never asked the
+property those guards exist to enforce. Five of the six behave when probed
+(`cellIns`, `cellDel`, `tblPrChange`, `tblGridChange`, `trPrChange`: counted,
+and accept or reject leaves nothing behind). `cellMerge` does not.
+
+**`w:cellMerge` is counted as pending, and survives BOTH accept and
+reject.** Verified in the source: it is a member of `_REVISION_NAMES`, so
+`revision_elements` counts it, and it is deliberately absent from
+`_CELL_FLAG`, so neither verb can apply it.
+
+The exclusion itself is right, and `revisions.py:463` argues it well — a
+merge or a split is not an appearance or a disappearance, applying one means
+recomputing `gridSpan` and `vMerge` across the row, and no manuscript in the
+corpus carries one to measure against. Nothing here proposes implementing
+it.
+
+The defect is the COLLISION between that exclusion and the counting
+contract. A document whose only tracked change is a cell merge reads as a
+proposal permanently: `state` says pending, `revision/_baseline.py` refuses
+to promote while anything is pending, and no path through this toolkit can
+clear it. `accept` reports success and changes nothing — a silent wrong
+answer, which is what makes this S1 rather than an ergonomics note. The
+author's only way out is to open the file in Word, and the refusal does not
+say so.
+
+The shape of the fix, which is a judgement about the protocol rather than a
+test gap:
+
+* `state` reports a kind this toolkit cannot apply SEPARATELY from the
+  pending count — pending, and not this tool's to clear.
+* the `_baseline` refusal NAMES that kind and says Word is the way out,
+  instead of repeating a count the author cannot act on.
+* `KINDS` then carries all fourteen, with `cellMerge` declared as the
+  documented exception, so the guard covers the set instead of a subset of
+  it — which is the whole point of the audit that found this.
+
+Probe: `scratchpad\agents\compare_read\revision_kinds_probe.py`. The audit
+scripts are `list_audit.py` and `unnamed_members.py` beside it; they run over
+the whole package in about two seconds and are worth keeping.
+
+**FIXED 18.09 in `7421c48` and `89afbbf`.**
+
+`revisions.WORD_ONLY = ("cellMerge",)`, documented beside `_CELL_FLAG` —
+whose judgement is left standing and pointed at — and `State.word_only`, a
+map of element name to count. The `BaselinePending` message now names those
+kinds, sends the author to Word, says what `force` would do instead, and
+stays silent when there are none; `docxkit revision status` prints the same
+line under the counts.
+
+**A cell merge stays INSIDE `pending`, deliberately.** It is an open
+verdict, and a baseline taken with one standing hands the next Compare
+something to flatten exactly as an insertion would. What the fix separates
+is not whether it is pending but whose it is to resolve.
+
+**The exit code is unchanged at 1, and a new code would have been wrong.**
+An exit code says what a script should DO, and there is nothing new to do:
+the file is a proposal, it must not be built on or baselined, and the author
+resolves it — which is true of every pending revision, because this tool
+never adjudicates on their behalf. A code of its own would send a paper that
+is merely waiting for its author down whatever branch a script keeps for
+codes it does not know, and `status` already folds "could not check drift"
+into 1. What was missing was the explanation, and that now reaches both the
+printed page and the refusal. The argument is in `StatusReport.exit_code`'s
+docstring and in the test.
+
+`KINDS` in `tests/test_revision_state.py` now holds all fourteen names, so
+the guards cover the SET rather than a subset — which is what the audit that
+found this was for. Two exceptions are declared instead of implicit:
+`cellMerge`, and `tblGridChange`, whose element is a `CT_Markup` carrying NO
+author, so a grid-change-only file is pending and attributed to nobody. That
+is the format's doing and it is pinned as such.
+
+Tests seen red first: four `word_only` tests failing with `AttributeError`,
+`test_the_pending_refusal_NAMES_a_kind_only_word_can_clear` on the old
+message, and `test_status_names_a_pending_kind_only_WORD_can_clear` on the
+old page. Two further guards passed on arrival and are pins rather than
+fixes: `KINDS == _REVISION_NAMES`, and the refusal staying quiet when
+nothing is word-only.
+
+The unapplied list is now known to be bounded: `_REVISION_NAMES` minus what
+`accept`/`reject` apply leaves `w:cellMerge` alone. A related and WIDER gap
+— `revision build` asking about 2 of the 14 kinds — is filed separately.
+
+### ~~S1 — `citations.remove_outer_field` deletes the prose sharing a field's run~~ — FIXED 18.09, `c3db190`
+<!-- status: fixed -->
+
+Found 2026-09-18 beside the `_compare_read` masking defects, by the same
+question: what else in this package assumes a field OWNS the runs its
+markers sit in?
+
+`remove_outer_field` splices out `xml[s:e]` of a `_xml.field_spans` span.
+Those bounds are RUN boundaries — which is the right answer to what
+`field_spans` is asked, and the wrong question for a caller that deletes
+what it gets back. When the begin or end marker shares its run with
+prose, that prose goes with the field:
+
+    "As Smith (2020) found, the index rose."   ->   "Smith (2020)"
+
+Silent, in a write path, with no diff to show for it — and the words are
+simply gone from the manuscript. `_xml.field_spans` is NOT the thing to
+change: its run boundaries are correct for what it answers, and the
+nested-field fix (`effef6c`) already gave the package a walk that reports
+each field's own marker offsets. This caller has to ask that one instead,
+and splice from the markers rather than from the runs.
+
+Repro: `scratchpad\agents\compare_read\defect_3_field_spans_callers.py`.
+The other callers of `field_spans` still need the same audit — the round
+found this one by reading, not by a sweep, so the list is not known to be
+complete.
+
+**FIXED 18.09 in `c3db190`.** `remove_outer_field` asks `_xml.fields` for the doubled field's own marker offsets and cuts there, so prose sharing the begin or end run stays where it is. Tests seen red first are in `tests/test_citations.py`; the wider audit of every `field_spans` caller is in that commit's message.
+
+### ~~S1 — eight defects in edit.py's link and insertion readers~~ — FIXED 18.09, `2da67e8`
+<!-- status: fixed -->
+
+Eight defects, found 2026-09-18 by the two `edit.py` survivor rounds
+(389 survivors between them, against the corrected harness). They are filed
+together because they are one cluster: every one of them is a reader of
+`edit.py`'s link and insertion machinery answering a question about a RUN
+when the question was about a construct that does not respect run
+boundaries. Repros are in `scratchpad\agents\edit_links\defect_1..5.py` and
+`scratchpad\agents\edit_replace\defect_1..4.py`.
+
+**S1 — `insert_in_para` puts words AFTER a paragraph that is only an
+equation, and refuses that paragraph's true end.** `run_spans`' cursor stops
+at the last `w:r`, so maths after it is outside the paragraph as
+`insert_in_para` counts. A display-equation paragraph
+(`<w:p><m:oMathPara>…</m:oMathPara></w:p>`) has cursor 0, offset 0 falls to
+the `not runs` branch, and the words land before `</w:p>` — after the
+equation, silently, never reaching the `_maths_start` branch that e495ee1
+added for exactly this. In `"where [x]"` the end offset 7 is refused as
+"outside the paragraph's 6 visible characters". Measured `'xLet '` for both
+the display and the inline case. `test_insert_spans.py::
+test_the_END_of_a_paragraph_counts_the_equation_too` states the intent this
+violates — with a paragraph that ends on a run. (edit_replace defect_3.py)
+
+**S2 — `_plain_runs` deletes everything in a label that is not a `w:t`
+run.** A `footnoteReference` inside an element label or a field result, and a
+`w:br` inside a label, are dropped by `remove_link` and by the `remove_links`
+sweep, leaving the note orphaned in `footnotes.xml`. Found independently by
+both rounds. (edit_links defect_4.py, edit_replace defect_1.py — one defect,
+counted once)
+
+**S3 — a field with an EMPTY cached result is crossed and moved.**
+`_label_spans_in` skips zero-width runs, so a REF field whose result is empty
+is neither a label nor a marker: the match is written into the run before it
+and the field's four zero-width runs stay after the new words, so Word writes
+`"Table 3"` back in the wrong place on its next update. Measured through both
+`replace_in_para` and `replace_keeping_links`. An empty `w:hyperlink` element
+in the same position IS refused, so the two forms of one construct get
+opposite answers. (edit_replace defect_2.py)
+
+**S4 — the "a marker sits exactly where the new words go" refusal only sees
+a marker with a run to itself.** `_insert_between_labels` tests
+`lo == hi == at`, so a reference sharing a run with prose at that offset is
+missed: one ENDING the prose run before the label gets no refusal and the
+words go after it; one STARTING the run after the label gets no refusal and
+the words go BEFORE it — the reading `allow_notes=True` promises it never
+picks. The same two paragraphs with the marker in its own run are refused.
+(edit_replace defect_4.py)
+
+**S5 — `_restyle` duplicates a run's tab or note reference.** (edit_links
+defect_1.py)
+
+**S6 — `_shielded` asks only the FIRST enclosing bookmark.** (edit_links
+defect_3.py)
+
+**S7 — `_links_to` mispairs a nested field.** It still pairs with
+`_FIELD_RE`, the first-`end` pairing that `effef6c` replaced everywhere else
+with the depth-paired `_xml.fields`. Re-verified after that landed: it
+still reproduces. (edit_links defect_5.py — numbering per that round)
+
+**S8 — `remove_links` splices nested links with stale offsets.** (edit_links
+defect_5.py)
+
+The through-line is the one the open `citations.remove_outer_field` entry
+names too: a span whose bounds are RUN boundaries is the right answer to
+"where is this, roughly" and the wrong one for any caller that SPLICES,
+DELETES or INSERTS at those bounds. `_xml.fields` (effef6c) is the reader
+that answers with the construct's own offsets, and the callers here have not
+been moved onto it.
+
+**FIXED 18.09 in eight commits**, four from each round, every one with its
+tests seen red first:
+
+* `bbfae5b` S1 — a paragraph ends where its TEXT ends, not where its last
+  run does. The bound is `len(visible_text(para_xml))`; an offset that is
+  neither a run's nor the runs' end goes to the maths search, with its own
+  end past every trailing equation. `at == cursor` still belongs to the
+  runs, so words still land BEFORE a trailing equation at its own offset —
+  kept green as a guard. Red first: 4 in `tests/test_insert_spans.py`.
+* `9402cd1` S2 — `_plain_runs` now names what the LINK owns (the
+  `w:hyperlink` element's outermost tags, the field's four machinery runs
+  via `is_field_run`, the Hyperlink style and its empty `w:rPr` shell) and
+  keeps every other byte, so a note reference, a break, a bookmark and a
+  `w:ins` wrapper survive an unwrap. A run that renders nothing still goes.
+  Red first: 4 in `tests/test_remove_link.py`.
+* `62f47e7` S3 — `_refuse_crossed_empty_field`: a field all of whose runs
+  are zero width and which lies strictly inside the match is refused, in the
+  words the note guard uses, with `allow_hyperlink=True` as the opt-in. A
+  match that only TOUCHES such a field is not refused — refusing there would
+  make a paragraph with an invisible field uneditable.
+* `a9bde68` S4 — `_notes_in` answers where each reference sits inside its
+  run, so the guard asks about the offset instead of `lo == hi`. One honest
+  residue is now stated in `replace_keeping_links`' docstring rather than
+  left to be found: with `allow_notes=True` the words go after the marker in
+  three of the four shapes, and BEFORE it where the marker opens the run of
+  prose after them, because that run is not split.
+* `2908586` S7 — `_links_to` pairs a link field's markers by DEPTH, moving
+  off the `_FIELD_RE` first-`end` pairing onto the walk `effef6c` built.
+* `6037276` S8 — `remove_links` reads the links again after every unwrap,
+  instead of splicing nested links at offsets the previous unwrap invalidated.
+* `9874f9d` S5 — `_restyle` splits a styled run's children instead of
+  copying them, so a tab or note reference is no longer duplicated.
+* `2da67e8` S6 — `_shielded` asks every enclosing region, not the first.
+
+Five of the round's 57 pending claims stood on lines these fixes rewrote
+(three on `if at != cursor and not any(s == at < e …)`, one on
+`lo == hi == at`, one on that loop's `zip`) and were deleted with a comment
+saying why. `tools/equivalents.toml` has no `edit.py` block, so nothing
+expired in the file itself.
+
 ### ~~S4 — a fresh worktree reads as a module that changed, because Windows git writes CRLF~~ — FIXED 18.09, `7f0de64`
 
 <!-- status: fixed -->
