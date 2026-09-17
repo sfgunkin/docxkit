@@ -14,6 +14,60 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `wrap_visible_span` drops a tab, no-break hyphen or line break that opens the first run it wraps~~ — FIXED 18.09, `4ce85a7`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the same round. `_cite_grammar.wrap_visible_span` threw away
+the left half of a split run whenever the wrap began at that run's first visible
+character (`if at <= fs: before = ""`), on the assumption that a half cut at
+offset 0 is empty. It is not: it holds every printing child standing in front of
+the run's first `w:t` — a tab, a no-break hyphen, a line break. `split_run` puts
+a child exactly at the cut on the LEFT, by document order, which is what keeps
+the END of a wrap whole; the caller then discarded it.
+
+    <w:r><w:t>Smith</w:t></w:r><w:r><w:noBreakHyphen/><w:t>Jones (2003)</w:t></w:r>
+    wrapping "Jones (2003)":  'Smith‑Jones (2003)' → 'SmithJones (2003)'
+    a run opening <w:tab/>:   'see \tRowe 1987'    → 'see Rowe 1987'
+
+`visible_text` renders none of those children, so the anchors, the text
+assertions and the call's own success all held; only `printed_text` showed the
+loss. It is the S1 of 2026-08-21 (Aging_Well's hyphens) from the other side:
+that one COPIED the hyphen into every fragment, this one dropped it.
+
+**Fixed 17.09 in `4ce85a7`**, in the caller, with `split_run`'s boundary rule
+untouched: a new primitive `_xml.run_holds_content` answers whether a half is
+anything beyond the run's shell, and both discards go through it. The end side
+proved to have no hole (the right half of a cut at the run's full length is
+already empty) and is now guarded rather than argued. Tests: four cases in
+`tests/test_wrap_span.py`, two red first, all asserting `printed_text`.
+### ~~S1 — `set_run_property` leaves a stray close tag when the property is written as a PAIR, so Word cannot open the file~~ — FIXED 18.09, `74d0eae`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 by the survivor round of the first whole `_xml.py` sweep.
+`set_run_property` matched a child's OPEN tag only, and both the replace path
+and the duplicate-removal loop cut exactly that span — so a property Word
+writes as a PAIR lost its open tag and kept its close:
+
+    replace b  → <w:rPr><w:b w:val="0"/></w:b>…
+    remove  b  → <w:rPr></w:b>…
+    set    sz  → <w:sz w:val="24"/></w:sz>
+
+All three are mismatched tags, and a part like that makes Word report
+unreadable content. `set_para_property` had exactly this defect and was fixed
+(`test_a_PAIRED_property_element_is_replaced_WHOLE`, whose docstring records
+that Word writes both forms); the RUN writer never got the fix, though it is
+reached from `edit.py`'s run-property sweep (a paper script's tag mapping) and
+from `footnotes.py`'s rFonts/sz/szCs.
+
+**Fixed 17.09 in `74d0eae`.** Both paths read children through `_own_children`,
+as the paragraph writer does, so a paired child is taken whole and the slot walk
+steps over it rather than ranking it twice; `_RPR_CHILD_RE`, a second copy of
+`_CHILD_OPEN_RE`'s pattern, is gone. Tests: five cases in
+`tests/test_xml_primitives.py`, four red first, each asserting the result
+PARSES — every text assertion in that file passed while the stray close tag was
+there.
 ### ~~S2 — `revision/_gates` compares a gate's exit code by `==` and nothing held it to a value; a gate killed by a signal read as PASSED under the mutant~~ — FIXED 18.09, `0a5d998`
 
 <!-- status: fixed -->
