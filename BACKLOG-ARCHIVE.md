@@ -14,6 +14,46 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — placement and _table_layout write a row's w:trPr in front of its w:tblPrEx~~ — FIXED 18.09, `0bdae9f`
+
+<!-- status: fixed -->
+
+Found by the `placement.py` survivor round, 2026-09-18. `CT_Row` is a
+SEQUENCE — `w:tblPrEx?`, then `w:trPr?`, then the cells — and every writer of
+row properties in this package created the element at index 0, in front of
+whatever exceptions the row already carried. Word writes a `w:tblPrEx` on any
+row whose borders, width or margins differ from the table's: measured across
+this machine, 4,410 rows in 103 of the 2,954 manuscripts, 1.72 % of 256,856
+rows. It is not a corner.
+
+What it cost is the reason this is S2 and not S1. Word REPAIRS the order on
+open rather than refusing it — exactly as it repairs a row mark written
+before `cantSplit` (measured 2026-09-16, `_TRPR_ORDER`) — which is why no
+gate here ever said anything. But the repair only happens once Word has
+opened and saved the file, and until then every OTHER reader of the package
+sees an invalid order. The page is right and the package is not.
+
+Three writers, one rule now. `placement._trpr` creates the element after a
+`w:tblPrEx`, and both `keep_together` and `own_page` use it instead of each
+keeping its own copy of the two lines. `_table_layout.house` makes the same
+choice on the string, and past the WHOLE element rather than its open tag,
+because `w:tblPrEx` holds properties of its own and writing past the open tag
+lands inside it.
+
+The same search turned up the other shape of the same line. `<w:trPr/>` is
+row properties too — real Word output, the shape `_xml` already records for
+`<w:pPr/>`, 139 of them in 16 manuscripts — and `_TRPR_RE` cannot merge into
+a self-closing tag, so `house` wrote `cantSplit` into a SECOND `w:trPr`
+beside the first: two in one row, which `lint` reports and `CT_Row` does not
+allow. It is filled now instead.
+
+The other fixed-index inserts in the family were checked and are right:
+`w:pPr` at index 0 of a `w:p` and `w:tcPr` at the open tag of a `w:tc` are
+where those sequences start, and `_set_tbl_pr` already puts a `w:tblPr`
+before the grid or the first row.
+
+Tests seen red before the fix are in `tests/test_placement.py` and
+`tests/test_tables_house.py`.
 ### ~~S1 — a nested field made `unlink` remove a live caption's bookmark~~ — FIXED 18.09, `effef6c`
 
 <!-- status: fixed -->
