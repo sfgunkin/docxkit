@@ -148,7 +148,18 @@ def test_the_pinned_numbers_match_what_pyproject_records():
     meets first, and a comment that disagrees with the gate is worse
     than no comment. The DATE is checked with the number, for the same
     reason: a reader who meets the comment first and the test never
-    would otherwise get the figure without its age."""
+    would otherwise get the figure without its age.
+
+    SKIPS while `DEBT` is empty, which it is: the debt was paid. Every
+    assertion below is inside the loop, so an empty list made this a
+    green test that checked nothing — found by coverage over the test
+    files themselves, which is the one instrument that can see it
+    (BACKLOG, 2026-09-18). `test_a_paid_debt_is_REMOVED_from_the_list`
+    is what keeps `DEBT` honest, so nothing here is unguarded; this test
+    was merely reading as a guard while standing down.
+    """
+    if not DEBT:
+        pytest.skip("no pinned debt — nothing to match against pyproject")
     recorded = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     block = recorded[recorded.index("# ---- C901"):
                      recorded.index("[tool.ruff.lint.isort]")
@@ -174,7 +185,12 @@ def test_the_pinned_numbers_match_what_pyproject_records():
 def test_every_pin_says_WHEN_it_was_measured():
     """The gap this shape closes. A pin that shrinks stays green — by
     design — so the only thing standing between a reader and a stale
-    number is knowing how old it is."""
+    number is knowing how old it is.
+
+    Skips on an empty `DEBT`, for the reason its neighbour does: every
+    assertion is inside the loop."""
+    if not DEBT:
+        pytest.skip("no pinned debt — no date to check")
     for name, pin in DEBT.items():
         assert isinstance(pin, Pin), (
             f"{name} is pinned as {pin!r}; it wants "
@@ -194,7 +210,16 @@ def test_every_pin_says_WHEN_it_was_measured():
 
 def test_json_is_importable_for_a_reader_who_wants_the_numbers():
     """A trivial guard on the shape of DEBT, so a typo in a name shows
-    here rather than as a mysteriously empty diff."""
+    here rather than as a mysteriously empty diff.
+
+    The same skip as the two above, and it is the least obvious of the
+    three: these assertions RUN on an empty `DEBT` and pass — `{}`
+    serialises, and `all(...)` of nothing is true — so coverage cannot
+    see this one at all. An empty list passing a test about what is in
+    the list is the shape, whether or not a loop is what makes it pass.
+    """
+    if not DEBT:
+        pytest.skip("no pinned debt — nothing to serialise or name")
     assert json.dumps(DEBT)
     assert all("." in name for name in DEBT), \
         "names are module.function, which is how the walk reports them"
