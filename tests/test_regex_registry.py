@@ -765,15 +765,20 @@ def _spellings(probe: str) -> tuple[set[tuple[str, str]], list[str]]:
 
 
 def _contents(elements: set[tuple[str, str]], attributes: str) -> list[str]:
-    """What a healthy container holds: text, or one or two of the elements
-    the pattern names, each empty, holding text, or open and shut."""
+    """What a healthy container holds: nothing, text, or one or two of the
+    elements the pattern names, each empty, holding text, or open and shut.
+
+    Nothing is a reading in its own right — `_xml._BARE_RUN_RE` is about
+    a run that holds exactly that — and a probe that always puts content
+    in never reaches such a pattern.
+    """
     singles = [form
                for prefix, name in sorted(elements)
                for attrs in dict.fromkeys(("", attributes))
                for form in (f"<{prefix}:{name}{attrs}/>",
                             f"<{prefix}:{name}{attrs}>text</{prefix}:{name}>",
                             f"<{prefix}:{name}{attrs}></{prefix}:{name}>")]
-    return ["text", *singles,
+    return ["", "text", *singles,
             *(a + b for a, b in itertools.product(singles, repeat=2))]
 
 
