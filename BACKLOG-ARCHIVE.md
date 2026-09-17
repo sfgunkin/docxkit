@@ -14,6 +14,78 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `insert_in_para` raises a bare ValueError at an offset directly before inline maths~~ — FIXED 17.09, `e495ee1`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 while building `replace_keeping_links`:
+
+    para:  "where " + m:oMath(x) + " is it."
+    insert_in_para(p, 6, "now ")
+    → ValueError: max() iterable argument is empty   (from _between_runs)
+
+No visible run starts at an offset directly before inline maths, and the
+lookup assumed one does. The caller gets Python's words about `max()`, which
+name neither the paragraph nor the equation.
+
+**Fixed 17.09 in `e495ee1`.** At such an offset the words go right before
+the equation — outside a display equation's `m:oMathPara`, never inside it,
+and after any zero-width marker ending there; an offset INSIDE the maths is
+refused with an `AnchorError` in the package's words. `replace_keeping_links`
+then inserts words between a label and the equation that follows it instead
+of refusing. Tests: `test_insert_in_para_goes_BEFORE_an_inline_equation_at_its_offset`,
+`test_insert_before_an_equation_goes_AFTER_a_marker_that_ends_there`,
+`test_insert_before_a_DISPLAY_equation_lands_outside_the_oMathPara`,
+`test_an_offset_INSIDE_an_equation_is_refused_in_the_package_s_words`.
+### ~~S1 — `replace_in_para` moves an inline equation behind the replacement when the anchor spans it~~ — FIXED 17.09, `e495ee1`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 while building `replace_keeping_links`. An anchor is
+matched against the runs' visible text with the maths left out, so an anchor
+that spans an inline equation matches — and the write then puts the whole
+replacement on one side of the equation:
+
+    para:  "where " + m:oMath(x) + " is the rate."
+    replace_in_para(p, "where  is", "here, is")
+    → succeeds; the paragraph reads "here, isx the rate."
+
+The equation moved to after the replacement, and nothing refused.
+`tests/test_probe.py` had pinned the acceptance as what `probe` reports.
+
+**Fixed 17.09 in `e495ee1`.** A match whose span crosses an inline equation
+is refused with an `AnchorError` quoting the maths; touching it at either
+edge is still allowed. The check sits in the shared write (`_rewrite_span`),
+so `replace_keeping_links` has it too. `test_probe.py` now pins the refusal,
+and `probe`'s "two views disagree" line says the replace writes across the
+maths in neither spelling. Tests:
+`test_replace_in_para_REFUSES_a_match_that_crosses_an_inline_EQUATION`,
+`test_a_match_that_only_TOUCHES_the_equation_is_not_refused`,
+`test_a_piece_of_replace_keeping_links_that_crosses_maths_is_refused`.
+### ~~S2 — `replace_in_para` writes through an unstyled cross-reference, and a field update puts the old words back~~ — FIXED 17.09, `e495ee1`
+
+<!-- status: fixed -->
+
+Found 2026-09-17 while building `replace_keeping_links`. `replace_in_para`
+refuses a match that crosses a link, and its link test read the `Hyperlink`
+character style and `w:hyperlink` elements only. A Word cross-reference —
+`REF _Ref… \h` — writes its RESULT unstyled, so:
+
+    para:  "see " + field(REF _Ref1 \h → "Table 3") + " for detail"
+    replace_in_para(p, "see Table 3 for", "consult Table 4 for")
+    → no refusal; the result run is emptied, the words go into the plain
+      run before it, and the next field update in Word puts "Table 3"
+      back beside the new text
+
+**Fixed 17.09 in `e495ee1`.** `replace_in_para` reads labels through the
+definition `replace_keeping_links` edits around (the visible runs of one
+`w:hyperlink`, of one field, or of contiguous `Hyperlink`-styled runs), so the
+two agree on what a link is. A label only a field makes one is refused with
+its own message naming the instruction; `allow_hyperlink=True` is the opt-in,
+and everything the old check refused is refused as before. Tests:
+`test_replace_in_para_REFUSES_to_write_through_an_UNSTYLED_cross_ref`,
+`test_a_match_WHOLLY_inside_a_field_result_needs_the_same_opt_in`,
+`test_a_match_beside_a_field_result_is_still_an_ordinary_replace`.
 ### ~~S4 — no helper to replace a span AROUND the links inside it; four `edit` helpers unexported~~ — FIXED 17.09, `43331e6`
 
 <!-- status: fixed -->
