@@ -777,30 +777,6 @@ backtick is optional now.
 
 ---
 
-### S4 — every protocol round re-writes the same snapshot and anchor-index scripts
-<!-- status: open -->
-
-**Observed** (DSI, twice: `snapshot_t6.py` / `anchor_index_t6.py` on 07.09,
-`snapshot_unfpa.py` / `anchor_index_unfpa.py` on 16.09; both still in
-`DSI/revision/scripts/`). Each round's P-steps need (1) a text dump in document
-order — body ¶ numbered as `Document.paragraphs`, table cells as `[T<k>:r,c]`,
-footnotes, one `⟦MATH⟧` per `m:oMath` — plus a structure record (¶/table/oMath/
-footnote counts, bookmark names, internal link targets in BOTH forms with
-instructions reassembled per paragraph); and (2) resolution of every protocol
-anchor over body + table cells + footnotes, "exactly once, inside the named ¶".
-The second round also needed the dump in BASELINE numbering after inserts
-(`[P31a]`), or a text diff is all label noise.
-
-**Workaround:** the four scripts above; `docxkit compare` answers "what changed"
-but not "freeze this state as text + structure" or "does this anchor resolve
-where the protocol says".
-
-**Fix sketch:** `docxkit snapshot PAPER.docx OUT_STEM [--accepted]` and
-`docxkit anchors PAPER.docx PROTOCOL.md` (quoted `>` blocks and «…» anchors with
-their ¶ scope), with a `--insertions 31,98` relabel for the post-batch dump.
-
----
-
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213

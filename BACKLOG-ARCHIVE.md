@@ -14,6 +14,51 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — every protocol round re-writes the same snapshot and anchor-index scripts~~ — FIXED 17.09, `fcfbd31`
+
+<!-- status: fixed -->
+
+**Observed** (DSI, twice: `snapshot_t6.py` / `anchor_index_t6.py` on 07.09,
+`snapshot_unfpa.py` / `anchor_index_unfpa.py` on 16.09; both still in
+`DSI/revision/scripts/`). Each round's P-steps need (1) a text dump in document
+order — body ¶ numbered as `Document.paragraphs`, table cells as `[T<k>:r,c]`,
+footnotes, one `⟦MATH⟧` per `m:oMath` — plus a structure record (¶/table/oMath/
+footnote counts, bookmark names, internal link targets in BOTH forms with
+instructions reassembled per paragraph); and (2) resolution of every protocol
+anchor over body + table cells + footnotes, "exactly once, inside the named ¶".
+The second round also needed the dump in BASELINE numbering after inserts
+(`[P31a]`), or a text diff is all label noise.
+
+**Workaround:** the four scripts above; `docxkit compare` answers "what changed"
+but not "freeze this state as text + structure" or "does this anchor resolve
+where the protocol says".
+
+**Fix sketch:** `docxkit snapshot PAPER.docx OUT_STEM [--accepted]` and
+`docxkit anchors PAPER.docx PROTOCOL.md` (quoted `>` blocks and «…» anchors with
+their ¶ scope), with a `--insertions 31,98` relabel for the post-batch dump.
+
+**Fixed 17.09 in `fcfbd31`.** Module `snapshot` and two read-only commands.
+`docxkit snapshot PAPER.docx [STEM] [--accepted] [--insertions 31,98]` writes
+`STEM.txt` (body `[P<n>]` numbered as `find.body_elements` walks them, so every
+¶ number docxkit prints agrees; `[T<k>]` and `[T<k>:r,c]` cells joined ` | `; one
+`⟦MATH⟧` per equation; `⟦TABLE⟧` for a nested table), `STEM_notes.txt`
+(`[FN<id>]` / `[EN<id>]`) and `STEM_structure.json` (counts, and per part —
+body, footnotes, endnotes, always all three keys — bookmark names and internal
+link targets by form: `hyperlink_fields`, `ref_fields`, `hyperlink_elements`).
+`--accepted` is the view the tracked gates simulate; `--insertions` names the
+baseline paragraph each new one follows (0 = before the first), labelled
+`P31a`, `b`, `c`… `docxkit anchors PAPER.docx [SPEC] [--anchor
+"[KIND@]SCOPE=TEXT"]... [--normalize] [--insertions …] [--json R.json]` resolves
+each anchor over body, table cells, footnotes and endnotes, kinds `replace` /
+`append` / `insert_after` / `present`, scopes `P31`, `P31a`, `T4`, `T4:2,3`,
+`FN3`, `EN2`, `*`; exit 1 on any STOP. The SPEC is one anchor per line,
+tab-separated `scope, kind, anchor` — not DSI's markdown grammar, which the next
+paper's protocol will not share. Checked on DSI's frozen
+`baseline/working_unfpa.docx`: the dump is `snapshot_unfpa.py`'s, all 1,289
+lines and 8 notes; the structure equals its JSON; all 16 protocol anchors get
+`anchor_index_unfpa.md`'s verdicts. 80 tests. The four DSI scripts can retire
+at DSI's next round. Building it found an S2 in `_xml.printed_text`, filed and
+fixed in `942df35`.
 ### ~~S2 — `insert_in_para` raises a bare ValueError at an offset directly before inline maths~~ — FIXED 17.09, `e495ee1`
 
 <!-- status: fixed -->
