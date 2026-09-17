@@ -720,6 +720,12 @@ _ANY_NAME = re.compile(
     r"<(?:\(/\?\)|/\?)?(?:(?:[A-Za-z]\w*|\0{2,}+|\[[^\]]*\][*+?]?):)?"
     r"(?:\0{2,}+|\[[^\]]*\][*+?]?)(?![A-Za-z])")
 
+#: A name spelled as a group `_SPELLED` cannot read — one holding
+#: another group, `<w:(?:ins|move(?:From|To))` — which may be any
+#: container's name as far as this gate can tell.
+_TANGLED_NAME = re.compile(r"<(?:[A-Za-z]\w*|\((?:\?:)?\w+(?:\|\w+)+\)):"
+                           r"\((?:\?:)?[^()]*\(")
+
 #: `name="value"` with a plain value, which a probe has to repeat:
 #: `w:type="dxa"` matches no `w:type="1"`.
 _LITERAL_VALUE = re.compile(
@@ -825,7 +831,9 @@ def _reading(probe: str) -> _Reading | None:
     """
     elements, attributes = _spellings(probe)
     named = {(p, n) for p, n in elements if n in CONTAINERS}
-    any_name = _ANY_NAME.search(_hole_masked(probe)) is not None
+    masked = _hole_masked(probe)
+    any_name = (_ANY_NAME.search(masked) is not None
+                or _TANGLED_NAME.search(masked) is not None)
     if not named and not any_name:
         return None
     wanted = named | ({(p, c) for p in ("w", "m") for c in CONTAINERS}
@@ -1018,6 +1026,11 @@ def test_the_gate_says_what_it_CANNOT_decide():
     assert _reads_empty_as_open(r"<w:fldChar\b[^>]*/>\s*<w:r\b[^>]*>")
     assert _reading(r"<w:\w+PrChange\b") is None, "a family, not a container"
     assert _reading(r"<w:sz\b[^>]*/>") is None
+    # a name spelled as a group inside a group is read as ANY name, not
+    # as none: `_SPELLED` cannot take it apart, and skipping it is how a
+    # container goes unexercised with nothing said
+    tangled = _reading(r"<w:(?:ins|move(?:From|To))(?=[\s/>])")
+    assert tangled is not None and tangled.by_name
 
 
 #: Patterns about a container that no probe can DECIDE, each with what
@@ -1088,7 +1101,9 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
     ("revision/_losses.py", r"<w:del(?=[\s/>])"): (
         "name reader: the other half of `moved_footnotes`' candidate shape; "
         "a paragraph mark's empty deletion is a deletion there too"),
-    ("revisions.py", r"<w:(?:ins|del|moveFrom|moveTo)(?=[\s/>])"): (
+    ("revisions.py",
+     r"<w:(?:ins|del|moveFrom|moveTo|moveFromRangeStart|moveFromRangeEnd"
+     r"|moveToRangeStart|moveToRangeEnd)(?=[\s/>])"): (
         "name reader: `_has_content_revisions` asks whether there is any "
         "insertion, deletion or move to simulate, and a paragraph mark's "
         "empty insertion is one"),

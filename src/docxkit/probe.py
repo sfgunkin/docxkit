@@ -27,6 +27,7 @@ from ._xml import (
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
+    HYPERLINK_OPEN_RE,
     INSTR_ANCHOR_RE,
     INSTR_RE,
     PARA_RE,
@@ -48,7 +49,7 @@ __all__ = ["Probe", "probe"]
 # and one of which (`<w:p\b.*?</w:p>`) is the unsafe spelling: after a
 # self-closing `<w:p/>` it runs on to the NEXT paragraph's close tag and
 # reports the two as one.
-_EL_LINK_RE = re.compile(r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>')
+_EL_LINK_RE = HYPERLINK_OPEN_RE
 #: A paragraph's opening tag, the slash CAPTURED, or its close: an empty
 #: `<w:p/>` is a close.
 _P_TAG_RE = re.compile(r"<w:p\b[^>]*?(/?)>|</w:p>")

@@ -632,12 +632,16 @@ def _merge_into_next(para: _Element) -> None:
 #: `_CONTENT_RE`, the insertion and deletion NAMES whole and in any
 #: spelling: as the strings `<w:ins ` and `<w:ins/` a name a tab or a
 #: newline ended was no revision (2026-09-17), and `<w:ins` alone also
-#: begins `<w:insideH`, a table border. The moves likewise: the bare
-#: name `w:moveFrom` also begins `w:moveFromRangeStart`, and a move's
-#: range markers alone were a revision nothing counted. `test_revision_
-#: state` holds this list and `_REVISION_NAMES` together.
+#: begins `<w:insideH`, a table border. The moves were read as the bare
+#: names `w:moveFrom`/`w:moveTo`, which happen to begin the RANGE markers
+#: too: the markers belong here — `accept` and `reject` remove them, and
+#: a document holding only those still needs applying — so they are
+#: spelled out rather than caught by a prefix. `test_revision_state`
+#: holds this list and `_REVISION_NAMES` together.
 _CONTENT_MARKERS = ("<w:ins", "<w:del", "<w:moveFrom", "<w:moveTo")
-_CONTENT_RE = re.compile(r"<w:(?:ins|del|moveFrom|moveTo)(?=[\s/>])")
+_CONTENT_RE = re.compile(
+    r"<w:(?:ins|del|moveFrom|moveTo|moveFromRangeStart|moveFromRangeEnd"
+    r"|moveToRangeStart|moveToRangeEnd)(?=[\s/>])")
 #: FORMATTING revisions. Word records a property change as a snapshot of
 #: the OLD properties nested inside the new ones — `w:tcPrChange` holds a
 #: whole `w:tcPr`. A cell whose only revision is one of these carries no

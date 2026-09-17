@@ -52,6 +52,7 @@ from typing import NamedTuple
 from ._xml import (
     BOOKMARK_ID_RE,
     HYPERLINK_ANY_RE,
+    HYPERLINK_OPEN_RE,
     INSTR_RE,
     PARA_RE,
     T_RE,
@@ -109,14 +110,13 @@ _BOOKMARK_RE = BOOKMARK_ID_RE          # the shared definition
 # and the ghost guard is exactly the kind of detail that gets fixed in
 # one copy.
 _HYPERLINK_RE = HYPERLINK_ANY_RE
-# A link element's OPENING, by anchor, with the same guard: a self-closing
+# The shared definition again, and the guard is why: a self-closing
 # `<w:hyperlink w:anchor="…"/>` is the shell Word leaves of a link it
 # emptied. Nothing on the page shows it and nothing clicks it, so it
 # neither reaches a bookmark nor mentions an exhibit; read as a link it
 # did both (18 anchors in 18 of 2,954 corpus packages are reached by
 # nothing else, 2026-09-17).
-_LINK_OPEN_RE = re.compile(
-    r'<w:hyperlink\b[^>]*w:anchor="([^"]+)"[^>]*(?<!/)>')
+_LINK_OPEN_RE = HYPERLINK_OPEN_RE
 _PPR_RE = re.compile(r"<w:pPr>.*?</w:pPr>", re.DOTALL)
 # `(?<!/)>`: the pre-fix PARA_RE spelling, which reads a self-closing
 # `<w:p/>` as an open tag — 32 of 899 manuscripts carry one. Latent

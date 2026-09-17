@@ -282,7 +282,8 @@ MUTATIONS = [
     # --- new-content guards ----------------------------------------------
     Mutation("body.py",
              "an unstyled template silently builds an unstyled table",
-             '    if require_style and "<w:tblStyle" not in tblpr:',
+             '    if require_style and not re.search(r"<w:tblStyle\\b", '
+             "tblpr):",
              "    if False:"),
     # --- citations ------------------------------------------------------
     # Re-pointed 2026-08-12: the check grew a SECOND stem (a document

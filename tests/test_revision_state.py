@@ -27,7 +27,7 @@ by the refusals, because the way out of it is Word.
 from __future__ import annotations
 
 import pytest
-from conftest import make_parts, notes, para, run, write
+from conftest import document, make_parts, notes, para, run, write
 
 from docxkit import revision
 from docxkit.revisions import (
@@ -216,16 +216,18 @@ def test_a_content_revision_is_seen_whatever_follows_its_NAME():
                               "</w:tblBorders>")
 
 
-def test_a_move_s_RANGE_markers_alone_are_not_a_move():
-    """`w:moveFrom` read as a bare name also begins `w:moveFromRangeStart`,
-    so markup holding a move's range markers and no moved content was
-    dirty to `_has_revisions` while `revision_elements` counted nothing —
-    the drift the test above exists to stop."""
+def test_a_move_s_RANGE_markers_are_a_revision_in_their_own_right():
+    """They were read by the bare names `w:moveFrom`/`w:moveTo`, which
+    they happen to begin. `accept` and `reject` remove them, so a
+    document holding only markers is one with something to apply — and
+    that has to survive spelling the names with an end."""
     ranges = (f'<w:p><w:moveFromRangeStart {D} w:name="move1"/>{run("x")}'
               '<w:moveToRangeEnd w:id="7"/></w:p>')
 
-    assert revision_elements(ranges) == []
-    assert not _has_revisions(ranges)
+    from docxkit.revisions import accept
+
+    assert _has_revisions(ranges)
+    assert "moveFromRange" not in accept(document(ranges))
 
 
 @pytest.mark.parametrize("kind", sorted(KINDS))
