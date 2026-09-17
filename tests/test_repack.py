@@ -1613,3 +1613,71 @@ def test_a_figure_closing_a_shared_section_at_an_ODD_index_still_moves():
                 + P("Figure 1. Cap") + IMG + SECT() + P("After."))
 
     assert _span(doc) == (3, 5)
+
+
+# --- an exhibit found by its CAPTION's index (whole sweep, 2026-09-17) -------
+
+
+def test_an_index_IN_FRONT_of_a_caption_captions_nothing():
+    """`e.caption_at == caption_at` over the exhibits in document order.
+    The refusal above asks at 7, past every exhibit, where `>=` finds
+    nothing either; asked at the mention in front of the caption, it took
+    the figure below and moved that."""
+    with pytest.raises(PackageError,
+                       match="no exhibit is captioned at body child 0"):
+        repack._moved(parts(FIGURE + P("z")), 0, 3,
+                      labels=repack.LABELS, note=repack.NOTE)
+
+
+#: a figure captioned UNDER its picture, so the caption is its block's
+#: second child
+BELOW = (P("Figure 1 shows it.") + P("a") + P("b") + IMG + P("Figure 1. Cap")
+         + P("c") + P("d"))
+
+#: a section owner, whose block opens on the break above the caption
+OWNER = (P("Figure 1 shows it.") + P("Before.") + SECT() + P("Figure 1. Cap")
+         + IMG + SECT(True) + P("After.") + P("Later."))
+
+
+@pytest.mark.parametrize(("body", "target", "landed"), [
+    (BELOW, 6, 6), (BELOW, 0, 2), (OWNER, 6, 4), (OWNER, 0, 2)],
+    ids=["below-down", "below-up", "owner-down", "owner-up"])
+def test_a_move_answers_the_index_its_caption_LANDED_on(body, target,
+                                                         landed):
+    """`at + 1 + (x.caption_at - ms)`, the index the trial finds the moved
+    exhibit by. A caption opening its block has an offset of 0, which
+    `>>` gives too; the owner moves above are asked WHAT moved and not
+    where, and the one the search reaches opens at 1, where `2 >> 1` is
+    `2 - 1`, behind places at odd indices, where `^ 1` and `| 1` agree
+    with `+ 1`. Here the offset is 1 behind a block opening at 2 or 3,
+    the place followed stands at an even index, and the block goes both
+    ways: moved down, it is counted after it leaves."""
+    doc = parts(body)
+    out, at = repack._moved(doc, caption_of(doc), target,
+                            labels=repack.LABELS, note=repack.NOTE)
+
+    assert order(out)[at] == "Figure 1. Cap"
+    assert at == landed
+
+
+def test_a_move_past_index_256_is_measured_as_THAT_exhibit():
+    """`e.caption_at == caption_at` in `_moved` and `y.caption_at ==
+    moved_to` in the trial. The first index is read by one `exhibits`
+    call and looked for in another's, the second is computed from where
+    the block went, so past 256 each side is its own object: identity
+    finds no exhibit to move, and then no landing to read."""
+    filler = "".join(P(f"filler {k}") for k in range(300))
+    calls = []
+
+    def render(_p):
+        calls.append(1)
+        if len(calls) == 1:
+            return [FULL, "Figure 1 shows it.", "Figure 1. Cap", FULL, FULL]
+        return [FULL, "Figure 1 shows it. " + FULL, "Figure 1. Cap", FULL]
+
+    rep = repack.repack(parts(filler + FIGURE + P("z")), render=render,
+                        max_candidates=1)
+
+    assert rep.problems == []
+    assert [(m.name, m.after, m.target, m.drift, m.gain)
+            for m in rep.moves] == [("Figure 1", "z", 303, 1, 1)]
