@@ -359,6 +359,37 @@ def _record(entries: list[dict[str, object]], outcome: str,
                               outcome=outcome)
 
 
+def _say_behind(say: Callable[[str], None]) -> None:
+    """Say how far this checkout is behind master, if it is behind.
+
+    **A green chain on a stale base is not evidence that the work
+    integrates**, and it reads exactly as though it were. On 2026-09-18
+    a round came back with eleven gates green and `7411 passed` over a
+    defect that master had already fixed hours earlier, in a worktree
+    ~750 tests behind: the fix cherry-picked EMPTY, and the round's
+    other conclusion — "a stale claim on master" — was true only of its
+    own base. Nothing in the chain mentioned the gap, because every gate
+    it runs is a question about the tree it is standing in.
+
+    A worktree legitimately lags while a round is worked, so this never
+    fails and never changes the exit code. It is said at the END, beside
+    the timing regressions, for the same reason: the chain's verdict is
+    about the code, and this is about the afternoon.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..master"],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+            encoding="utf-8", errors="replace")
+        behind = int(out.stdout.strip() or 0)
+    except (OSError, ValueError):               # no git, no master, no answer
+        return
+    if behind:
+        say(f"behind  master by {behind} commit(s) — a green chain here "
+            f"is not evidence the work integrates; rebase before you "
+            f"hand it over")
+
+
 def _say_regressions(folder: Path, say: Callable[[str], None]) -> None:
     """Name any gate that has genuinely got slower, right here.
 
@@ -437,6 +468,7 @@ def run(gates: Sequence[Gate] = tuple(GATES),
             say(f"ok      {name}  {_summary(out)[:90]}")
         return 0
     finally:
+        _say_behind(say)
         if timings is not None and entries:
             _record(entries, outcome, timings)
             _say_regressions(timings, say)

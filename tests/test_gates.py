@@ -407,3 +407,55 @@ def test_the_failure_window_keeps_the_TAIL_when_nothing_is_cut():
 
     assert shown.endswith("FAILED tests/test_z.py::test_end")
     assert "characters omitted" not in shown
+
+
+# --- a green chain on a stale base -------------------------------------
+
+
+def _behind_says(monkeypatch, count: str, code: int = 0):
+    """Run `_say_behind` with `git rev-list` answering `count`."""
+    said: list[str] = []
+    done = subprocess.CompletedProcess(["git"], code, stdout=count, stderr="")
+    monkeypatch.setattr(gates.subprocess, "run", lambda *a, **kw: done)
+    gates._say_behind(said.append)
+    return said
+
+
+def test_a_checkout_BEHIND_master_says_so_after_the_chain(monkeypatch):
+    """A green chain on a stale base is not evidence that the work
+    integrates, and it reads exactly as though it were.
+
+    On 2026-09-18 a round handed back eleven gates green and `7411
+    passed` over a defect master had fixed hours earlier, from a
+    worktree ~750 tests behind: the fix cherry-picked EMPTY, and the
+    round's other finding — a stale claim "on master" — was true only of
+    its own base. Nothing in the chain mentioned the gap, because every
+    gate it runs asks about the tree it is standing in.
+    """
+    said = _behind_says(monkeypatch, "12\n")
+
+    assert len(said) == 1
+    assert "behind" in said[0] and "12" in said[0]
+    assert "rebase" in said[0], "it has to say what to DO about it"
+
+
+def test_a_checkout_LEVEL_with_master_says_nothing(monkeypatch):
+    """Silent when there is nothing, for the reason the timing monitor
+    beside it is silent: a line printed after every green chain is a
+    line people stop seeing."""
+    assert _behind_says(monkeypatch, "0\n") == []
+
+
+def test_the_advisory_never_raises_when_git_cannot_answer(monkeypatch):
+    """A tarball, a detached HEAD, no `master` ref at all. The chain's
+    verdict is about the code; this is about the afternoon, and it must
+    not be able to change the exit code."""
+    assert _behind_says(monkeypatch, "not a number", code=128) == []
+
+    def boom(*a, **kw):
+        raise OSError("no git here")
+
+    monkeypatch.setattr(gates.subprocess, "run", boom)
+    said: list[str] = []
+    gates._say_behind(said.append)
+    assert said == []
