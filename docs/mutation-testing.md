@@ -2466,6 +2466,51 @@ mutant on a line that CANNOT ACT, because a value it depends on is
 fixed by a caller or a callee rather than by the input. Killable,
 equivalent and parked all assume the line can do something.
 
+### Point a new detector at the answers you ALREADY have
+
+`tools/unobservable.py` reads every stored session and ranks the lines
+where several mutants ran and NONE was killed — the signature of a line
+that cannot act. It needs no machine time: sqlite reads and one pass
+over the claims file.
+
+**Its first run was against the three instances already known by hand,
+and it found ONE.** Keyed on the LINE, two of the three vanished —
+because they sit on lines that genuinely do act, one of them with 23
+kills, where only a PART cannot:
+
+    stack[-1].sep_end = close + 1 if close >= 0 else m.end()
+        the `+ 1` is observable; the `else m.end()` is not
+
+Cosmic-ray records the COLUMN it mutated, so those halves are two
+clusters and the unobservable one is visible on its own. Re-keyed on
+`(row, col)`: three of three.
+
+**A row-keyed version would have shipped looking right.** It would have
+produced a plausible ranking that nobody could have checked, because the
+only way to know it was wrong was to already know the answer. That is
+the argument for validating a new instrument against what you can
+already verify, before pointing it at what you cannot — and it paid
+twice here, because the failure also revealed that the three known
+instances were not one shape, which their author did not know.
+
+**Two more things the first whole run forced**, both worth copying:
+
+* Five of the top six clusters were arithmetic inside a MESSAGE —
+  `f"other {len(members) - 1} in the series"`. That is untested wording,
+  the cosmetic answer, and it buried everything else. Labelled and
+  sorted last rather than dropped, because it is still a question, just
+  a different one. **A misleading ranking is worse than no ranking.**
+* The staleness of each cluster's session belongs in the SORT, not only
+  the label. 66 of the first 116 came from stale or void sessions, and
+  the two largest had been killed hours earlier by a round that had
+  since landed. A fresh 2× is a better candidate than a stale 11×,
+  because the stale one may already be dead.
+
+And the number it produces wants stating as its author stated it: **116
+CANDIDATES, not 116 unobservable lines.** The first cluster that turns
+out to be merely under-tested is the one that gives the false-positive
+rate, and until somebody reads one, three of three is the whole sample.
+
 Which is also the case for re-reading an argued list. The figure does
 not move when a survivor is argued rather than killed, so a module
 whose remaining survivors are all argued reads as unchanged forever;
