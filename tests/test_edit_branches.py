@@ -790,8 +790,16 @@ def test_a_kept_link_inside_an_unwrapped_one_is_found_by_IDENTITY():
 
 
 def _sweep_para() -> str:
-    """Two links to unwrap, one of each form, and a kept one LAST — the
-    sweep walks back to front, so the kept link is the first it meets."""
+    """Two links to unwrap, one of each form, and a kept one LAST.
+
+    The kept link was put last when the sweep walked back to front and
+    so met it first. The sweep now re-reads after every splice and takes
+    the first link NOT in `keep` (edit.remove_links, "One splice, then
+    look again"), which makes the kept one the last thing it steps over
+    rather than the first — the same job for the fixture either way, and
+    the reason is recorded so the next reader does not argue from a walk
+    that is gone.
+    """
     return para(run("See "), _SEN, run(", "),
                 field('HYPERLINK \\l "Fig2"', "Figure 2"), run(" and "),
                 '<w:hyperlink w:anchor="Keep"><w:r><w:t>Table 2</w:t></w:r>'
