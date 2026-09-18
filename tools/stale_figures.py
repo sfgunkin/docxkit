@@ -341,6 +341,10 @@ def main() -> int:
     ap.add_argument("--running", action="store_true",
                     help="name the modules a sweep is grading right now, "
                          "and exit 1 if any is — ask BEFORE a merge")
+    ap.add_argument("paths", nargs="*",
+                    help="with --running: the files a merge would touch. "
+                         "Exit 1 only if one of them is a live sweep's "
+                         "module or harness")
     args = ap.parse_args()
 
     if args.running:
@@ -354,11 +358,40 @@ def main() -> int:
         # finished (2026-09-18), and the round that landed was itself
         # fine — there was simply nothing to ask.
         live = running()
+        if not args.paths:
+            for module, pid in live:
+                print(f"{module:24s} being swept now (pid {pid})")
+            if not live:
+                print("nothing is being swept")
+            return 1 if live else 0
+
+        # With PATHS the question narrows from "is anything live" to
+        # "does THIS merge void a figure", which is the one worth
+        # chaining: during a campaign something is always live, and a
+        # check that refuses every merge is a check people route around.
+        #
+        #     python tools/stale_figures.py --running $(git show --name-only
+        #         --format= <ref>) && git cherry-pick <ref>
+        #
+        # The HARNESS counts as much as the module. A session snapshots
+        # its test files too, so a round that only adds tests still
+        # voids the figure of every module whose harness names the file
+        # it added them to — which is the ordinary shape of a survivor
+        # round, and the one that looks harmless.
+        want = {Path(p).as_posix().lstrip("./") for p in args.paths}
+        hit = False
         for module, pid in live:
-            print(f"{module:24s} being swept now (pid {pid})")
-        if not live:
-            print("nothing is being swept")
-        return 1 if live else 0
+            owned = {f"src/docxkit/{module}", *HARNESS.get(module, [])}
+            if shared := sorted(owned & want):
+                hit = True
+                print(f"{module:24s} being swept now (pid {pid}) — "
+                      f"{', '.join(shared)}")
+        if not hit:
+            what = "nothing is being swept" if not live else (
+                f"{len(live)} sweep(s) live, none touched by these "
+                f"{len(want)} path(s)")
+            print(what)
+        return 1 if hit else 0
 
     worst = 0
     for module, tests in sorted(HARNESS.items()):

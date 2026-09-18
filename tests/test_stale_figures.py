@@ -597,3 +597,48 @@ def test_a_marker_whose_SESSION_IS_GONE_does_not_block_a_merge(tmp_path,
 
     assert "nothing is being swept" in capsys.readouterr().out
     assert code == 0
+
+
+def test_PATHS_narrow_the_question_to_the_merge_in_hand(tmp_path,
+                                                        monkeypatch,
+                                                        capsys):
+    """During a campaign something is always live, so a check that
+    refuses every merge is one people route around. With paths it
+    answers the question actually being asked: does THIS merge void a
+    figure."""
+    import stale_figures  # pyright: ignore[reportMissingImports]
+    from stale_figures import main  # pyright: ignore[reportMissingImports]
+
+    (tmp_path / ".mutation-batch.running").write_text(str(os.getpid()))
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running",
+                                      "tests/test_compare.py"])
+
+    code = main()
+
+    assert "none touched" in capsys.readouterr().out
+    assert code == 0, "a live sweep this merge cannot reach must not block it"
+
+
+def test_a_round_that_only_adds_TESTS_still_voids_the_harness_it_adds_to(
+        tmp_path, monkeypatch, capsys):
+    """The harness counts as much as the module: a session snapshots its
+    test files too. A survivor round that adds tests and touches no
+    source is the ordinary shape, and the one that looks harmless."""
+    import harness_map  # pyright: ignore[reportMissingImports]
+    import stale_figures  # pyright: ignore[reportMissingImports]
+    from stale_figures import main  # pyright: ignore[reportMissingImports]
+
+    harness = harness_map.HARNESS["batch.py"]
+    assert harness, "the map has to name batch.py's tests for this to mean anything"
+
+    (tmp_path / ".mutation-batch.running").write_text(str(os.getpid()))
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running",
+                                      harness[0]])
+
+    code = main()
+
+    out = capsys.readouterr().out
+    assert harness[0] in out, "it has to name the file that does the voiding"
+    assert code == 1
