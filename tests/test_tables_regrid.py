@@ -272,3 +272,93 @@ def test_a_nested_table_keeps_its_own_grid():
     out, rep = regrid(xml, only(xml))
     assert rep.after == 3
     assert '<w:gridCol w:w="500"/>' in out       # the inner grid survived
+
+
+# ------------------------------------ what the rewrite writes per CELL --
+#
+# From the 2026-09-18 sweep: 25 survivors in `regrid`, and the fixtures
+# above account for the grid and the spans but never for the WIDTH each
+# cell is given, for a row that covers more grid than the table has, or
+# for a cut that misses an edge anywhere but first.
+
+
+def cell_widths(xml: str) -> list[list[int]]:
+    """Every row's cell widths, as `w:tcW` states them."""
+    import re
+    return [[int(w) for w in re.findall(r'<w:tcW w:w="(\d+)" w:type="dxa"/>',
+                                        tr.group(0))]
+            for tr in re.finditer(r"<w:tr\b.*?</w:tr>", xml, re.DOTALL)]
+
+
+def test_a_modal_row_that_covers_MORE_grid_than_there_is_is_refused():
+    """`acc != n`, where `acc` is what the canonical row's spans sum to.
+    Two cells of span 2 over a grid of three columns cover four, so the
+    row's boundaries say nothing reliable about where the columns are.
+    Read as `acc < n` only the row covering too LITTLE is refused, and
+    the other is regridded onto cuts read past the end of the old grid —
+    a table rewritten from evidence the module has just decided it does
+    not have."""
+    xml = doc(tbl([1000, 1000, 1000],
+                  row(cell("a", span=2), cell("b", span=2)),
+                  row(cell("c", span=2), cell("d", span=2))))
+
+    with pytest.raises(AnchorError, match="disagree"):
+        regrid(xml, only(xml))
+
+
+def test_a_row_is_ragged_on_ANY_cut_that_misses_an_edge():
+    """`spans[:-1]` — every cut the row makes except the one at its own
+    end, which is the table's edge and always lands. The odd row here
+    cuts at 2 and at 3: the first IS an edge and the second is not, so
+    a reading that keeps only the first cut, or none, calls the row
+    straight and the count that decides whether anything is rewritten
+    comes back 0."""
+    even = row(cell("a", span=2), cell("b", span=2), cell("c", span=2))
+    xml = doc(tbl([1000] * 6, even, even,
+                  row(cell("g", span=2), cell("h"), cell("i", span=3))))
+
+    _out, report = regrid(xml, only(xml))
+
+    assert report.ragged == 1
+
+
+def test_each_cell_is_given_the_width_of_the_columns_it_NOW_spans():
+    """`sum(widths[col:col + span])`, with `col` walking the row as the
+    spans are assigned. Started at 1, or ended at `col << span`, a cell
+    is stated at some other column's width — and in a table of equal
+    columns every reading gives the same number, which is why the
+    widths here are unequal and the two panels differ."""
+    even = row(cell("a", span=2), cell("b", span=2), cell("c", span=2))
+    xml = doc(tbl([300, 300, 900, 900, 1500, 1500], even, even,
+                  row(cell("g", span=3), cell("h", span=3))))
+
+    out, _report = regrid(xml, only(xml))
+
+    assert grid_of(out) == [600, 1800, 3000]
+    assert cell_widths(out) == [[600, 1800, 3000], [600, 1800, 3000],
+                                [600, 4800]]
+
+
+def test_a_row_with_MORE_cells_than_the_grid_keeps_the_ones_that_fit():
+    """The zip over a row's cells is NOT strict, where the zip over the
+    rows above it is, and the asymmetry is the point: `_row_structure`
+    stops at the grid's last column, so a row carrying a cell beyond it
+    has fewer spans than cells. Word opens such a table without
+    complaint — it is what a converter leaves behind — and `strict=True`
+    would raise on it instead of regridding what fits.
+
+    The cells that DO fit are rewritten from 9000 dxa to 2000, which is
+    the other half of this: the new text sorts BELOW the old, digit for
+    digit, so a rewrite gated on `cell > tc.group(0)` rather than on
+    inequality skips exactly the cells that are being narrowed."""
+    even = row(cell("a", span=2, w=9000), cell("b", span=2, w=9000))
+    xml = doc(tbl([1000, 1000, 1000, 1000], even, even,
+                  row(cell("e", span=2, w=9000), cell("f", span=2, w=9000),
+                      cell("g"))))
+
+    out, report = regrid(xml, only(xml))
+
+    assert report.after == 2
+    assert grid_of(out) == [2000, 2000]
+    assert spans_of(out) == [[1, 1], [1, 1], [1, 1, 1]]
+    assert cell_widths(out)[0] == [2000, 2000]

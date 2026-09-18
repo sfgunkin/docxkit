@@ -31,6 +31,7 @@ from docxkit._table_layout import (
     _round_to,
     _set_jc,
     _set_properties,
+    _set_span,
     _set_tbl_pr,
     _set_tc_w,
     _snap,
@@ -648,3 +649,85 @@ def test_a_cell_width_present_twice_comes_out_in_full_too():
 
     assert '<w:tcW w:w="300" w:type="dxa"/>' in kept, "the past stands"
     assert kept.count("<w:tcW") == 2
+
+
+# ------------------------------------- where a cell's SPAN is written --
+#
+# 44 of the 72 survivors in `_set_span` (2026-09-18 sweep) sit on the two
+# lines that BUILD the new cell — `cell[:at] + ... + cell[at:]` and
+# `inner[:at] + element + inner[at:]` — as arithmetic: `%`, `&`, `*`,
+# `<<`. Every one of those raises TypeError between two strings, so a
+# survivor is not a loose assertion but a line the suite never ran. The
+# fixtures reached `_set_span` only through cells that already carried a
+# `w:gridSpan`, which is the ONE shape neither branch below serves.
+
+
+def test_a_cell_with_NO_properties_gets_the_tcPr_its_span_needs():
+    """`own is None` and a span to write: the cell has no `w:tcPr` at
+    all, which is most cells in most tables, and `regrid` gives one a
+    span whenever it reads a row as a spanning header. The properties
+    are opened after the `<w:tc>` tag — `re.match` anchors there, so the
+    `else 0` beside it is unreachable — and CT_Tc puts them first."""
+    out = _set_span("<w:tc><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc>", 2)
+
+    assert out == ('<w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr>'
+                   "<w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc>")
+
+
+def test_a_span_lands_in_its_SCHEMA_SLOT_in_properties_that_have_none():
+    """The other unrun branch: properties that exist and state no span.
+    CT_TcPr is a sequence, and `w:gridSpan` follows `w:cnfStyle` and
+    `w:tcW` — written at index 0 it would sit in front of the width,
+    which is the order Word repairs on open and no reader before it
+    honours."""
+    out = _set_span('<w:tc><w:tcPr><w:cnfStyle w:val="001"/>'
+                    '<w:tcW w:w="900" w:type="dxa"/></w:tcPr>'
+                    "<w:p/></w:tc>", 3)
+
+    assert out == ('<w:tc><w:tcPr><w:cnfStyle w:val="001"/>'
+                   '<w:tcW w:w="900" w:type="dxa"/>'
+                   '<w:gridSpan w:val="3"/></w:tcPr><w:p/></w:tc>')
+
+
+def test_a_span_goes_FIRST_in_properties_that_open_with_neither_slot():
+    """The same branch, where the walk finds nothing to sit behind. A
+    header cell carrying a border and no width is ordinary, and CT_TcPr
+    puts `w:gridSpan` above everything but `w:cnfStyle` and `w:tcW`, so
+    the element belongs at offset 0 — the one offset a walk starting
+    anywhere else cannot produce."""
+    out = _set_span('<w:tc><w:tcPr><w:vAlign w:val="center"/></w:tcPr>'
+                    "<w:p/></w:tc>", 2)
+
+    assert out == ('<w:tc><w:tcPr><w:gridSpan w:val="2"/>'
+                   '<w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>')
+
+
+def test_what_FOLLOWS_a_replaced_span_is_kept():
+    """The replacement is made on the first hit's own offsets, and a
+    property after it — `w:vAlign` here, which CT_TcPr puts later — is
+    the only thing that can tell a correct splice from one that reads
+    the tail from the wrong place."""
+    out = _set_span('<w:tc><w:tcPr><w:gridSpan w:val="2"/>'
+                    '<w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>', 3)
+
+    assert out == ('<w:tc><w:tcPr><w:gridSpan w:val="3"/>'
+                   '<w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>')
+
+
+def test_a_SECOND_span_in_one_cell_is_removed_not_left_standing():
+    """Two `w:gridSpan` in one `w:tcPr` is invalid and ordinary — a cell
+    salvaged out of two, or written by this package before it took every
+    copy. The second is what Word reads LAST, so leaving it is a cell
+    still spanning what it used to; the loop deletes back to front so
+    the first one's offsets stay good.
+
+    The `w:vAlign` after them is what makes the replacement's offsets
+    readable: taken from the LAST hit instead of the first, the splice
+    reads the tail from an offset that only the deleted copy made
+    sense of, and a fixture ending at the second span cannot see it."""
+    out = _set_span('<w:tc><w:tcPr><w:gridSpan w:val="2"/>'
+                    '<w:gridSpan w:val="4"/><w:vAlign w:val="center"/>'
+                    "</w:tcPr><w:p/></w:tc>", 3)
+
+    assert out == ('<w:tc><w:tcPr><w:gridSpan w:val="3"/>'
+                   '<w:vAlign w:val="center"/></w:tcPr><w:p/></w:tc>')

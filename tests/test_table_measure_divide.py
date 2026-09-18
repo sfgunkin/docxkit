@@ -21,6 +21,7 @@ from docxkit import tables
 from docxkit._table_layout import (
     _TAB_SPACES,
     _cell_extents,
+    _column_needs,
     _divide,
     _round_to,
 )
@@ -297,3 +298,109 @@ def test_divide_shaves_to_the_hard_widths_when_they_fit_EXACTLY():
                               [True, True], 100)
     assert sum(widths) == 100 and not cramped
     assert widths == [50, 50]
+
+
+# ------------------------------------------ what a COLUMN is measured at --
+#
+# `_column_needs` turns the per-cell measurement above into one need per
+# column: the widest cell wins, a spanning cell bumps the columns it
+# covers, and a cell that states neither face nor size is measured at
+# what the table mostly uses. The 2026-09-18 sweep left 22 survivors here
+# and the fixtures below are what they were missing — a column with two
+# cells of different widths, a cell with no run properties at all, and a
+# span that stops short of the last column.
+
+
+def tc(*runs: str, span: int = 1) -> str:
+    props = (f'<w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr>'
+             if span > 1 else "")
+    return f"<w:tc>{props}<w:p>{''.join(runs)}</w:p></w:tc>"
+
+
+def tr(*cells: str) -> str:
+    return f"<w:tr>{''.join(cells)}</w:tr>"
+
+
+def needs(grid: list[int], *rows: str, pad: float = 1.0, side: int = 0):
+    """`_column_needs` over a table of `rows`, with no padding to hide
+    an arithmetic difference behind."""
+    cols = "".join(f'<w:gridCol w:w="{w}"/>' for w in grid)
+    body = f"<w:tbl><w:tblGrid>{cols}</w:tblGrid>{''.join(rows)}</w:tbl>"
+    return _column_needs(body, list(grid), side, pad)
+
+
+def test_a_cell_that_states_NO_size_is_measured_at_the_tables_OWN():
+    """`sizes.most_common(1)[0][0]` is the most common `w:sz` VALUE.
+    Read as `[0][1]` or `[0][-1]` it is that value's COUNT — a size in
+    half-points of however many cells happen to state it, so one table
+    measures its unstated cells at 1 pt and the next at 6 pt, and
+    neither number has anything to do with the type on the page.
+
+    A run with no `w:rPr` is what Word writes wherever the paragraph
+    style carries the face, so this is an ordinary body cell rather than
+    an edge: the three cells here are the same word at the same size,
+    and only one of them says so."""
+    stated, bare = word("Sample", sz=20), "<w:r><w:t>Sample</w:t></w:r>"
+
+    need_h, _full, _driver, _filled = needs(
+        [4000, 4000, 4000], tr(tc(stated), tc(bare), tc(stated)))
+
+    assert need_h[1] == need_h[0] == need_h[2]
+
+
+def test_a_columns_need_is_its_WIDEST_cell_and_the_report_names_it():
+    """`h > hard[c]`. As `!=` — or as `is not`, which is true of every
+    pair of floats the model produces — the LAST cell wins instead, and
+    a label column sized to its narrowest row wraps on all the others.
+    The driver is the text the fit report names for the column, so it
+    is the reader's way back to the cell that took the room."""
+    wide = "Non-violent discipline"
+
+    need_h, _full, driver, _filled = needs(
+        [6000], tr(tc(word(wide))), tr(tc(word("7"))))
+    alone, _f, _d, _fl = needs([6000], tr(tc(word(wide))))
+
+    assert need_h[0] == alone[0]
+    assert driver[0] == wide
+
+
+def test_the_FIRST_of_two_cells_of_EQUAL_width_stays_the_driver():
+    """`>` keeps the first, `>=` takes the last, and the two can only
+    disagree where the widths are EQUAL — which two anagrams are, since
+    the model measures character by character. Nothing else in this
+    file can separate them: every other fixture's cells differ in
+    width, where both spellings agree."""
+    _need, _full, driver, _filled = needs(
+        [6000], tr(tc(word("AB"))), tr(tc(word("BA"))))
+
+    assert driver[0] == "AB"
+
+
+def test_a_spans_bump_reaches_only_the_filled_columns_it_COVERS():
+    """`range(c0, min(c0 + k, n))` twice: once for the columns the bump
+    is spread over, once for the grid width of the SPACER columns inside
+    the span, which the span does not have to pay for. Read as `c0 * k`,
+    `c0 | k` or `c0 << k` the two ranges move — and a header spanning
+    three columns of six, with a spacer inside it and another outside,
+    is the shape where all three readings differ from the sum.
+
+    The span here covers columns 1, 2 and 3, of which 3 is a spacer: so
+    its need is met by columns 1 and 2 plus that spacer's own grid
+    width, and column 4 — filled, and outside the span — is left at
+    what its own cell needs."""
+    wide = "Non-violent discipline and its correlates"
+    #: column 3 is the gutter between two panels: narrow, and no cell
+    #: writes into it, so the span pays for the rest and not for it
+    grid = [1000, 1000, 1000, 100, 1000, 1000]
+    body = tr(tc(word("a")), tc(word("b")), tc(word("c")),
+              tc(), tc(word("d")), tc())
+
+    need_h, _full, _driver, filled = needs(
+        grid,
+        tr(tc(word("a")), tc(word(wide), span=3), tc(word("d")), tc()),
+        body, body)
+
+    assert filled == [True, True, True, False, True, False]
+    span_need = needs([20000], tr(tc(word(wide))))[0][0]
+    assert need_h[1] + need_h[2] + grid[3] == span_need
+    assert need_h[4] == needs([6000], tr(tc(word("d"))))[0][0]
