@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import io
 
+import pytest
 from conftest import make_parts, write
 
 from docxkit.compare import compare, render
@@ -313,3 +314,54 @@ def test_EVERY_presence_property_is_read_and_not_just_the_first(tmp_path):
     assert set(entry["from"]) == {"keepNext", "keepLines", "pageBreakBefore",
                                   "contextualSpacing"}
     assert entry["to"] == []
+
+
+# --- the DATA census of 2026-09-18 -------------------------------------
+#
+# Cosmic-ray plans no mutant on a tuple's members or a regex's
+# alternatives, so a module whose behaviour lives in data reads as well
+# held at any survival rate. Taking each member of `_compare_read`'s data
+# out one at a time, 39 of 44 were pinned by the suite; four of the five
+# that were not are below. (The fifth, "footer" in `_PART_RANK`, cannot
+# change an answer: it is the LAST rank, and a stem that matches nothing
+# sorts at `len(_PART_RANK)` — one place further along an order that has
+# nothing else in it. `TEXT_PART_RE` admits no stem outside that tuple.)
+
+
+@pytest.mark.parametrize("off", ["0", "false", "off", "none"])
+def test_a_toggle_turned_OFF_reads_as_off_however_Word_spells_it(tmp_path,
+                                                                 off):
+    """`_OFF` is the set of things OOXML writes for "not on", and three of
+    its four members — false, off, none — could be deleted with the whole
+    suite green. Only `w:val="0"` was pinned.
+
+    A dropped member reads that spelling as ON, so the paragraph that
+    switched `keepNext` OFF is reported as the one that switched it on,
+    and the reader is sent to the wrong side of the diff. ST_OnOff admits
+    all four spellings and Word has written more than one of them across
+    versions, which is why the set holds four.
+    """
+    turned_off = _para(f'<w:keepNext w:val="{off}"/>')
+
+    report = compare(*_pair(tmp_path, turned_off, _para()))
+
+    assert report["paragraph"] == [], f'w:val="{off}" read as ON'
+
+
+def test_an_indent_in_the_NEW_attribute_names_is_the_SAME_property(tmp_path):
+    """`_ATTR_ALIAS` folds OOXML's `w:start`/`w:end` onto the older
+    `w:left`/`w:right`, and the `end` half could be deleted with nothing
+    failing.
+
+    Word writes either spelling depending on the version that saved the
+    file, so a build and an author copy routinely disagree in spelling
+    and agree on the page. Unaliased, "indent end 720" against "indent
+    right 720" is a PARAGRAPH difference on a document nobody edited —
+    the crying wolf this layer's own docstring says it exists to avoid.
+    """
+    old = _para('<w:ind w:left="360" w:right="720"/>')
+    new = _para('<w:ind w:start="360" w:end="720"/>')
+
+    report = compare(*_pair(tmp_path, old, new))
+
+    assert report["paragraph"] == [], report["paragraph"]
