@@ -2435,6 +2435,37 @@ The prediction file kept the wrong table beside the correction rather
 than instead of it, which is the right instinct: deleting it would make
 the record read better than the work was.
 
+**Then the revised prediction was wrong too, and the diagnosis is the
+reusable part.** "Nine of ten killable by three fixtures" became, on
+measurement, **ten of ten equivalent — and the two at the other guard
+with them.** Twelve survivors, nothing killable, and the fixtures could
+never have worked.
+
+`split_run` returns `''` for the RIGHT half of a cut at or past a run's
+own end — measured over every shape the guard's own comment names:
+plain, styled, tab-after, hyphen-after, break-after. So wherever `end >=
+le`, the `after` that guard tests is ALREADY empty, and the body cannot
+change the paragraph whatever the comparison says. The cluster was not
+untested. It was **unobservable**.
+
+> **Probe the callee before reasoning about the caller's guard.** Two
+> predictions in one sitting were made from the SHAPE of the code — a
+> symmetric-looking pair, a comment about deleted tabs — rather than
+> from what the function it calls actually returns. One probe of
+> `split_run` would have settled both before either was written. That
+> is the cheaper order.
+
+And the shape itself was the trap. **The two guards are not mirrors,
+although they read as a pair and are written as one**: `split_run` puts
+a child standing AT the cut on the LEFT, so the left half can be a shell
+and its guard does real work, while the right half is nothing at all.
+Neither comment said so; it is in the source now.
+
+So the ladder of survivor verdicts has a rung below "equivalent": a
+mutant on a line that CANNOT ACT, because a value it depends on is
+fixed by a caller or a callee rather than by the input. Killable,
+equivalent and parked all assume the line can do something.
+
 Which is also the case for re-reading an argued list. The figure does
 not move when a survivor is argued rather than killed, so a module
 whose remaining survivors are all argued reads as unchanged forever;
