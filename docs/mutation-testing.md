@@ -1373,6 +1373,47 @@ code to be the least-tested part of the module. This is the first
 same-day fix this campaign has measured rather than old code, and the
 shape was immediate.
 
+### A fixture whose NUMBERS make the mutants agree proves nothing
+
+Thirteen of those sixteen sat on one line:
+
+    *((group.start(1) + m.start(1), m.group(1))
+
+— the absolute offset of a group nested inside another. The obvious
+fixture reads perfectly well and settles ELEVEN of the thirteen:
+
+    "As noted (see (Smith 2020))"   ->  offsets 10 and 5
+
+because `10 + 5`, `10 | 5` and `10 ^ 5` are all **15**. Two mutants
+survive it, and nothing about the test looks wrong: it asserts the right
+thing, about the right line, and passes for a reason unrelated to the
+code.
+
+    "Compare (see (Smith 2020))"    ->  offsets 9 and 5
+
+share a bit, so every spelling disagrees and all thirteen die.
+
+**Check the operators against the fixture BEFORE writing the test.** The
+same trap took two mutants on `_xml.fields` the same morning, where the
+offsets happened to be even. Numbers chosen for readability are chosen
+by the wrong criterion: a fixture for an arithmetic mutant needs
+operands that no plausible rewriting of the operator maps to the same
+answer, and that is a property of the NUMBERS rather than of the prose
+around them. Say so in the test's docstring, or the next person tidying
+the fixture will restore the trap.
+
+**And the IDIOM is what hid them**, which is the fairer account of why
+thirteen sat on a line the module depends on. Every reader of a
+`Citation` writes over the span that line produces — `link_rest` wraps
+those characters in a hyperlink, `citations_clear_of` decides by them
+whether a mention is already inside one — so a scan reporting the right
+author at the WRONG offsets links the wrong words. No test in the file
+could see it, because every one goes through a helper that keeps
+`(authors, year, narrative)` and throws the span away. That helper is
+the file's own idiom and the right shape for the question those tests
+ask. One assertion about the SLICE — the paragraph cut at the citation's
+own offsets, read back — settles all thirteen.
+
 The section above is right about the population and wrong about
 everything else, because the draw itself was not reproducible until
 2026-08-19. `sample()` reads its candidates with
