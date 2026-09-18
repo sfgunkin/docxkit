@@ -162,7 +162,12 @@ def _measure() -> Report:
         done = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "--cov=docxkit",
              "--cov=tests", f"--cov-report=json:{out}"],
-            cwd=ROOT, capture_output=True, text=True, check=False)
+            cwd=ROOT, capture_output=True, text=True, check=False,
+            # see `kill_check._run_tests`: `text=True` decodes with the
+            # PARENT's locale, and a U+2010 or U+200D anywhere in the
+            # suite's output is a byte cp1252 does not define, so the
+            # reader raises instead of the tool reporting
+            encoding="utf-8", errors="replace")
         if not out.is_file():
             raise SystemExit(f"the suite produced no report:\n{done.stdout}")
         return _read(out)

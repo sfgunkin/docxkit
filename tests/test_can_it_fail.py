@@ -12,6 +12,7 @@ it on a real one.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -164,3 +165,51 @@ def test_an_absent_anchor_is_None_rather_than_an_unchanged_FILE():
 ])
 def test_the_verdict_reads_off_the_two_runs(before, after, expected):
     assert CAN_IT_FAIL.verdict(before, after).startswith(expected)
+
+
+_RUN_CALL = r"subprocess\.run\((?:[^()]|\([^()]*\))*\)"
+
+
+def _pytest_runs():
+    """Every `subprocess.run(...)` in `tools/` that runs the suite."""
+    tools = Path(docxkit.__file__).resolve().parents[2] / "tools"
+    for path in sorted(tools.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        for call in re.findall(_RUN_CALL, source, re.DOTALL):
+            if "pytest" in call:
+                yield path.name, call
+
+
+def test_every_tool_that_reads_the_SUITE_decodes_it_as_utf8():
+    """`text=True` decodes with the PARENT's locale, cp1252 here.
+
+    That is not mojibake, it is a crash: cp1252 leaves 0x81, 0x8D, 0x8F,
+    0x90 and 0x9D undefined, and those are middle bytes of U+2010 HYPHEN
+    and U+200D, both of which this package's own tests put in their
+    messages. So the reader raises `UnicodeDecodeError` exactly when a
+    test FAILS — the only run whose output anyone wanted.
+
+    It hid for a day in `can_it_fail`, whose verdict is read off the
+    return code and so went on printing correctly with a traceback
+    through the middle of it (reported 2026-09-18).
+    `kill_check._run_tests` had already been fixed for the same reason
+    and the fix did not travel, which is why this holds the INVARIANT
+    rather than the instance.
+    """
+    offenders = [f"{name}: {call.splitlines()[0]}"
+                 for name, call in _pytest_runs()
+                 if "text=True" in call and "encoding=" not in call]
+
+    assert offenders == [], (
+        "these run the suite and decode its output with the locale:\n"
+        + "\n".join(offenders))
+
+
+def test_the_encoding_scan_is_actually_READING_the_tools():
+    """The canary. A regex that matched nothing would pass the test
+    above over every tool in the package, which is the shape this repo
+    has now filed five times."""
+    found = list(_pytest_runs())
+
+    assert len(found) >= 3, f"the scan found only {len(found)} pytest runs"
+    assert {name for name, _ in found} >= {"kill_check.py", "can_it_fail.py"}

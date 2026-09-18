@@ -192,7 +192,14 @@ def _mark_running(stem: str) -> None:
 
 def _run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
     proc: subprocess.CompletedProcess[str] = subprocess.run(
-        cmd, text=True, capture_output=True, **kw)
+        cmd, text=True, capture_output=True,
+        # utf-8 rather than the parent's locale, for every caller: this
+        # also runs the UNMUTATED harness, and that run's stdout is what
+        # a refusal quotes. cp1252 has no byte for the middle of U+2010
+        # or U+200D, so the one output worth reading is the one that
+        # raises while being read (`kill_check._run_tests` first, then
+        # `can_it_fail` and `unrun_assertions`, all 2026-09-18).
+        encoding="utf-8", errors="replace", **kw)
     return proc
 
 

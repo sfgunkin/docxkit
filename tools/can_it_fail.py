@@ -102,7 +102,17 @@ def _run_test(root: Path, test: str) -> bool:
     done = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
          "--no-header", test],
-        cwd=root, capture_output=True, text=True, env=env)
+        cwd=root, capture_output=True, text=True,
+        # utf-8 explicitly, the same as `kill_check._run_tests` three
+        # files over and for the same reason: `text=True` decodes with
+        # the PARENT's locale, which is cp1252 on this machine, and this
+        # package's messages are full of em-dashes. A failing test is
+        # exactly when one appears — so the reader thread died with
+        # UnicodeDecodeError on the run that matters, printing a
+        # traceback through the middle of the verdict. The verdict itself
+        # survived, being read off the return code, which is why this sat
+        # unnoticed in a tool whose whole output is one line.
+        encoding="utf-8", errors="replace", env=env)
     return done.returncode == 0
 
 
