@@ -630,7 +630,7 @@ def test_a_round_that_only_adds_TESTS_still_voids_the_harness_it_adds_to(
     from stale_figures import main  # pyright: ignore[reportMissingImports]
 
     harness = harness_map.HARNESS["batch.py"]
-    assert harness, "the map has to name batch.py's tests for this to mean anything"
+    assert harness, "batch.py needs a harness for this test to mean anything"
 
     (tmp_path / ".mutation-batch.running").write_text(str(os.getpid()))
     monkeypatch.setattr(stale_figures, "ROOT", tmp_path)

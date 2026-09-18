@@ -953,6 +953,54 @@ module's own harness reaches 94-100 % of its lines — the tell was the
 mutation figure itself, which is the one number that asks whether the
 tests can DISTINGUISH the code from a different program.
 
+### And the obvious way to find the NEXT one does not work
+
+If a short map costs that much, rank every module by how many of its
+lines are reached only by tests the map does not name. It is the
+natural instrument, it is cheap, and it is wrong — measured and
+withdrawn on 2026-09-18, in the same afternoon it was built.
+
+**Coverage contexts credit a line to the FIRST test that executes it in
+that process.** So wherever a module has a cached or one-shot path — an
+import, an `lru_cache`, any memoisation — the credit records execution
+ORDER, not responsibility. Run the suite serially and one early test
+takes the lot; run it across eight workers and the same credit spreads
+over eight. Neither is a reference, and the two disagree wildly:
+
+    refstyle        352 lines "unmapped" serially,  22 and 26 in parallel
+    edit            158                              6 and  7
+    _compare_read   108                              0 and  0
+
+The `_compare_read` row is the cleanest disproof. Serially it read 108
+lines reachable only by unmapped files. Run ALONE, `test_cli.py` reaches
+246 lines of that module and `test_cli_revision.py` 240 — and every one
+of them is inside the 388 the three mapped files already reach. Nothing
+beyond, from either. The 108 was scheduling.
+
+**What survives is per-module and cheap.** Run each candidate file
+ALONE against the module and compare line sets; that answer does not
+depend on what else ran. Then the step that actually decides it: build
+mutants in the region the candidate reaches, and run them against the
+map as it stands and against the map plus the candidate.
+
+That second step is not optional, because coverage and killing come
+apart in both directions:
+
+    find.py     four unmapped files reached 41 lines — and adding them
+                killed ONE mutant of eleven. Short in name only.
+    styles.py   two files reached two whole REGIONS the map never
+                executes — `_toggle_on` and the raised-prose part walk —
+                and five mutants aimed there were unkillable without
+                them. All five die once they are in.
+
+Same instrument, opposite verdicts, and only the kill step tells them
+apart. `styles.py` also supplies the counter-example in miniature:
+`test_compare_paragraph.py` executes MORE of that module than any other
+candidate (+52 lines against `test_compare.py`'s +48) and kills nothing
+in either region, so it was left out. Coverage without assertions is not
+a harness — here is that sentence inside a single module, with the
+biggest coverage number attached to the file that could not kill.
+
 ### The seeded sample was never the same draw twice
 
 The section above is right about the population and wrong about
