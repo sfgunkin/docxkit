@@ -304,7 +304,7 @@ def _space_text(width: str) -> str:
     return out
 
 
-def _carry_spacing(root: _Element) -> int:
+def _carry_spacing(root: _Element) -> None:
     r"""`<mspace>` -> `<mtext>`, because the XSL drops the first.
 
     Word's ``MML2OMML.XSL`` has no template for ``mspace``, so every
@@ -322,9 +322,13 @@ def _carry_spacing(root: _Element) -> int:
     """
     from lxml import etree
 
-    changed = 0
     for space in list(root.iter(f"{{{_MML_NS}}}mspace")):
         parent = space.getparent()
+        # Kept although `root.iter()` is called on the parsed document
+        # root, so an `mspace` always has one: `getparent()` is typed
+        # `_Element | None` and the `replace` below does not type-check
+        # without it. Dead by the type system's argument, which is the
+        # kind that stays.
         if parent is None:
             continue
         text = _space_text(space.get("width", ""))
@@ -335,8 +339,6 @@ def _carry_spacing(root: _Element) -> int:
             parent.replace(space, mtext)
         else:
             parent.remove(space)
-        changed += 1
-    return changed
 
 
 #: An operator NAME is two or more letters. One letter is a variable,
@@ -345,7 +347,7 @@ def _carry_spacing(root: _Element) -> int:
 _MULTILETTER_RE = re.compile(r"^[A-Za-z]{2,}$")
 
 
-def _name_operators_as_identifiers(root: _Element) -> int:
+def _name_operators_as_identifiers(root: _Element) -> None:
     r"""Retag a multi-letter ``<mo>`` as ``<mi>``, so Word sets it upright.
 
     Word's XSL marks a multi-character ``<mi>`` upright and leaves
@@ -373,12 +375,9 @@ def _name_operators_as_identifiers(root: _Element) -> int:
     gap as `\max x` does, because OMML has already flattened the
     distinction by the time Word draws it.
     """
-    changed = 0
     for mo in list(root.iter(f"{{{_MML_NS}}}mo")):
         if _MULTILETTER_RE.match((mo.text or "").strip()):
             mo.tag = f"{{{_MML_NS}}}mi"
-            changed += 1
-    return changed
 
 
 def _normalize(root: _Element) -> None:
