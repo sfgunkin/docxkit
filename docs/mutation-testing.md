@@ -1020,6 +1020,25 @@ survivor, so a round that deletes one is re-swept rather than bounded.
 And it does not hold when the module moved as well — `revision/_promote.py`
 changed in f856e4d, which is the first case, whatever its harness did.
 
+**And an upper bound is not a DISCOUNT.** It says the real figure is at
+most this; it says nothing about how much less, and the answer is
+sometimes nothing at all. `equations.py` read 10.4 % (148/1422) with a
+staleness banner naming `tests/test_to_latex.py` — the round's own
+census, merged after the sweep. Replayed: **0 killed, 148 still alive.**
+
+The reason is worth more than the number. That census pins the six
+TABLES; every one of the 148 lives in the ARITHMETIC around them. So
+the banner was honest and worth nothing — the added tests were real
+tests that really could only kill, and they killed none of these
+because they were aimed somewhere else entirely.
+
+Which is an argument FOR the replay rather than against it. Twenty-five
+minutes bought the certainty that nothing on the list was already dead;
+the alternative was mining 148 rows while wondering which of them a
+commit had silently settled. Run it — and expect the answer to be
+"nothing" whenever the tests that landed and the survivors that remain
+are about different parts of the module.
+
 ### A log line is not a figure — the claims move too
 
 `stale_figures.py` watches the source and the harness. Nothing watches
