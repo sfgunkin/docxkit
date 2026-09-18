@@ -46,6 +46,59 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — an EMPTY OMML delimiter reads as a default bracket, so a piecewise function gains one it never had
+
+<!-- status: open -->
+
+Found 2026-09-18 by the `equations.py` census, before that module's
+sweep had even finished — and no mutant could have found it, because the
+member is a dict entry no operator rewrites and no test in the suite
+went near an empty `m:val`.
+
+`_FENCES` has an entry for the EMPTY delimiter:
+
+    "": "."
+
+which is how OMML says *no bracket on this side*, and how Word writes
+the cases brace of a piecewise function:
+
+    <m:begChr m:val="{"/><m:endChr m:val=""/>
+
+LaTeX spells that `\right.`.
+
+**The member is unreachable.** `_Walker` reads the character with
+
+    raw_end = _mval(el, "dPr/endChr") or ")"
+
+and an empty string is falsy, so *"no delimiter"* is replaced by the
+DEFAULT bracket before the table is ever asked. Measured:
+
+    a cases brace      ->  \left\{ x \right)
+    a one-sided close  ->  \left( x \right\}
+
+**A bracket that is not on the page**, in the one construct where the
+asymmetry IS the notation. A piecewise function converted to LaTeX comes
+back with a closing parenthesis its author never wrote, and the same
+`or` pattern on `begChr` does it from the other side.
+
+Repro: `scratchpad\agents\edit_replace\defect_eq1.py`.
+
+**Not fixed in the round that found it**, and the census deliberately
+leaves that member unexercised rather than pinning the wrong answer —
+which is the right call: a test written against today's behaviour would
+have frozen the phantom bracket into the suite.
+
+**The fix is the `or`, in both places**: an empty `m:val` is a value, not
+an absence, so the default belongs behind a check for the attribute
+being missing rather than behind truthiness. Worth doing as one pass —
+`_mval(...) or <default>` is a shape this module uses in several
+readers, and every one of them treats an explicitly empty attribute as
+an absent one.
+
+**Why the census found it and 220 tests did not**: every fixture in the
+suite writes the delimiter it means. Nobody had written the one that
+means nothing.
+
 ### S3 — three readers of field_spans want the MARKERS and get the runs: a bookmark over the prose, and two false refusals
 
 <!-- status: open -->
