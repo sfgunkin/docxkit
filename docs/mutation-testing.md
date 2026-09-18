@@ -2368,6 +2368,56 @@ The fix is not more tries. Write BOTH candidates, sort them by hash,
 and `shutil.copy2` them into place — copying preserves the bytes, so
 the ordering the test asserts is the ordering it gets.
 
+### A test that reads its own FIXTURE back cannot fail
+
+`_table_layout.py` read 11.2 % (405/3614) and **83 of those survivors
+sat in one function**, `_snap`. Not a loose assertion — nothing had ever
+reached it.
+
+`regrid` computes `_snap(...)` for every row and THEN returns the
+document unchanged when `n == k and ragged == 0`. The suite's
+spanning-header test builds a grid that is ALREADY canonical, so the
+spans it asserts on are the ones its own fixture wrote. The assertion
+runs. It reads the input back. It cannot fail whatever the snapping
+answered — and `_snap` is the column-mapping arithmetic, so every one of
+those 83 changes which column a header cell covers.
+
+A direct test of the mapping plus one end-to-end case over a grid that
+really collapses killed 79 of the 83.
+
+This is `can_it_fail.py`'s subject one level up. That tool asks whether
+a test notices a break in the code it names; this is a test whose
+assertion is about its own input, so there is no code between the
+fixture and the check for a break to live in. The tell is the shape of
+the survivor list: a whole function's worth of mutants, including
+arithmetic between two strings that could only raise `TypeError`, means
+the line never ran at all.
+
+### Where a NUMBER belongs, and where a RELATION belongs
+
+From the same round, and it was caught by the census rather than by
+review. The first draft of the `_cell_extents` tests asserted **944.2**
+and **1877.6** dxa — real measurements, correctly copied.
+
+They were wrong to be there. Those numbers come from the width tables,
+which are calibrated against Word itself by `docxkit.word.ruler`, and a
+synthetic fixture asserting one stands in for that calibration: the test
+**goes red for a CORRECTION to the table**, not for a defect in the code
+it names. A round that later re-measured a character would be met by a
+failing test in a file about cell extents, and would have every reason
+to think it had broken something.
+
+They now assert RELATIONS between two measurements — the hard width
+equals the full width of the text up to the slash; a tab is four
+space-widths; a break closes the line. Those move WITH the table and
+still fail for the thing under test.
+
+The number belongs in exactly one place, and it already had one:
+`test_the_width_ANCHORS_still_read_what_they_were_measured_at`. A width
+moved by one twip dies there, deliberately, which is the repo choosing
+to hold the calibration in the everyday suite while `pytest -m word`
+remains the measurement.
+
 ### A test can ask about the MACHINE instead of the code
 
 `stale_figures --figures` reads the session files, and the first test
