@@ -185,7 +185,7 @@ def remove_outer_field(xml: str, outer: str, inner: str) -> str:
     # dropped whole when the marker was all it held, so the ordinary
     # field (every marker in a run of its own) leaves nothing behind.
     end_at = xml.rindex("<w:fldChar", field.start, field.end)
-    past_end = xml.index(">", field.end) + 1
+    past_end = field.end          # `FLDCHAR_RE` ends past the marker's tag
     head = xml[run_open_before(xml, field.start):field.start] + "</w:r>"
     tail = (xml[run_open_before(xml, end_at):end_at]
             + xml[past_end:xml.index("</w:r>", past_end) + len("</w:r>")])

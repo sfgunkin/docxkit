@@ -244,6 +244,26 @@ def test_a_fldCharType_OUTSIDE_the_schema_opens_and_closes_nothing():
                        + "</w:p>") == [], "`End` closed a field"
 
 
+def test_a_marker_CUT_OFF_mid_tag_is_not_a_marker_at_all():
+    r"""`FLDCHAR_RE` ends at the type's closing quote, so it matched a
+    `<w:fldChar` whose own tag never closed — a part that never parsed —
+    and the walk read it as a SEPARATOR. The field then had a cached
+    result beginning inside the broken tag, and `_compare_read`'s
+    masking landed on a page number by luck rather than by design (S2,
+    2026-09-18). A marker is a marker when its tag closes.
+    """
+    cut = '<w:fldChar w:fldCharType="separate"'
+    xml = ("<w:p>" + _run(BEGIN) + _instr(r" REF Table1 \h ")
+           + "<w:r>" + cut + "</w:r>" + _run("<w:t>Table 1</w:t>")
+           + _run(END) + "</w:p>")
+
+    field, = fields(xml)
+
+    assert field.instr == r" REF Table1 \h ", "the field is still read"
+    assert field.result is None, \
+        "a `<w:fldChar` with no `>` is not this field's separator"
+
+
 def test_a_fldCharType_OUTSIDE_the_schema_SEPARATES_and_CLOSES_nothing():
     """The same question at the other two comparisons, which are `>=`
     when they are mutated: `== "separate"` and `== "end"`.

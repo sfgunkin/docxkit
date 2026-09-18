@@ -1081,6 +1081,29 @@ def test_masking_a_field_does_not_touch_the_prose_around_it():
     assert out.count("w:fldChar") == xml.count("w:fldChar")
 
 
+def test_a_separator_CUT_OFF_mid_tag_starts_no_cached_result():
+    """`FLDCHAR_RE` ended at the type's closing quote, so a `<w:fldChar`
+    whose tag never closed still read as a marker — and `sep.end()` then
+    landed INSIDE the broken tag. The mask worked from there by luck:
+    it rewrites `w:t` text, and a region opening mid-tag puts the rest
+    back unchanged. With the closing `>` required, the field has no
+    separator the walk can find, which is the case the module already
+    answers — no cached result to mask, so nothing is touched (S2,
+    2026-09-18).
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    cut = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"</w:r>'
+           + run("7")
+           + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    xml = "<w:p>" + cut + "</w:p>"
+
+    assert mask_volatile_fields(xml) == xml, \
+        "a marker with no closing tag is not a separator to mask from"
+
+
 def test_a_field_that_is_not_volatile_keeps_its_result():
     """The `not in VOLATILE_FIELDS` test, from the fldSimple side."""
     from docxkit._compare_read import mask_volatile_fields

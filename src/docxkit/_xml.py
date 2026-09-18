@@ -296,7 +296,32 @@ COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')
 SECTPR_RE = re.compile(r"<w:sectPr\b.*?</w:sectPr>", re.DOTALL)
 # A field character, which is how Word writes a HYPERLINK before it
 # churns to element form on the next save.
-FLDCHAR_RE = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="(\w+)"')
+#
+# The tag has to CLOSE, and `[^<>]` rather than `[^>]` is what makes that
+# mean anything. Ending at the type's quote matched a `<w:fldChar` that
+# never closed — a part that never parsed — and both walks over this
+# pattern then read it as a marker: `fields` gave the field a cached
+# result beginning inside the broken tag, and `_compare_read`'s masking
+# landed on the right text by luck, because it rewrites `w:t` and puts a
+# region opening mid-tag back unchanged (S2, 2026-09-18). Nothing refuses
+# such a part on the way in — `package.malformed_parts` gates WRITES, and
+# its one caller is `package.write` — so the pattern is where it stops.
+#
+# Requiring `>` alone does NOT stop it: `[^>]*` runs happily past the end
+# of the broken tag to the next element's `>` and matches anyway, which
+# is the same wrong offset one character further on. A start tag cannot
+# hold a `<` in well-formed XML, so excluding it is what makes the
+# truncated marker unmatchable while every real one still matches.
+#
+# `m.end()` is therefore past the whole marker, which is the offset both
+# walks want. One form is the exception, and it is the open-tag one: a
+# `begin` carrying a `w:fldData` child is written `<w:fldChar
+# w:fldCharType="begin">…</w:fldChar>`, and the match ends at that
+# opening tag's `>`, with the binary blob after it. Harmless to both
+# readers — `fldData` rides on a `begin` and a result starts at the
+# `separate` — but a reader that took `m.end()` to the next marker as a
+# field's content would find it there.
+FLDCHAR_RE = re.compile(r'<w:fldChar\b[^<>]*w:fldCharType="(\w+)"[^<>]*/?>')
 
 # OMML objects: the things that RENDER A BOX. Each is optional wherever
 # it appears, so an empty one can be dropped and the markup stays valid.
@@ -876,12 +901,9 @@ def fields(xml: str) -> list[Field]:
         elif m.group(1) == "begin":
             stack.append(_Open(m.start()))
         elif m.group(1) == "separate" and stack:
-            # Past the whole marker, not just the attribute this mark
-            # matched: the caller reads the result as XML. A part
-            # truncated mid-tag has no `>` to get past, and then the
-            # marker itself is where the result starts.
-            close = xml.find(">", m.end())
-            stack[-1].sep_end = close + 1 if close >= 0 else m.end()
+            # `FLDCHAR_RE` ends past the marker's own tag, so this is
+            # where the result starts and the caller can read it as XML.
+            stack[-1].sep_end = m.end()
         elif m.group(1) == "end" and stack:
             top = stack.pop()
             out.append(Field(top.at, "".join(top.pieces),
@@ -921,8 +943,8 @@ def field_spans(xml: str) -> list[tuple[int, int, str]]:
     """
     out: list[tuple[int, int, str]] = []
     for f in fields(xml):
-        if f.end < 0:
-            continue                 # no end marker: nothing to close on
+        if f.end < 0:                # no end marker: nothing to close on
+            continue
         r_start = run_open_before(xml, f.start)
         close = xml.find("</w:r>", f.end)
         if r_start < 0 or close < 0:
