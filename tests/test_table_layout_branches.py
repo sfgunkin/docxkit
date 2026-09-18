@@ -24,6 +24,7 @@ from docxkit._table_layout import (
     _TBLW_RE,
     _alignment,
     _bump,
+    _cell_extents,
     _check_rule,
     _keep_with_table,
     _own_tblpr,
@@ -32,6 +33,8 @@ from docxkit._table_layout import (
     _set_properties,
     _set_tbl_pr,
     _set_tc_w,
+    _snap,
+    _to_places,
 )
 from docxkit.errors import AnchorError
 
@@ -48,6 +51,224 @@ def cell(text: str, *, w: int = 1000) -> str:
 
 
 # ------------------------------------------- an empty properties element --
+
+
+# --- _snap: the spanning-header path, which nothing reached -------------
+#
+# 83 of this module's survivors are in `_snap`, and one line in `regrid`
+# says why: it computes `_snap(...)` for every row and THEN returns the
+# document unchanged when `n == k and ragged == 0`. The suite's
+# spanning-header test builds a grid that is already canonical, so the
+# spans it asserts on are the ones its own fixture wrote — the
+# assertion runs, reads the input back, and cannot fail whatever `_snap`
+# answered (found 2026-09-18, while none of the 83 would die).
+#
+# So the mapping is asserted directly, and once end to end through a
+# grid that really is collapsed. The cases are chosen for the arithmetic
+# rather than for the shape: one where the nearest cut is not the first,
+# one where the RIGHT bound binds (the true nearest column is forbidden,
+# because the cells after this one need room), and one where the LEFT
+# bound binds (the nearest column is taken, and a second cell there
+# would be zero-width, which Word drops).
+
+
+@pytest.mark.parametrize("label,spans,cuts,k,wanted", [
+    ("a row with one cell per column maps across", [3, 1, 2], [1, 2, 3], 3,
+     [1, 1, 1]),
+    ("the nearest cut is the second", [5, 5], [1, 5, 10], 3, [2, 1]),
+    ("three cells over four columns", [1, 4, 9], [1, 5, 10, 14], 4,
+     [1, 1, 2]),
+    ("the RIGHT bound binds", [13, 1], [1, 5, 10, 14], 4, [3, 1]),
+    ("the LEFT bound binds", [4, 1, 9], [1, 5, 10, 14], 4, [2, 1, 1]),
+    ("one cell covers the table", [14], [1, 5, 10, 14], 4, [4]),
+    # A cut EQUIDISTANT from two canonical ones: the tie goes to the
+    # smaller column, which is what `(abs(...), j)` says and what keeps
+    # a header from drifting right one column at a time. It is also the
+    # only shape that can tell a DISTANCE from a bitwise answer that
+    # happens to order the near cuts the same way most of the time.
+    ("a tie goes to the LEFT column", [8, 4], [7, 9, 12], 3, [1, 2]),
+    # and an accumulator that starts at one instead of zero puts every
+    # cut a column to the right, which only shows where the tie is
+    ("the cuts are counted from zero", [3, 11], [1, 5, 10, 14], 4,
+     [1, 3]),
+])
+def test_a_spanning_header_snaps_to_the_canonical_cuts(label, spans, cuts,
+                                                       k, wanted):
+    assert _snap(spans, cuts, k) == wanted, label
+
+
+def test_every_snapped_cell_covers_at_least_ONE_column():
+    """The invariant behind the bounds: a snap that gave two cells the
+    same boundary produces a zero-width cell, and Word drops it — the
+    row then has fewer cells than it was written with, silently."""
+    for spans, cuts, k in (([4, 1, 9], [1, 5, 10, 14], 4),
+                           ([5, 5], [1, 5, 10], 3),
+                           ([1, 1, 12], [1, 5, 10, 14], 4),
+                           # a FOUR-cell header, where the room left for
+                           # the cells still to come is counted twice
+                           # over: one cell short of the end, and the
+                           # last cut close to the table's right edge
+                           ([1, 1, 12, 1], [1, 3, 6, 10, 15], 5)):
+        out = _snap(spans, cuts, k)
+        assert min(out) >= 1, (spans, out)
+        assert sum(out) == k, (spans, out)
+        assert len(out) == len(spans), (spans, out)
+
+
+def test_a_row_with_MORE_cells_than_the_table_has_columns_is_refused():
+    """Collapsing it would have to merge two cells and lose one's
+    content, so it is a refusal rather than a guess."""
+    with pytest.raises(AnchorError, match="no mapping can be inferred"):
+        _snap([1, 1, 1, 1], [1, 2, 3], 3)
+
+
+def _tc(text: str, span: int | None = None) -> str:
+    props = f'<w:gridSpan w:val="{span}"/>' if span else ""
+    tcpr = f"<w:tcPr>{props}</w:tcPr>" if props else ""
+    return (f"<w:tc>{tcpr}<w:p><w:r><w:rPr>"
+            f'<w:rFonts w:ascii="Times New Roman" '
+            f'w:hAnsi="Times New Roman"/><w:sz w:val="20"/></w:rPr>'
+            f"<w:t>{text}</w:t></w:r></w:p></w:tc>")
+
+
+def test_a_snapped_header_reaches_the_DOCUMENT_when_the_grid_collapses():
+    """End to end, on the shape the suite was missing: ten grid columns
+    describing three real ones, and a two-cell header over them. The
+    grid is rewritten here, so what `_snap` answered is what Word will
+    read — which is the half the existing test cannot see, since a table
+    already on its own grid comes back untouched."""
+    import re
+
+    grid = [900] + [300] * 8 + [700]
+    header = f"<w:tr>{_tc('')}{_tc('Both groups', 9)}</w:tr>"
+    body = "".join(
+        f"<w:tr>{_tc(f'var{i}')}{_tc('0.1', 4)}{_tc('0.2', 5)}</w:tr>"
+        for i in range(4))
+    xml = (f"<w:document {NS}><w:body><w:tbl>"
+           f'<w:tblPr><w:tblW w:w="{sum(grid)}" w:type="dxa"/></w:tblPr>'
+           "<w:tblGrid>"
+           + "".join(f'<w:gridCol w:w="{w}"/>' for w in grid)
+           + f"</w:tblGrid>{header}{body}</w:tbl></w:body></w:document>")
+
+    out, report = tables.regrid(xml, tables.read_all(xml)[0])
+
+    assert (report.before, report.after) == (10, 3)
+    first_row = re.search(r"<w:tr\b.*?</w:tr>", out, re.DOTALL)
+    assert first_row is not None
+    spans = [int(m.group(1)) for m in
+             re.finditer(r'<w:gridSpan w:val="(\d+)"/>', first_row.group(0))]
+    assert spans == [2], "the header's second cell covers the last two"
+
+
+# --- _to_places: the MIDPOINT flag, which nothing read ------------------
+#
+# The value is asserted all over `test_tables_decimals.py`; the second
+# half of the answer — whether the number sat exactly on a midpoint, so
+# that a reader knows the rounding was a coin flip resolved upwards —
+# was asserted nowhere, and every mutant on the test that computes it
+# survived.
+
+
+@pytest.mark.parametrize("text,places,value,midpoint", [
+    ("2.675", 2, "2.68", True),
+    ("2.674", 2, "2.67", False),     # the digit is BELOW five
+    ("2.676", 2, "2.68", False),     # and above it: neither is a midpoint
+    ("2.6751", 2, "2.68", False),    # a five with something after it
+    ("2.67500", 2, "2.68", True),    # a five with only zeros after it
+    ("1234.5", 0, "1235", True),     # no decimals asked for
+    ("1,234.567", 2, "1,234.57", False),   # the grouping is restored
+])
+def test_a_number_ON_the_midpoint_says_so(text, places, value, midpoint):
+    """Quantized as a DECIMAL, never a float — `round(2.675, 2)` is 2.67
+    because the binary value is under the midpoint — and the flag says
+    which roundings a reader should look at twice."""
+    assert _to_places(text, places) == (value, midpoint)
+
+
+# --- _cell_extents: the measurements, and the driver text ---------------
+
+
+def _cell(*runs: str) -> str:
+    rpr = ('<w:rPr><w:rFonts w:ascii="Times New Roman" '
+           'w:hAnsi="Times New Roman"/><w:sz w:val="20"/></w:rPr>')
+    body = "".join(f"<w:r>{rpr}{r}</w:r>" for r in runs)
+    return f"<w:tc><w:p>{body}</w:p></w:tc>"
+
+
+TIMES_10PT = ("Times New Roman", 20)
+
+
+def test_an_EMPTY_cell_measures_zero_and_says_nothing():
+    """The accumulators start at zero, and a cell with no runs is what
+    reads them back untouched — a table of estimates is full of them."""
+    assert _cell_extents(_cell(), TIMES_10PT) == (0.0, 0.0, "")
+
+
+def _widths(*runs: str) -> tuple[float, float, str]:
+    return _cell_extents(_cell(*runs), TIMES_10PT)
+
+
+def _text(words: str) -> str:
+    return f"<w:t>{words}</w:t>"
+
+
+# Measured against ANOTHER measurement, never against a number written
+# here. The per-character widths are calibrated in Word — `docxkit.word
+# .ruler`, and `pytest -m word` holds every character to it — so a
+# figure copied into a fixture is a second calibration nobody re-reads,
+# and it would go red for a correction rather than for a defect. A
+# RELATION between two cells moves with the table and still fails for
+# the thing under test.
+
+
+def test_a_hard_BREAK_closes_the_line_and_reads_as_a_space():
+    """`Total<w:br/>expenditure` measured as one unbreakable cluster
+    until the break was read — 45% wider than the text it renders, out
+    of the label column's width. The driver text is quoted back to a
+    reader, so the break reads as the space it renders as rather than
+    fusing two words."""
+    hard, full, text = _widths(_text("Total"), "<w:br/>",
+                               _text("expenditure"))
+
+    assert text == "Total expenditure"
+    assert hard == full, "the break closed the line, so the longest is one"
+    assert full == pytest.approx(_widths(_text("expenditure"))[1])
+    assert full < _widths(_text("Totalexpenditure"))[1]
+
+
+def test_a_SLASH_licenses_a_break_and_the_hard_width_is_the_longer_HALF():
+    """Word breaks AFTER a slash — "Professional/vocational" wraps
+    gracefully and the label column may count on it. A hyphen does not
+    break here, deliberately: a negative coefficient's sign must never
+    be a licensed break."""
+    hard, full, text = _widths(_text("Professional/vocational"))
+
+    assert text == "Professional/vocational"
+    assert hard == pytest.approx(_widths(_text("Professional/"))[1])
+    assert full == pytest.approx(
+        _widths(_text("Professional/"))[1]
+        + _widths(_text("vocational"))[1])
+    hyphen_hard, hyphen_full, _ = _widths(_text("Professional-vocational"))
+    assert hyphen_hard == hyphen_full, "a hyphen licenses no break here"
+
+    # and the other way round, where the longer half comes AFTER the
+    # slash: the cluster has to restart at nothing, not at a twip
+    tail_hard, _, _ = _widths(_text("Pro/fessionalvocational"))
+    assert tail_hard == pytest.approx(
+        _widths(_text("fessionalvocational"))[1])
+
+
+def test_a_TAB_is_four_SPACES_wide_and_is_not_a_line_break():
+    """It stays a tab in the driver text — a mutant reading it as a
+    break would quote the cell back as two words — and it advances the
+    line by four space widths, which is what `_TAB_SPACES` says."""
+    space = (_widths(_text("a b"))[1] - _widths(_text("ab"))[1])
+    hard, full, text = _widths(_text("a"), "<w:tab/>", _text("b"))
+
+    assert text == "a\tb"
+    assert full == pytest.approx(_widths(_text("ab"))[1] + 4 * space)
+    assert hard == pytest.approx(_widths(_text("b"))[1]), (
+        "a tab ends the unbreakable cluster, as a space does")
 
 
 def test_a_self_closing_tblpr_is_real_and_reports_no_inner():
