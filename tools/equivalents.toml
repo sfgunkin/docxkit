@@ -1240,3 +1240,8 @@ claims = [
   { was = 'if picture is None or (below is not None and below.start < picture):', line = 'if picture is None or (below is not None and below.start <= picture):', why = "The two differ only when the table below opens exactly where the picture sits, and a `w:tbl` start is never the offset of a `w:drawing` inside a paragraph. An argument from the DOCUMENT." },
   { was = 'return not any(para.end() <= m.start() < picture for m in captions)', line = 'return not any(para.end() <= m.start() <= picture for m in captions)', why = "The same pair of offsets as the claim above, on the other side of the test: a caption paragraph cannot start at the offset of a picture inside another paragraph. An argument from the DOCUMENT." },
 ]
+["styles.py"]
+claims = [
+  { was = 'return style_xml if at == -1 else style_xml[:at]', line = 'return style_xml if at <= -1 else style_xml[:at]', why = "`at` is `str.find`'s answer and its floor is -1, so `<= -1` holds exactly where `== -1` does. The five OTHER mutants on this line slice the body one character short — the `>` of its last closing tag — and a test kills them. An argument from the CODE." },
+  { was = 'return style_xml if at == -1 else style_xml[:at]', line = 'return style_xml if at is -1 else style_xml[:at]', why = "CPython keeps one object for every int from -5 to 256 and `str.find` returns that object for -1, so identity answers as equality wherever this line is reached. An argument from the CODE." },
+]

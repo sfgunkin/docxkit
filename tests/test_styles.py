@@ -434,22 +434,124 @@ def test_the_character_style_a_run_NAMES_is_read_out_of_it():
     assert cascade.style_of("") is None
 
 
-# `at == -1` in `_own_rpr`, the seven mutants on it, are equivalent. The
-# line cuts a style's body at `<w:tblStylePr` — a table style nests a
-# whole `w:rPr` per conditional band — and `str.find` answers -1 when
-# there is none:
+# --- the run of 2026-09-18: 16.6 %, and the cascade's own readers -----
 #
-# * `at < -1` and `at == 1` are never true (find's floor is -1, and an
-#   element cannot begin at index 1), so they slice `[:-1]` where the
-#   original returns the whole body;
-# * `at <= -1` and `at is -1` are `== -1` (CPython caches -1);
-# * `at == -2` (from `~1`) and `at == +1` are the first case again.
-#
-# So all seven reduce to returning the body minus its last character or
-# two. That body is `_STYLE_ID_RE`'s group 2 — everything between the
-# style's opening tag and `</w:style>` — so it ends with the `>` of a
-# closing or self-closing tag, and every property pattern here matches
-# INSIDE an element rather than at its boundary. There is no
-# well-formed styles.xml where the cut takes a character a lookup
-# needs: the closing quote of an attribute always has a `/>` or `>`
-# after it.
+# Five of the seven mutants on `_own_rpr`'s `at == -1` were argued
+# EQUIVALENT here until today, and the argument was the shape rule 1 of
+# the campaign now names: it spelled out the input that would break it
+# ("no WELL-FORMED styles.xml where the cut takes a character a lookup
+# needs") and filed the claim anyway. `_own_rpr` is a pure function of a
+# string and its contract is one sentence, so the input is a line to
+# write rather than a premise to trust. Two of the seven really are
+# equivalent and are claimed in tools/equivalents.toml.
+
+
+def test_a_style_with_no_conditional_BAND_keeps_every_character():
+    """The cut is at `w:tblStylePr` and nowhere else. `str.find` answers
+    -1 when there is none, and every comparison that is not `== -1`
+    slices the body at -1 instead — returning it a character short,
+    which is the `>` of its last closing tag."""
+    from docxkit.styles import _own_rpr
+
+    body = '<w:name w:val="Body"/><w:rPr><w:i/></w:rPr>'
+    banded = (body + '<w:tblStylePr w:type="firstRow">'
+              "<w:rPr><w:b/></w:rPr></w:tblStylePr>")
+
+    assert _own_rpr(body) == body
+    assert _own_rpr(banded) == body
+
+
+def _ppr_style(sid: str, ppr: str, *, based_on: str | None = None,
+               default: bool = False) -> str:
+    """A PARAGRAPH-property style: `w:pPr`, where `_para_style` writes
+    `w:rPr`. The cascade reads the two through different doors."""
+    base = f'<w:basedOn w:val="{based_on}"/>' if based_on else ""
+    mark = ' w:default="1"' if default else ""
+    return (f'<w:style w:type="paragraph"{mark} w:styleId="{sid}">{base}'
+            f"<w:pPr>{ppr}</w:pPr></w:style>")
+
+
+def test_the_attribute_pattern_is_compiled_the_FIRST_time_it_is_asked_for():
+    """`_ATTR_RE` is a cache and its fill branch runs once per attribute
+    name per PROCESS, so a test asking for a name another test has
+    already asked for cannot see this at all. The answer is the
+    attribute's VALUE — not the whole `w:hanging="240"` the match spans,
+    and not a second group the pattern does not have."""
+    from docxkit import styles
+
+    styles._ATTR_RE.pop("hanging", None)
+    element = '<w:ind w:left="360" w:hanging="240"/>'
+
+    assert styles._attr_of(element, "hanging") == "240"
+    assert "hanging" in styles._ATTR_RE, "the pattern was not kept"
+    assert styles._attr_of('<w:ind w:left="360"/>', "hanging") is None
+
+
+def test_para_element_answers_with_the_WHOLE_element():
+    """For the properties whose presence is the whole value. The element
+    and not a value: `<w:keepNext/>` states none and means yes."""
+    cascade = Cascade(_styles(_ppr_style("Body", "<w:keepNext/>")))
+
+    assert cascade.para_element("keepNext", pstyle="Body") == "<w:keepNext/>"
+    assert cascade.para_element("keepLines", pstyle="Body") is None
+
+
+def test_the_PARAGRAPH_document_default_is_read_apart_from_the_run_one():
+    """`w:rPrDefault` holds a `w:spacing` too — the letter spacing of a
+    run — so a paragraph asking the whole `w:docDefaults` block for
+    "spacing" is answered by that one. The paragraph half is kept
+    separately, and it is the last source a paragraph falls back to."""
+    styles_xml = (f"<w:styles {NS}><w:docDefaults>"
+                  "<w:rPrDefault><w:rPr><w:spacing w:val=\"20\"/></w:rPr>"
+                  "</w:rPrDefault>"
+                  '<w:pPrDefault><w:pPr><w:spacing w:after="240"/></w:pPr>'
+                  "</w:pPrDefault></w:docDefaults></w:styles>")
+
+    assert Cascade(styles_xml).para_attr("spacing", "after") == "240"
+
+
+def test_a_paragraph_resolves_through_the_style_it_NAMES():
+    """And a paragraph that names none through the `w:default="1"` one —
+    the two are different sources, and reading the default for a
+    paragraph that named a style answers with the wrong one."""
+    cascade = Cascade(_styles(_ppr_style("Quote", '<w:ind w:left="720"/>'),
+                              _ppr_style("Normal", '<w:ind w:left="0"/>',
+                                         default=True)))
+
+    assert cascade.para_attr("ind", "left", pstyle="Quote") == "720"
+    assert cascade.para_attr("ind", "left") == "0"
+
+
+def test_a_paragraph_naming_a_MISSING_style_is_not_an_error():
+    """A template stripped of a style is an ordinary hand-off, as it is
+    for the run cascade: the walk asks whether the id has a body before
+    it reads one."""
+    cascade = Cascade(_styles(_ppr_style("Normal", '<w:ind w:left="0"/>')))
+
+    assert cascade.para_attr("ind", "left", pstyle="NoSuchStyle") is None
+
+
+def test_a_toggle_resolves_through_the_PARAGRAPH_style_too():
+    """Word's order for a toggle is the run, the character style, then
+    the paragraph style — and for a paragraph naming none, the default
+    paragraph style, which is where a manuscript's italics live when a
+    whole style is italic."""
+    cascade = Cascade(_styles(_para_style("Quote", "<w:i/>")))
+
+    assert cascade.toggle("i", pstyle="Quote") is True
+    assert cascade.toggle("b", pstyle="Quote") is False
+
+
+def test_a_toggle_stated_in_the_document_DEFAULT_is_in_force():
+    """The last source, and the one `explain` cannot answer for: a
+    toggle's ON form is a bare element with no `w:val` to read."""
+    cascade = Cascade(_styles(default="<w:i/>"))
+
+    assert cascade.toggle("i") is True
+    assert cascade.toggle("b") is False
+
+
+def test_a_toggle_through_a_MISSING_style_is_not_an_error():
+    cascade = Cascade(_styles(_para_style("Normal", "<w:i/>", default=True)))
+
+    assert cascade.toggle("i", rstyle="NoSuchStyle") is True
