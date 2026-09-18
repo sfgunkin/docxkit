@@ -2556,6 +2556,55 @@ to be settled work. **The correction rate on this number is 100 % so
 far** — every time somebody has read the top of the list, it has moved.
 Hold it as provisional. It is still the best list there is.
 
+**And the first candidate read properly was a FOURTH species: merely
+under-tested.**
+
+    _table_layout.py:176:49  in _own_tblpr   [fresh, 6 killed elsewhere]
+        head = body[:first_row] if first_row != -1 else body
+     -> first_row != - 2        -> first_row != - 0
+
+`first_row = body.find("<w:tr")`, so it is −1 or an offset, and both
+mutants break real behaviour — demonstrated in-process rather than
+argued:
+
+* `!= -2` is always true, so `else body` is never taken. On a table body
+  that is a `w:tblPr` and nothing else, `head` becomes `body[:-1]`,
+  cutting the closing tag off the properties: the real function finds
+  them, the mutant returns None.
+* `!= -0` differs at `first_row == 0`, a body whose first child IS a
+  row. Real gives `body[:0]` and finds nothing; the mutant searches the
+  whole body and finds the INNER table's `w:tblPr` — **the exact defect
+  the docstring was written for**, which sent `fit_columns`' fixed-layout
+  switch into a nested table.
+
+Both killable, one fixture each, and the second is a regression test for
+a defect that has already happened once.
+
+So the signature has at least four species, and the one the tool is
+NAMED for may be the rare one:
+
+    NOT COVERED     a line nothing ran
+    in a MESSAGE    untested wording
+    UNDER-TESTED    an ordinary edge nobody reached — the fixture exists,
+                    it just has not been written
+    cannot ACT      the value is fixed by a caller or a callee
+
+**That is a sample of one and it should not be generalised from.** But
+it is the first evidence on the false-positive rate and it points the
+unwelcome way: these may be ordinary untested edges in a module whose
+survivors were worked three times by two people. The eleven do survive
+that module's FRESH re-sweep, so they are real against today's tree —
+what is in question is which kind of real.
+
+**And the second candidate read was refused rather than guessed.**
+`_set_borders:1502:52` reads `len(m.group(2))` as `group(3)` or
+`group(1)`, and the verdict turns on whether anything downstream needs
+the mask to be the same LENGTH as what it hides. If nothing does it is
+unobservable; if something does it is a fixture where three groups
+happen to share a length. The callee alone does not say, so it was
+reported as undecided — which is the honest fifth answer and the one a
+ranked list most tempts a reader out of.
+
 **The first version would have shipped a ranked list whose top five
 entries pointed the reader at the wrong question.** What caught it was
 reading four candidates instead of trusting the ranking — the same habit
