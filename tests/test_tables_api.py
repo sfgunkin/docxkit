@@ -240,6 +240,268 @@ def test_nor_does_a_logo_further_down_the_document():
     assert by_caption(xml, "Table 1.").header == ["Country", "Score"]
 
 
+# --- where a caption, a table and a picture sit (2026-09-18) -----------
+#
+# `_sides` and `_owns_an_image` are eight comparisons over four offsets,
+# and 29 of this module's survivors sit on them. Asked through
+# `by_caption`, most of a wrong answer is repaired by the propagation in
+# `_beside` — which is what the propagation is FOR — so a fixture that
+# moves a boundary by one paragraph still comes back with the right
+# table and pins nothing. These ask the two functions directly, where a
+# boundary is a boundary.
+
+
+def _pieces(xml: str) -> tuple[list[re.Match[str]], list[Table], list[int]]:
+    """The three lists `_sides` reads: the BODY's paragraphs, the
+    tables, and the picture offsets.
+
+    A table's cells hold paragraphs of their own, and `PARA_RE` finds
+    those too — so the first fixture here asked about a cell's paragraph
+    and passed for the wrong reason. `_beside` reads captions by their
+    text, which no cell paragraph here matches; this reads them by
+    position, so it has to leave the cells out itself."""
+    from docxkit._xml import PARA_RE
+    tables = read_all(xml)
+    paras = [m for m in PARA_RE.finditer(xml)
+             if not any(t.start <= m.start() < t.end for t in tables)]
+    return (paras, tables,
+            [m.start() for m in _table_core._IMAGE_RE.finditer(xml)])
+
+
+def _cap(xml: str) -> str:
+    return para(run(xml))
+
+
+def test_the_table_below_is_the_NEAREST_one_after_the_caption():
+    """`t.start >= para.end()`: at or after, not exactly at. A caption
+    with a sentence between it and its table — a note, a lead-in line —
+    is ordinary, and read as "starts exactly where the caption ends" it
+    has no table below at all."""
+    xml = document(_cap("Table 1. Caption") + _cap("A lead-in sentence.")
+                   + table(row("A", "1")))
+    paras, tables, images = _pieces(xml)
+
+    assert _table_core._sides(paras[0], tables, [paras[0]], images) == tables
+
+
+def test_the_table_above_is_the_NEAREST_one_before_the_caption():
+    """`t.end <= para.start()`, the mirror of it, for the captions this
+    package keeps finding underneath their tables."""
+    xml = document(table(row("A", "1")) + _cap("A closing sentence.")
+                   + _cap("Table 1. Caption"))
+    paras, tables, images = _pieces(xml)
+
+    assert _table_core._sides(paras[1], tables, [paras[1]], images) == tables
+
+
+def test_a_caption_between_takes_the_table_BELOW_out_of_reach():
+    """The refusal `_sides` exists for, with the other caption a
+    paragraph away — so "starts exactly at this caption's end" does not
+    see it, and identity on two offsets past 256 does not either."""
+    xml = document(_cap("Table 1. Caption") + _cap("Prose between them.")
+                   + _cap("Table 2. Caption") + table(row("A", "1")))
+    paras, tables, images = _pieces(xml)
+    captions = [paras[0], paras[2]]
+
+    assert _table_core._sides(paras[0], tables, captions, images) == []
+
+
+def test_the_caption_DIRECTLY_under_this_one_counts_as_between():
+    """The same refusal at the boundary itself: the next caption starts
+    exactly where this paragraph ends, which a STRICT test misses — and
+    two captions in a row is what a run of exhibits looks like."""
+    xml = document(_cap("Table 1. Caption") + _cap("Table 2. Caption")
+                   + table(row("A", "1")))
+    paras, tables, images = _pieces(xml)
+
+    assert _table_core._sides(paras[0], tables, paras[:2], images) == []
+
+
+def test_a_caption_between_takes_the_table_ABOVE_out_of_reach():
+    """The above side, with the blocking caption a paragraph away from
+    the table — the shape that tells `==` from `<=` there."""
+    xml = document(table(row("A", "1")) + _cap("Prose after the table.")
+                   + _cap("Table 1. Caption") + _cap("Table 2. Caption"))
+    paras, tables, images = _pieces(xml)
+    captions = [paras[1], paras[2]]
+
+    assert _table_core._sides(paras[2], tables, captions, images) == []
+
+
+def test_the_caption_DIRECTLY_under_the_table_counts_as_between():
+    """And with it flush against the table, which is where a strict
+    bound stops seeing it."""
+    xml = document(table(row("A", "1")) + _cap("Table 1. Caption")
+                   + _cap("Table 2. Caption"))
+    paras, tables, images = _pieces(xml)
+
+    assert _table_core._sides(paras[1], tables, paras, images) == []
+
+
+def test_a_TABLE_caption_keeps_its_table_with_a_picture_in_between():
+    """`_sides(..., figure=False)` is the default, and the label is what
+    sets it: a caption reading "Table 1." names a table whatever follows
+    it. Defaulted the other way, the picture between this caption and
+    its table answers for it and the lookup comes back empty — which is
+    the incident `_owns_an_image` opens with, arriving through the
+    default instead of through the label."""
+    xml = document(_cap("Table 1. Caption") + _image()
+                   + table(row("Country", "Score")))
+    paras, tables, images = _pieces(xml)
+
+    assert _table_core._sides(paras[0], tables, [paras[0]], images) == tables
+
+
+def test_a_picture_BEFORE_the_caption_is_not_its_exhibit():
+    """`i >= para.end()`: the picture has to be AFTER the caption. Read
+    as "any picture at all", the image belonging to the exhibit above
+    answers for this caption, and the table under it is orphaned."""
+    xml = document(_image() + _cap("Figure 1. Caption") + table(row("A", "1")))
+    paras, tables, images = _pieces(xml)
+    below = tables[0]
+
+    assert _table_core._owns_an_image(paras[1], below, [paras[1]], images,
+                                      figure=True) is False
+
+
+def test_a_table_BEFORE_the_picture_is_the_nearer_exhibit():
+    """`below.start < picture` — the table wins when it comes first, and
+    the picture wins when IT does. An inequality that only asks whether
+    the two differ hands every figure caption its table back."""
+    xml = document(_cap("Figure 1. Caption") + _image() + table(row("A", "1")))
+    paras, tables, images = _pieces(xml)
+
+    assert _table_core._owns_an_image(paras[0], tables[0], [paras[0]],
+                                      images, figure=True) is True
+
+
+def test_a_caption_between_takes_the_PICTURE_out_of_reach():
+    """The picture must be unclaimed on the same evidence a table is,
+    and the caption that claims it may be the very next paragraph."""
+    xml = document(_cap("Figure 1. Caption") + _cap("Figure 2. Caption")
+                   + _image())
+    paras, _tables, images = _pieces(xml)
+
+    assert _table_core._owns_an_image(paras[0], None, paras[:2], images,
+                                      figure=True) is False
+
+
+def test_a_caption_between_at_a_DISTANCE_takes_it_too():
+    """The same, with a paragraph in the gap: what tells `<=` from `==`
+    and from identity."""
+    xml = document(_cap("Figure 1. Caption") + _cap("Prose between them.")
+                   + _cap("Figure 2. Caption") + _image())
+    paras, _tables, images = _pieces(xml)
+
+    assert _table_core._owns_an_image(paras[0], None, [paras[0], paras[2]],
+                                      images, figure=True) is False
+
+
+def test_a_caption_AFTER_the_picture_does_not_take_it():
+    """The upper bound of that same test. A caption further down the
+    document belongs to the next exhibit, and counted here it takes this
+    caption's own picture away — leaving a figure caption holding the
+    table above it."""
+    xml = document(_cap("Figure 1. Caption") + _image()
+                   + _cap("Figure 2. Caption"))
+    paras, _tables, images = _pieces(xml)
+
+    assert _table_core._owns_an_image(paras[0], None,
+                                      [paras[0], paras[2]], images,
+                                      figure=True) is True
+
+
+def test_a_caption_running_INLINE_still_names_a_table():
+    """`figures.get(para.span(), False)` — the label of a caption the
+    pattern did not match. `_caption_para` falls back to a paragraph
+    that merely CONTAINS the caption, and such a paragraph has no label
+    to read: taken for a FIGURE caption it can own a picture, and the
+    picture two paragraphs down then takes its table away.
+
+    Read as a table caption it keeps the conservative answer, which is
+    the one the docstring states."""
+    xml = document(
+        table(row("Country", "Score"), row("Poland", "1.0"))
+        + _cap("As the EU shows, see Table 1. for the decomposition.")
+        + _image())
+
+    found = by_caption(xml, "Table 1.")
+
+    assert found is not None and found.header == ["Country", "Score"]
+
+
+def test_reorder_rows_pairs_the_two_ROW_COUNTS_past_256():
+    """`len(shown) != len(trs)` and `sum(shown) != len(table.rows)`, the
+    guard that says the view walk and the row walk disagree. Read as
+    identity they answer "disagree" for any table with more rows than
+    CPython caches integers for — 257 of them — and the refusal it
+    raises names a docxkit bug on a table that is perfectly well formed.
+
+    An appendix data table of this size is ordinary; it is the fixtures
+    that are small."""
+    rows = [row(f"r{i:03}", str(256 - i)) for i in range(257)]
+    xml = document(table(*rows))
+    table_read = read_all(xml)[0]
+
+    out = reorder_rows(xml, table_read, key=lambda cells: cells[0],
+                       header=0)
+
+    assert [r[0] for r in read_all(out)[0].rows[:3]] == ["r000", "r001",
+                                                        "r002"]
+
+
+def test_a_figure_caption_owns_a_PASTED_picture_too():
+    """`_IMAGE_RE` reads two spellings, and only one of them was held by
+    any test in the package: `w:drawing`, which is what INSERTING a
+    picture writes. `w:pict` is the VML spelling Word writes for a
+    PASTED one — the ordinary case for anybody who copies a figure in —
+    and without it this caption has no picture to own, so it takes the
+    table above instead and that table's own caption loses it.
+
+    A census on 2026-09-18 deleted the alternative with all 8,000 tests
+    green.
+
+    The picture stands between the caption and the table, so it is the
+    only thing that can decide this: read as no picture at all, the
+    figure caption takes the table under it."""
+    pasted = ('<w:p><w:r><w:pict><v:shape id="_x0000_i1025" '
+              'style="width:300pt;height:200pt"><v:imagedata r:id="rId8"/>'
+              "</v:shape></w:pict></w:r></w:p>")
+    xml = document(
+        para(run("Figure 3. A pasted chart")) + pasted
+        + table(row("Country", "Score"), row("Poland", "1.0"))
+        + para(run("Table 4. A caption underneath its table")))
+
+    assert by_caption(xml, "Figure 3.", required=False) is None
+    assert by_caption(xml, "Table 4.").header == ["Country", "Score"]
+
+
+def test_a_gridSpan_of_more_than_nine_columns_is_read_whole():
+    """`_SPAN_RE`'s `(\\d+)`, which nothing held: every fixture in the
+    suite spans two or three columns, and `(\\d)` reads those exactly as
+    well. A summary row spanning a twelve-column table — the shape that
+    tells them apart — then reads as spanning ONE, and every cell after
+    it lands a column early.
+
+    The pattern is also the one that just gained its `\\s*` for a
+    producer that closes the tag with a space, so the two members are
+    pinned apart: this fixture closes it tight."""
+    wide = ("<w:tbl><w:tblGrid>" + "<w:gridCol w:w=\"600\"/>" * 12
+            + "</w:tblGrid>"
+            + "<w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"12\"/></w:tcPr>"
+            + para(run("Panel A. Whole-table heading")) + "</w:tc></w:tr>"
+            + "<w:tr>" + "".join(
+                f"<w:tc>{para(run(str(i)))}</w:tc>" for i in range(12))
+            + "</w:tr></w:tbl>")
+    read = read_all(document(wide))[0]
+
+    grid = read.grid_rows(document(wide))
+
+    assert len(grid[0]) == 12
+    assert grid[0] == ["Panel A. Whole-table heading"] * 12
+    assert grid[1] == [str(i) for i in range(12)]
+
+
 def test_by_caption_says_which_half_failed():
     """A missing caption and a caption with no table are different
     problems, and the message has to say which — the builders locate
@@ -522,6 +784,39 @@ def test_the_tables_facade_still_offers_every_name():
                  "_render_value", "_table_spans", "_const", "_bump",
                  "_round_to", "_ARIAL", "_ARIAL_NARROW"):
         assert hasattr(T, name), f"{name} vanished from the facade"
+
+
+def test_the_row_and_cell_patterns_say_what_they_MATCH():
+    """`_TR_RE` and `_TC_RE` are re-exports for the paper scripts —
+    `_table_core` itself never uses them — and the facade test above
+    pins their NAMES. What they match is what the callers use, and
+    nothing in the package stated it: a census on 2026-09-18 deleted
+    `re.DOTALL` from each and every member of the row pattern with the
+    suite still green.
+
+    Imported through `tables`, which is the path those callers take.
+
+    Three statements, one per member the census could reach: rows and
+    cells are matched NON-GREEDILY, so two of them are two matches and
+    not one; the match runs across the newlines a pretty-printed part
+    carries (`re.DOTALL`); and a self-closing `<w:tr/>` — a row with no
+    children, which the schema allows — is not an opening tag, so a
+    pattern reading one as the start of a row cannot swallow everything
+    up to the next real row's end.
+    """
+    from docxkit.tables import _TC_RE, _TR_RE
+
+    part = ("<w:tbl>\n<w:tr>\n<w:tc>\n<w:p/>\n</w:tc>\n</w:tr>\n"
+            "<w:tr>\n<w:tc>\n<w:p/>\n</w:tc>\n<w:tc>\n<w:p/>\n</w:tc>\n"
+            "</w:tr>\n</w:tbl>")
+
+    rows = [m.group(0) for m in _TR_RE.finditer(part)]
+    assert len(rows) == 2, "two rows, matched one at a time"
+    assert [len(_TC_RE.findall(r)) for r in rows] == [1, 2]
+    assert all(r.endswith("</w:tr>") and "\n" in r for r in rows)
+
+    empty_first = "<w:tr/>\n" + rows[1]
+    assert [m.group(0) for m in _TR_RE.finditer(empty_first)] == [rows[1]]
 
 
 def test_the_table_layers_stay_one_directional():

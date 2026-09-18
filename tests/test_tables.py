@@ -96,6 +96,13 @@ def test_cell_text_joins_wrapped_paragraphs():
     ("39%", 39.0),
     ("−0.623** [0.038]", -0.623),  # stars and a bracketed p-value
     ("1,234.5", 1234.5),
+    # the thousands separator the docstring promises and no case here
+    # asked for until 2026-09-18: the no-break space Word writes, and
+    # the plain space a paste leaves behind. (With a decimal COMMA after
+    # it — "1 234,5", as a Russian table writes it — the answer is
+    # 12345.0, which is filed rather than pinned here.)
+    ("1 234.5", 1234.5),
+    ("1 234.5", 1234.5),
     ("", None),
     ("—", None),                  # em dash means "not applicable"
     ("n/a", None),
