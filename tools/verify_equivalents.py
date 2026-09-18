@@ -261,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=1, metavar="N",
                     help="check N modules at once, each in a kill_check "
                          "checkout of its own (default 1)")
+    ap.add_argument("--anchors", action="store_true",
+                    help="only check that every claim still names a line "
+                         "of its module — no mutants, no test runs")
     ap.add_argument("--worker", action="store_true",
                     help=argparse.SUPPRESS)   # one group, blocks only
     args = ap.parse_args(argv)
@@ -285,6 +288,46 @@ def main(argv: list[str] | None = None) -> int:
     def say(line: str) -> None:
         if not args.worker:
             print(line)
+
+    if args.anchors:
+        # The CHEAP half, and the half that keeps going wrong.
+        #
+        # A fix expires the claims on the lines it changes, and deleting
+        # them belongs in the fix's own commit. `4ce85a7` did not: it
+        # added a conjunct to two claimed lines of `_cite_grammar.py`,
+        # and the four claims keyed on them were left behind — worse
+        # than orphaned, since three argued "the half is empty either
+        # way", which is the very assumption that commit disproved by
+        # finding a tab and a no-break hyphen being dropped from the
+        # page. `verify_equivalents _cite_grammar.py` exited 1 from then
+        # on, for everyone, and nobody ran it: the full check applies
+        # every claim and runs the harness for each, so it is minutes
+        # per module and cannot sit in the gate chain.
+        #
+        # This asks only whether each `was` still names exactly one line
+        # of its module. No mutants, no pytest, whole repository in
+        # under a second — which is what makes it a gate rather than a
+        # thing to remember. It cannot see a claim that has started
+        # being KILLED; that is still the full check's job.
+        gone = 0
+        for module in sorted(wanted):
+            src = ROOT / "src" / "docxkit" / module
+            if not src.is_file():
+                print(f"MODULE GONE  {module} — its claims describe nothing")
+                gone += 1
+                continue
+            for claim in doc[module].get("claims", []):
+                if anchored(src, claim["was"]) is None:
+                    print(f"ANCHOR GONE  {module}: {claim['was'][:60]!r} is "
+                          f"no longer a line of that file, or is now several")
+                    gone += 1
+        if gone:
+            print(f"{gone} claim(s) name a line their module no longer has. "
+                  f"A fix EXPIRES the claims on the lines it changes — "
+                  f"delete them in the fix's own commit, never reword them.")
+        else:
+            print(f"every claim in {CLAIMS.name} still names its line")
+        return 1 if gone else 0
 
     bad = 0
     todo: dict[str, list[Case]] = {}

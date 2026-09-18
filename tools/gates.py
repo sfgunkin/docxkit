@@ -177,6 +177,26 @@ GATES: list[Gate] = [
     # it exists to catch.
     ("unrun", [sys.executable, "tools/unrun_assertions.py",
                "--from-json", str(COVERAGE_JSON)], False),
+    # Half a second, and it holds a rule nobody was keeping. A fix
+    # EXPIRES the claims on the lines it changes, and deleting them
+    # belongs in the fix's own commit — but nothing checked, because the
+    # full `verify_equivalents` applies every claim and runs the harness
+    # for each, which is minutes per module and cannot sit here.
+    #
+    # So it went unkept. `4ce85a7` added a conjunct to two claimed lines
+    # of `_cite_grammar.py` and left four claims behind — three of them
+    # arguing "the half is empty either way", the very assumption that
+    # commit disproved by finding a tab and a no-break hyphen dropped
+    # from the page. That module's claim check exited 1 for everyone
+    # from then on and nobody saw it. Switching this on found four MORE
+    # the same afternoon, in `find.py` and `probe.py`, from fixes nobody
+    # had connected to a claim at all (2026-09-18).
+    #
+    # It asks only whether each `was` still names exactly one line of
+    # its module. It cannot see a claim that has started being KILLED;
+    # that is still the full check's job, per module, in a round.
+    ("claims", [sys.executable, "tools/verify_equivalents.py",
+                "--anchors"], False),
     # Cheap (2 s) and about the OTHER consumer: nine papers import this
     # package from an editable install, so they run the tip, and a
     # signature that moved under a name `test_api_surface` still finds

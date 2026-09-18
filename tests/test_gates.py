@@ -187,7 +187,7 @@ def test_the_real_list_is_the_eleven_CONTRIBUTING_names():
     """
     assert [name for name, _argv, _reads in gates.GATES] == [
         "ruff", "mypy", "pyright", "optionals", "pytest", "floors", "unrun",
-        "api", "deps", "sweep", "committed"]
+        "claims", "api", "deps", "sweep", "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
 
