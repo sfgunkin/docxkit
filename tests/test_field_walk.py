@@ -244,6 +244,30 @@ def test_a_fldCharType_OUTSIDE_the_schema_opens_and_closes_nothing():
                        + "</w:p>") == [], "`End` closed a field"
 
 
+def test_a_fldCharType_OUTSIDE_the_schema_SEPARATES_and_CLOSES_nothing():
+    """The same question at the other two comparisons, which are `>=`
+    when they are mutated: `== "separate"` and `== "end"`.
+
+    A value that sorts ABOVE both words is the input they read as a
+    marker, and `unknown` is one. Taken as a separator it would give the
+    field a result it has not got; taken as an end it would close the
+    field early, at the odd marker's run rather than at the real one —
+    so the fixture asks the two questions that tell those apart: what
+    the field SHOWS, and where its span stops.
+    """
+    odd = '<w:fldChar w:fldCharType="unknown"/>'
+    xml = ("<w:p>" + _run(BEGIN) + _instr(r" REF Table1 \h ") + _run(odd)
+           + _run("<w:t>Table 1</w:t>") + _run(END) + "</w:p>")
+
+    field, = fields(xml)
+    assert field.result is None, \
+        "a field with no separator of its own has no result"
+
+    (_start, _end, body), = field_spans(xml)
+    assert body.endswith(END + "</w:r>"), \
+        "the field closes on its own end marker, not on the odd one"
+
+
 # The rest of this walk's survivors are EQUIVALENT, claimed as such and
 # left alive:
 #
