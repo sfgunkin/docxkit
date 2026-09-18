@@ -2564,6 +2564,40 @@ written down argues with you, and a census run through `kill_check`
 compiles each mutant first for the same reason: an `ImportError` exits
 non-zero and is indistinguishable from a test doing its job.
 
+### An IDENTITY test mutated into an ORDERING passes half the time
+
+`revision/_promote.py`'s two real survivors are both `==` or `!=` on a
+SHA-256, rewritten as `>`, `<=` and the rest:
+
+    if _guard.sha256(newest) != live_hash:      ->  > live_hash
+    ... _guard.sha256(paper.batch) == live_hash ->  <= live_hash
+
+**On arbitrary bytes an ordering agrees with identity about half the
+time**, so a fixture that does not CONTROL the order passes by luck and
+proves nothing — and passes again tomorrow, for a different reason, on a
+different draw. That is the whole difficulty of the shape, and it is
+invisible: the test is green either way.
+
+The kill is to pin the half where the two readings differ — the
+redline's digest sorting BELOW the manuscript's — **and to assert that
+ordering as a precondition of the test**, so a fixture that drifts says
+so rather than going quiet. A test whose premise is a coin toss should
+state which side it needs.
+
+Worth killing rather than claiming, because of what the mutants cost:
+one withdraws a proposal the author has already opened and saved, which
+is the one thing `withdraw`'s docstring says it is not for; the other
+deletes `build/batch.docx` when it is NOT the withdrawn proposal — a
+batch rebuilt since, removed silently.
+
+**And the fixtures had to be plain BYTES for any of that to be
+possible.** Nothing on that path opens a package: `withdraw` hashes
+files and reads stamps. A `conftest` `write()` package carries a zip
+timestamp, so two runs give two digests and no ordering can be pinned at
+all. Choosing the bytes offline and hard-coding them, with the ordering
+asserted, is what makes the question askable — a docx fixture would have
+made it unanswerable without ever saying so.
+
 ### A scratch script that mutates a file must restore it with GIT
 
 `Path.write_text` writes CRLF on Windows, so a census script that reads
