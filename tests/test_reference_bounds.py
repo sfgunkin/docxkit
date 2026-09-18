@@ -318,3 +318,65 @@ def test_a_stop_word_with_a_SPACE_after_it_still_ends_the_list():
 #   no `__eq__`, so equality IS identity.
 # * `at > fs` and `end < le` as `!=`: the span is inside the run it was
 #   found in, so the offsets can only fall one way.
+
+
+# --- the grammar's DATA census, 2026-09-18 ------------------------------
+
+
+@pytest.mark.parametrize("dashes", ["---", "———", "___", "–––"])
+def test_a_repeated_author_entry_inherits_whatever_dash_it_is_written_with(
+        dashes):
+    """`_CONTINUATION_RE`'s character class, taken apart a member at a
+    time. The UNDERSCORE was pinned — API10 writes "________.(2024)." —
+    and the ASCII HYPHEN was not, though "---." is the commonest form of
+    the three in these lists.
+
+    An unrecognised continuation does not fail: the entry files under a
+    row of dashes, and the work it stands for reads as never cited. The
+    module's own comment says exactly that about underscores; this is
+    the same sentence for the other three characters.
+    """
+    from docxkit._cite_grammar import references
+
+    entries = references(["References",
+                          "Aksoy, C. (2026). A first paper. JEP.",
+                          f"{dashes}. 2019. A later work."])
+
+    assert [(r.surname, r.year) for r in entries] == [
+        ("Aksoy", "2026"), ("Aksoy", "2019")]
+
+
+@pytest.mark.parametrize("heading", ["References", "Bibliography",
+                                     "Литература", "Список литературы"])
+def test_the_reference_list_is_found_under_any_heading_the_grammar_knows(
+        heading):
+    """`_DEFAULT_HEADINGS` has four members and the suite pinned three:
+    a list headed "Bibliography" was held by nothing. Unfound, the list
+    is not parsed at all — every citation in the paper then reports as
+    unmatched, which reads as a bibliography problem rather than a
+    grammar one."""
+    from docxkit._cite_grammar import references
+
+    entries = references(["Body prose.", heading,
+                          "Aksoy, C. (2026). A first paper. JEP."])
+
+    assert [(r.surname, r.year) for r in entries] == [("Aksoy", "2026")]
+
+
+@pytest.mark.parametrize("caption", ["Figure 1. A chart.", "Table 1. A table.",
+                                     "Рисунок 1. A chart.",
+                                     "Таблица 1. A table."])
+def test_a_caption_ENDS_the_list_in_either_alphabet(caption):
+    """In these papers the exhibits sit below the references, so a
+    caption ends the list as a heading would. Three of the four labels
+    were unpinned; unrecognised, the caption and everything after it is
+    parsed as entries — the back-matter defect this file exists for,
+    arriving through the other door."""
+    from docxkit._cite_grammar import references
+
+    entries = references(["References",
+                          "Aksoy, C. (2026). A first paper. JEP.",
+                          caption,
+                          "Smith, J. (2020). Not an entry at all. QJE."])
+
+    assert [r.surname for r in entries] == ["Aksoy"]

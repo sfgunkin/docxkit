@@ -517,3 +517,112 @@ def test_the_SUFFIX_rule_is_recognised_by_VALUE():
 
     assert _twin_of("Ravallion2016", ("", "")) == "Ravallion2016txt"
     assert _twin_of("Ravallion2016", built) == "Ravallion2016txt"
+
+
+# --- the grammar's DATA census, 2026-09-18 ------------------------------
+#
+# Cosmic-ray plans no mutant on a regex alternative, and this module IS
+# its alternatives. A grammar that stops recognising a form does not
+# fail — it stops linking, and the report says "unmatched" about a
+# citation that is right there in the list.
+
+
+@pytest.mark.parametrize("chain,surname", [
+    ("Smith and Jones", "Smith"),
+    ("Smith & Jones", "Smith"),
+    ("Smith, Jones & Brown", "Smith"),
+])
+def test_an_author_chain_is_split_on_the_AMPERSAND_as_well_as_the_word(
+        chain, surname):
+    """`&` could be dropped from `_CHAIN_SPLIT_RE` with the whole suite
+    green, and journals that set "Smith & Jones" are ordinary.
+
+    Without it the chain never splits: `lead_surname` answers with the
+    whole string, so the citation files under the surname "Smith &
+    Jones", `key_for` mints a key no entry answers to, and the mention
+    is reported UNMATCHED while its entry sits in the list under Smith.
+    Measured: 'Smith & Jones' -> ['Smith & Jones'].
+    """
+    from docxkit._cite_grammar import lead_surname
+
+    assert lead_surname(chain) == surname
+
+
+@pytest.mark.parametrize("joiner", ["and", "&"])
+def test_an_IGNORED_lead_is_dropped_across_either_joiner(joiner):
+    """`_FIRST_SEP_RE` carries the same `&`, separately, and it could be
+    dropped separately too.
+
+    This is the shape `ignore` exists for — "…national Labor Force
+    Surveys & ILOSTAT (2024) data…", a capitalised common noun welded to
+    a real institutional author. Without the ampersand the separator is
+    never found, the head is never dropped, and the citation files under
+    "Surveys & ILOSTAT" — which no bibliography lists, so the mention
+    goes out as unmatched rather than linking to ILOSTAT.
+    """
+    from docxkit._cite_grammar import find_citations
+    from docxkit.citations import resolve_lead
+
+    text = f"National Labor Force Surveys {joiner} ILOSTAT (2024) show a gap."
+
+    resolved = resolve_lead(find_citations(text)[0], ignore=["Surveys"])
+
+    assert resolved.authors == "ILOSTAT"
+    assert resolved.surname == "ILOSTAT"
+
+
+#: The three particle lists, written out HERE rather than read from the
+#: module: a test that parametrizes over the grammar's own list loses a
+#: case when a member is deleted and passes with the rest, which is the
+#: one thing this has to catch. Of the 43 members between them the suite
+#: pinned three — `De`, `Van` and `of` — and a citation whose surname
+#: carries any of the others files under the wrong name and links to
+#: nothing.
+_PREFIXES = ["Da", "De", "Del", "Della", "Der", "Des", "Di", "Du", "La",
+             "Le", "Ten", "Ter", "Van", "Von"]
+_LEADS = ["da", "de", "del", "den", "der", "des", "di", "du", "la", "le",
+          "ten", "ter", "van", "von"]
+
+
+@pytest.mark.parametrize("prefix", _PREFIXES)
+def test_a_capitalised_particle_LEADS_the_surname_it_belongs_to(prefix):
+    """"Della Vigna (2009)" is one author, not a work by Vigna."""
+    from docxkit._cite_grammar import find_citations
+
+    (found,) = find_citations(f"{prefix} Silva (2021) shows a gap.")
+
+    assert found.authors == f"{prefix} Silva"
+    assert found.surname == f"{prefix} Silva"
+
+
+@pytest.mark.parametrize("particle", _LEADS)
+def test_a_lowercase_particle_LEADS_a_surname_too(particle):
+    """"J. van Ours" is cited "(Picchio and van Ours 2013)", so the
+    lowercase forms lead as well as join — except `of`, which only
+    joins, and which the suite already pins."""
+    from docxkit._cite_grammar import find_citations
+
+    (found,) = find_citations(f"Work by {particle} Ours (2013) shows a gap.")
+
+    assert found.authors == f"{particle} Ours"
+
+
+@pytest.mark.parametrize("particle", [*_LEADS, "of"])
+def test_a_particle_JOINS_two_halves_of_one_surname(particle):
+    """`_PARTICLE`, which is a different position from `_LEAD`: the
+    grammar is `(PREFIX|LEAD)* NAME (PARTICLE+ NAME)*`, so a lead sits
+    BEFORE the first name and a particle BETWEEN two — "Bank of
+    England", "Berg den Haag".
+
+    The shape matters and the first version of this test had it wrong.
+    Written "Van {particle} Berg", every member passed with `_PARTICLE`
+    deleted, because `Van` is a prefix and the particle was sitting in
+    the LEAD slot — the test pinned the list next door and said so in
+    its name. Measured: `den` out of `_PARTICLE` survived it. With a
+    plain name in front there is no lead parse to fall back on.
+    """
+    from docxkit._cite_grammar import find_citations
+
+    (found,) = find_citations(f"Berg {particle} Haag (2020) shows a gap.")
+
+    assert found.authors == f"Berg {particle} Haag"
