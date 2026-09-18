@@ -38,9 +38,13 @@ inventing one.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import re
 import subprocess
 import sys
+import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +60,15 @@ SEARCH = str(ROOT / "src")
 #: The same directory, spelled relative — what `load_git` needs. See
 #: :func:`compare`.
 SRC_REL = "src"
+
+#: The ONE git directory every worktree of this repo shares, which is
+#: where the `load_git` lock has to live: a lock per worktree would not
+#: be a lock at all, since the branch namespace they collide in is
+#: shared. `--git-common-dir` answers with the main repo's `.git` from
+#: inside any worktree.
+GIT_COMMON_DIR = subprocess.run(
+    ["git", "rev-parse", "--git-common-dir"], cwd=ROOT, text=True,
+    capture_output=True, check=False).stdout.strip() or str(ROOT / ".git")
 
 #: A gate's way of saying "I did not run, and here is why" — the same
 #: third state `tools/sweep.py` uses, for the same reason.
@@ -148,6 +161,67 @@ def _git(*args: str) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
+@contextlib.contextmanager
+def _git_worktree_lock() -> Generator[None]:
+    """One `load_git` at a time across every worktree of this repo.
+
+    griffe names its temporary branch after the REF — `griffe-v1-0-0` —
+    not uniquely, and worktrees of one repository share a branch
+    namespace. So two chains running this gate at once race, and the
+    loser dies on `fatal: a branch named 'griffe-v1-0-0' already
+    exists`. That is the ordinary state of this repo during a mutation
+    campaign: agents run the chain in their own worktrees while the
+    integration checkout gates master, and it happened twice on
+    2026-09-18 before anyone looked at why.
+
+    A lock rather than a retry, because the failure is not transient —
+    a killed run leaves the branch behind, and the next call fails the
+    same way for ever. `_alive` is what makes a stale holder safe to
+    take over: the lock lives beside the git directory, so it is one
+    lock for every worktree.
+    """
+    lock = Path(GIT_COMMON_DIR) / "api_check.lock"
+    for attempt in range(600):                  # ten minutes, then say so
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            if attempt == 599:
+                raise SystemExit(
+                    f"another api_check has held {lock} for ten minutes; "
+                    f"delete it if that process is gone") from None
+            holder = lock.read_text(encoding="utf-8").strip() or "0"
+            if not holder.isdigit() or not _alive(int(holder)):
+                lock.unlink(missing_ok=True)    # the holder is gone
+                continue
+            time.sleep(1.0)
+            continue
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(str(os.getpid()))
+            yield
+        finally:
+            lock.unlink(missing_ok=True)
+        return
+
+
+def _alive(pid: int) -> bool:
+    """Is that process still running?
+
+    `mutation_session`'s, not a third copy: it is NOT `os.kill(pid, 0)`
+    on Windows, where any signal other than CTRL_C/CTRL_BREAK calls
+    TerminateProcess and the existence check would kill the holder it
+    asked about. Written once there, reached from here and from
+    `stale_figures.running` the same way — these tools are each other's,
+    and the reason this is a function rather than a line is exactly the
+    kind of thing that decays when it is copied.
+    """
+    from mutation_session import (
+        _alive as alive,  # pyright: ignore[reportMissingImports]
+    )
+
+    return bool(alive(pid))
+
+
 def compare(ref: str) -> list[tuple[str, str, bool]]:
     """`(kind, explanation, is-consumed)` for every difference griffe finds.
 
@@ -162,7 +236,8 @@ def compare(ref: str) -> list[tuple[str, str, bool]]:
     """
     from griffe import find_breaking_changes, load, load_git
 
-    old = load_git(PACKAGE, ref=ref, repo=ROOT, search_paths=[SRC_REL])
+    with _git_worktree_lock():
+        old = load_git(PACKAGE, ref=ref, repo=ROOT, search_paths=[SRC_REL])
     new = load(PACKAGE, search_paths=[SEARCH])
     strict = consumed(new)
     return [(b.kind.name, _plain(b.explain()), b.obj.path in strict)
