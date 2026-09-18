@@ -821,6 +821,34 @@ build took twenty seconds or twenty minutes.
 
 A module at 0.0 % is precisely where nobody would look next. (mut-repack.)
 
+**A census has a THIRD outcome, and it reads exactly like the good
+one.** A carrier can come back KILLED with no fixture behind it at all,
+because a SOURCE-LEVEL test caught the pattern's shape rather than its
+behaviour.
+
+`_BARE_RUN_RE`'s `\b` was argued unpinnable — and correctly, as
+behaviour: the pattern is a `fullmatch` ending in `</w:r>`, which no
+longer element name can complete, so no input can tell the two
+spellings apart. Something killed it anyway. Run against the whole suite
+with no `-x`, so the failure named itself rather than being guessed at,
+it was `test_regex_registry.py::test_no_read_spells_an_element_name_without_an_END`
+— a CONVENTION test, checking that a spelled element name has something
+ending it.
+
+Read as *"something pins this"*, that misleads in a specific and costly
+way: **nothing in the package would notice if the pattern started
+reading `<w:rPr>` as a run.** What would notice is that it stopped
+declaring its element name properly. Those are different facts, and a
+census that reports the carrier as held has told the reader the second
+while they were asking the first.
+
+So before dropping a member of a pattern the registry watches, three
+seconds against the registry alone says which of the three outcomes it
+is. `FLDCHAR_RE`'s `\b` surviving everything is the same instrument
+agreeing from the other side: the registry flags a spelled name only
+where a LONGER element name exists, and OOXML has none extending
+`w:fldChar`, so its silence is itself the argument.
+
 **And the census comes back CLEAN sometimes, which is what makes it
 worth running.** `_compare_read.py` has `VOLATILE_FIELDS` (16 members)
 and `TEXT_PART_RE` (5 alternatives) — exactly the unreachable shape.
@@ -2490,6 +2518,37 @@ The number belongs in exactly one place, and it already had one:
 moved by one twip dies there, deliberately, which is the repo choosing
 to hold the calibration in the everyday suite while `pytest -m word`
 remains the measurement.
+
+### State the expectation, so a wrong ANSWER is implausible
+
+A census case table says what each drop should do — SURVIVE or be
+KILLED — and that is not bookkeeping. It is what makes a bad measurement
+visible.
+
+On 2026-09-18 a cosmetic check built three of its mutants wrong:
+replacing `[:60]` with `line[: 59]` produced `{lineline[: 59]}`, a
+`NameError`. **A crash reads as a kill.** Six of eight cases "died", and
+the conclusion waiting to be drawn was that a wider map changes the
+module's figure — which would have been reported, and wrong.
+
+What caught it was that the cases had been written as *must SURVIVE*.
+Six unexpected kills is implausible enough to look at; six kills with no
+stated expectation is a result. A case table whose expectation is
+written down argues with you, and a census run through `kill_check`
+compiles each mutant first for the same reason: an `ImportError` exits
+non-zero and is indistinguishable from a test doing its job.
+
+### A scratch script that mutates a file must restore it with GIT
+
+`Path.write_text` writes CRLF on Windows, so a census script that reads
+a module, mutates it, and writes the original back leaves it
+**byte-different and line-identical**. That is precisely the shape that
+made 34 of 65 stored sessions read as MOVED before `lines_of` normalised
+newlines — a module nobody edited, reported as changed, with every
+figure keyed to it void.
+
+Harmless now, and only because the comparison was fixed first. Restore
+with `git checkout`, or pass `newline=""`.
 
 ### A test can ask about the MACHINE instead of the code
 
