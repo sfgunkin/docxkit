@@ -450,6 +450,34 @@ def test_a_session_that_REFUSED_is_not_reported_as_a_measurement(monkeypatch):
         "the old session must not be read back as this round's figure"
 
 
+def test_a_session_that_was_KILLED_is_not_called_a_refusal(monkeypatch):
+    """A kill is not a judgment, and must not be dressed as one.
+
+    The session's own exits are 1 (a message), 2 (the --sample guard) and
+    3 (STUCK), and every one of them says why on the way out. Any other
+    code means it was killed or it crashed — and that is precisely the
+    case with no reason to print, so it is the one case this function had
+    no business explaining.
+
+    `edit.py` was stopped by hand a minute into its sweep on 2026-09-18
+    (`Stop-Process` exits -1 on Windows, surfacing as 4294967295) and the
+    log read `REFUSED (exit 4294967295) … pass --force`: three lines of
+    advice for a decision nothing had taken, over a module a reader would
+    then believe the tool had considered and declined.
+    """
+    said = _said(_refusing(monkeypatch, 4294967295,
+                           ["  verifying the unmutated harness (9 files)..."]))
+
+    assert "REFUSED" not in said, \
+        "nothing refused: the session was killed before it could decide"
+    assert "--force" not in said, \
+        "advice for a decision that was never taken sends a reader hunting"
+    assert "killed or it crashed" in said
+    assert "verifying the unmutated harness" in said, \
+        "how far it got is all the diagnosis there is"
+    assert "REAL SURVIVAL" not in said
+
+
 def test_a_session_that_SUCCEEDED_still_reports_as_before(monkeypatch):
     """The other half. Exit 0 with a database present is the ordinary
     completed run, and it has to reach the survivors report exactly as
