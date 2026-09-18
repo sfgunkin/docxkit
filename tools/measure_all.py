@@ -171,9 +171,25 @@ def run(module: str, minutes: float, sample: int = 0, *,
         # Eight of fifty live sessions have graded more than the
         # `--sample 460` CONTRIBUTING calls usual, so this is the
         # ordinary path for the most-measured modules, not a corner.
-        say(f"    REFUSED (exit {code}) — no measurement taken, and the "
-            f"existing session is untouched. Read it with --report, "
-            f"re-measure it whole, or pass --force.")
+        #
+        # And only these codes are the session's OWN. It exits 1 with a
+        # message, 2 from the `--sample` guard, 3 from STUCK — and every
+        # one of them says why on the way out. Anything else means it was
+        # killed or it crashed, which is NOT a refusal and must not be
+        # dressed as one: `edit.py` was stopped by hand mid-sweep on
+        # 2026-09-18 (Stop-Process exits -1 on Windows) and the log read
+        # `REFUSED (exit 4294967295) … pass --force`, advice for a
+        # decision nothing had taken. A reader chasing that spends the
+        # afternoon looking for the judgment the tool appeared to make.
+        if code in (1, 2, 3):
+            say(f"    REFUSED (exit {code}) — no measurement taken, and the "
+                f"existing session is untouched. Read it with --report, "
+                f"re-measure it whole, or pass --force.")
+        else:
+            say(f"    ENDED (exit {code}) WITHOUT REFUSING — the session "
+                f"takes no such exit, so it was killed or it crashed. "
+                f"Nothing was measured and the existing session is "
+                f"untouched; the lines above are all it said.")
         return
 
     if not moved and fingerprint(module, tests) != before:
