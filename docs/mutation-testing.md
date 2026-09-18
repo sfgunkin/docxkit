@@ -2842,6 +2842,49 @@ The fix is not more tries. Write BOTH candidates, sort them by hash,
 and `shutil.copy2` them into place — copying preserves the bytes, so
 the ordering the test asserts is the ordering it gets.
 
+### The tell has THREE shapes, and coverage catches one
+
+A cluster of survivors on one function means *something here is not
+being asked about*. Four instances were confirmed in one day, and it is
+tempting to think coverage would have found them all — a whole-package
+scan for functions the suite never enters is the obvious tool, it costs
+one suite pass, and it was built to test exactly that.
+
+**It reproduces ONE of the four**, and the reason is the taxonomy:
+
+* **UNREACHED** — the line never ran. `_water_fill`'s 696-700, the
+  branch that makes a division unequal. Coverage finds this, and the
+  scan ranked it first on the tree as it stood before the round that
+  fixed it, which is what validates the instrument.
+* **COMPUTED AND DISCARDED** — the line ran, and its answer went
+  nowhere. `regrid` computes `_snap(...)` for every row and then returns
+  the document unchanged when the grid is already canonical. **Nothing
+  but reading finds this**: the line executed, so coverage is content.
+* **ASSERTED FROM THE FIXTURE** — the line ran, the assertion ran, and
+  the assertion was about its own input. `regrid`'s spanning-header test
+  builds an already-canonical grid and asserts on the spans its fixture
+  wrote. `can_it_fail` settles this per test, but only once somebody
+  suspects it.
+
+`_snap`, `regrid` and `_own_tblpr` were all ENTERED. What was wrong with
+them was never that a line did not run.
+
+**So the scan is not a gate.** Twelve rows package-wide, eight of them
+in modules whose figures are already stale and four of them one-line
+dispatch entries, is not a queue-ordering signal — it is a five-minute
+query worth running once per WAVE, when the figures are fresh, to see
+whether a sweep is about to be paid for over a branch nothing enters.
+The run-level half is the half worth keeping; the function-level half
+found nothing a reader would act on.
+
+And it cannot separate UNREACHED from UNRUNNABLE-HERE either:
+`hygiene.format` and `renumber.format` are both named by a `-m word`
+test, so the row says so rather than guessing.
+
+That assessment is its author's, arrived at by pointing the tool at
+answers already in hand and reporting what it missed — which is the only
+way a tool's limits get stated before somebody relies on them.
+
 ### A test that reads its own FIXTURE back cannot fail
 
 `_table_layout.py` read 11.2 % (405/3614) and **83 of those survivors
