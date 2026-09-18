@@ -151,6 +151,38 @@ def test_the_break_is_applied_ONCE_and_at_the_first_occurrence():
     assert out == "a = 2\nb = 1\n"
 
 
+def test_an_AMBIGUOUS_anchor_is_refused_rather_than_guessed(repo, capsys):
+    """Line-for-line TWINS are ordinary — `_set_span` and `_set_tc_w` in
+    `_table_layout` are a pair — and a single-line anchor for one lands
+    in the other. The tool then reports CANNOT FAIL about a function
+    nobody broke, which is the disease it exists to diagnose. An
+    ambiguous anchor is the same class of answer as an absent one.
+    """
+    (repo / "twins.py").write_text("A = 1\nB = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "twins"], cwd=repo, check=True,
+                   capture_output=True)
+
+    done = _run(repo, "--in", "twins.py", "--replace", "= 1", "--with", "= 2")
+
+    assert done.returncode == 2
+    assert "appears 2 times" in done.stdout
+    assert "--occurrence 1..2" in done.stdout
+    assert (repo / "twins.py").read_text(encoding="utf-8") == "A = 1\nB = 1\n"
+
+
+def test_OCCURRENCE_says_which_copy_of_a_repeated_anchor_to_break():
+    """1-based, and the count is over the whole file rather than per
+    line: `kill_check` counts the same way, so a case moved from one to
+    the other means what it meant."""
+    assert CAN_IT_FAIL.apply_break("a = 1\nb = 1\n", "1", "2", 2) == (
+        "a = 1\nb = 2\n")
+    assert CAN_IT_FAIL.apply_break("a = 1\nb = 1\n", "1", "2", 1) == (
+        "a = 2\nb = 1\n")
+    assert CAN_IT_FAIL.apply_break("a = 1\n", "1", "2", 2) is None
+
+
 def test_an_absent_anchor_is_None_rather_than_an_unchanged_FILE():
     """Returning the text unchanged would write the file back as it was
     and report a verdict on a break that never happened."""

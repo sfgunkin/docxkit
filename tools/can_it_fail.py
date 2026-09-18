@@ -42,17 +42,29 @@ import sys
 from pathlib import Path
 
 
-def apply_break(text: str, old: str, new: str) -> str | None:
-    """`text` with the FIRST `old` replaced, or None if it is not there.
+def apply_break(text: str, old: str, new: str,
+                occurrence: int = 1) -> str | None:
+    """`text` with `occurrence`'s `old` replaced, or None if it is not there.
 
     None rather than the text unchanged: writing the file back as it was
     and reporting a verdict would be a verdict about a break that never
     happened, which is the failure this tool exists to catch, one level
     up.
+
+    `occurrence` is 1-based and exists because line-for-line TWINS are
+    ordinary in this package — `_set_span` and `_set_tc_w` in
+    `_table_layout` are the pair that found it, and mut-placement hit it
+    twice in one afternoon: a single-line anchor for one of them lands
+    in the other, the test stays green, and the tool reports CANNOT FAIL
+    about a function nobody broke. `main` refuses an ambiguous anchor
+    rather than guessing, and this is how a caller says which one.
     """
-    if old not in text:
-        return None
-    return text.replace(old, new, 1)
+    at = -1
+    for _ in range(occurrence):
+        at = text.find(old, at + 1)
+        if at == -1:
+            return None
+    return text[:at] + new + text[at + len(old):]
 
 
 def verdict(green_before: bool, green_after: bool) -> str:
@@ -125,13 +137,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--in", dest="path", required=True,
                     help="the file to break, relative to the repo root")
     ap.add_argument("--replace", metavar="OLD",
-                    help="text to replace (the first occurrence)")
+                    help="text to replace; the anchor must be unique "
+                         "unless --occurrence says which")
     ap.add_argument("--with", dest="new", default="",
                     help="what to put there; omit to delete OLD")
     ap.add_argument("--insert", metavar="TEXT",
                     help="text to insert, with --before")
     ap.add_argument("--before", metavar="ANCHOR",
                     help="insert --insert in front of this")
+    ap.add_argument("--occurrence", type=int, metavar="N", default=0,
+                    help="which copy of the anchor to break, 1-based — "
+                         "for a line that has line-for-line twins")
     args = ap.parse_args(argv)
 
     if bool(args.replace) == bool(args.insert):
@@ -154,10 +170,26 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     original = path.read_text(encoding="utf-8")
-    broken = apply_break(original, old, new)
+    copies = original.count(old)
+    if copies > 1 and not args.occurrence:
+        # An ambiguous anchor is the same class of answer as an absent
+        # one: the break did not necessarily land where the reader
+        # meant. Taking the first copy silently is how this tool reports
+        # CANNOT FAIL about a function nobody broke — `_set_span` and
+        # `_set_tc_w` are line-for-line twins and it happened twice in
+        # one afternoon (mut-placement, 2026-09-18).
+        print(f"{old!r} appears {copies} times in {args.path} — say which "
+              f"with --occurrence 1..{copies}, or anchor on a line that "
+              f"differs between the copies (the comment above one of them "
+              f"usually does). Breaking the first would answer about "
+              f"whichever copy that is.")
+        return 2
+    broken = apply_break(original, old, new, args.occurrence or 1)
     if broken is None:
-        print(f"{old!r} is not in {args.path} — nothing was broken, so "
-              f"there is nothing to report about the test")
+        print(f"{old!r} is not in {args.path}"
+              + (f" {args.occurrence} times" if args.occurrence else "")
+              + " — nothing was broken, so there is nothing to report "
+                "about the test")
         return 2
 
     print(f"test    {args.test}")
