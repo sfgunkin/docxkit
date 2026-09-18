@@ -90,6 +90,33 @@ def test_a_citation_only_the_INNER_group_closes_is_still_found():
     assert _found("(see (Smith 2020))") == [("Smith", "2020", False)]
 
 
+def test_a_citation_the_INNER_group_closes_reports_where_it_SITS():
+    """The offsets `_scannable` computes, which `_found` throws away.
+
+    A nested group is walked at `group.start(1) + m.start(1)` — the
+    outer group's own start plus the nested match's start WITHIN it —
+    and every reader of a Citation takes that span and writes over it:
+    `link_rest` wraps those characters in a hyperlink, and
+    `citations_clear_of` decides by it whether a mention is already
+    inside one. A scan that reports the right author at the wrong
+    offsets links the wrong words, and no assertion about authors and
+    years can see it. Thirteen mutants of that one line survived the
+    sweep of the fix that added it.
+
+    The two offsets are 9 and 5 HERE ON PURPOSE. One character longer —
+    "As noted (see …" — puts them at 10 and 5, where `10 | 5` and
+    `10 ^ 5` are both 15 and so is the sum, and two of the thirteen live
+    through the test. Sharing a bit is what makes every spelling of the
+    arithmetic disagree.
+    """
+    text = "Compare (see (Smith 2020)) with the rest."
+
+    (c,) = find_citations(text)
+
+    assert (c.authors, c.year) == ("Smith", "2020")
+    assert text[c.start:c.end] == "Smith 2020", (c.start, c.end)
+
+
 def test_a_semicolon_list_yields_each_work():
     """'(Bernheim and Rangel 2009; Chetty 2015)' — a whole-group pattern
     found neither, and the LE audit read both entries as uncited."""
