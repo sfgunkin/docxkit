@@ -801,6 +801,26 @@ because the drift IS the thing being watched.
 over. A census round writes both, and the reviewer who deletes the
 written-out list as duplication removes the only test that can fail.
 
+**A formatted LINE takes the same rule in a different shape.** Where the
+data is an f-string rather than a table, the equivalent of the
+written-out list is an exact-match assertion on the whole line: it
+catches a field removed AND a field added without a case, where a
+parametrisation over the fields catches only the second.
+
+`_tracked_report.py` is where that was learned, and the module is the
+argument for running a census at all. It reads **0.0 % (0/169)** — every
+mutant killed, nothing to look at, no staleness. The census found three
+members unpinned anyway, and not the ones anyone predicted: the four
+gates whose whole observable effect is an absence were already held,
+while **the comment total, the unclassified count and the elapsed
+seconds could each be dropped from the header line every build prints**
+and a seven-file harness noticed nothing. Only the revision count was
+pinned. Those three are exactly what a reader decides on — how many
+comments came through, how many nobody could classify, and whether the
+build took twenty seconds or twenty minutes.
+
+A module at 0.0 % is precisely where nobody would look next. (mut-repack.)
+
 **And the census comes back CLEAN sometimes, which is what makes it
 worth running.** `_compare_read.py` has `VOLATILE_FIELDS` (16 members)
 and `TEXT_PART_RE` (5 alternatives) — exactly the unreachable shape.
