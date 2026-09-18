@@ -6,6 +6,8 @@ while every word on the page stays the same.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from conftest import cp1252_console, document, para, run
 
@@ -687,3 +689,200 @@ def test_a_duration_is_the_DIFFERENCE_of_two_clock_readings(monkeypatch):
     assert applied == ["swap"] and len(failures) == 1
     assert durations == [("boom", 1.23), ("swap", 1.23)], \
         "1.234 s each, to the hundredth"
+
+
+# --- the data census of 2026-09-18 ----------------------------------------
+#
+# `invariants` IS the gate, and its eight keys are data no mutation
+# operator can reach: delete one and a carrier goes unwatched with every
+# test still green. Five of the eight were exactly that, and so were the
+# spellings four of them count with — a bare `<m:oMath>` against the
+# attributed one `equations.latex_to_omml` writes, a row against the
+# `<w:trPr>` inside it, an empty `<w:p/>` against a container. The two
+# tests below are the shape the `lint.py` census asked for: the table IS
+# the constant, and a carrier added to the module without a line here
+# fails them rather than going quiet.
+
+_MATH_BARE = "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+#: What `equations.latex_to_omml` hands a step to insert: a fragment
+#: carrying its own namespace declaration, so the element opens on a
+#: SPACE and not on `>`.
+_MATH_NS = ('<m:oMath xmlns:m="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/math"><m:r><m:t>y</m:t></m:r></m:oMath>')
+_LINK = ('<w:hyperlink w:anchor="ref_x">' + run("Table 3")
+         + "</w:hyperlink>")
+_FOOT = '<w:r><w:footnoteReference w:id="2"/></w:r>'
+_DRAW = "<w:r><w:drawing/></w:r>"
+
+
+def _row(n: int) -> str:
+    """A row with its own properties, which is how Word writes one — and
+    `<w:trPr>` is what the row count's word boundary is for."""
+    return ('<w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc>'
+            + para(run(f"Cell {n}."), pid=f"R{n}") + "</w:tc></w:tr>")
+
+
+CENSUS_BODY = (
+    para(run("A filler sentence."), pid="D0")
+    + para('<w:bookmarkStart w:id="1" w:name="ref_x"/>',
+           run("Figure 1 shows country averages."),
+           '<w:bookmarkEnd w:id="1"/>', pid="D1")
+    + para(_LINK, run(" shows where older workers are."), _FOOT, _DRAW,
+           _MATH_BARE, _MATH_NS, pid="D2")
+    + "<w:tbl>" + _row(1) + _row(2) + "</w:tbl>"
+    # the empty paragraph `PARA_RE` excludes and this gate must count: in
+    # these papers it is the section break carrying an orientation and a
+    # page-number footer
+    + "<w:p/>"
+)
+
+
+def test_the_gate_COUNTS_one_of_every_carrier_in_a_body_that_has_them():
+    """Stated as the whole dict, so a key the module stops counting — or
+    a spelling a pattern stops recognising — fails here rather than
+    silently leaving that carrier unwatched. Every number is a count of
+    what `CENSUS_BODY` visibly holds."""
+    assert batch.invariants(document(CENSUS_BODY)) == {
+        "paragraphs": 6, "bookmarks": 1, "bookmark_ends": 1, "links": 1,
+        "footnote_refs": 1, "math": 2, "rows": 2, "drawings": 1}
+
+
+def _without(fragment: str,
+             replacement: str = "") -> Callable[[str, dict[str, bytes]], str]:
+    """A step that takes ONE carrier out and touches nothing else."""
+    def step(xml: str, _p: dict[str, bytes]) -> str:
+        assert fragment in xml, fragment
+        return xml.replace(fragment, replacement, 1)
+    return step
+
+
+#: carrier -> (the step that moves it, the failure the gate must report).
+#: The counts are written out rather than read back from `invariants`: an
+#: expectation computed by the code under test agrees with it however
+#: wrong it is.
+_CARRIER_CASES = {
+    "paragraphs": (_without(para(run("A filler sentence."), pid="D0")),
+                   "paragraphs 6 -> 5, expected 6"),
+    "bookmarks": (_without('<w:bookmarkStart w:id="1" w:name="ref_x"/>'),
+                  "bookmarks 1 -> 0, expected 1"),
+    "bookmark_ends": (_without('<w:bookmarkEnd w:id="1"/>'),
+                      "bookmark_ends 1 -> 0, expected 1"),
+    # the wrapper only: the words stay on the page, which is the whole
+    # class of damage this gate exists for
+    "links": (_without(_LINK, run("Table 3")), "links 1 -> 0, expected 1"),
+    "footnote_refs": (_without(_FOOT), "footnote_refs 1 -> 0, expected 1"),
+    "math": (_without(_MATH_BARE), "math 2 -> 1, expected 2"),
+    # unwrapped, not deleted: the cell's paragraph stays, so the ROW
+    # count is the only one that moves
+    "rows": (_without(_row(2), para(run("Cell 2."), pid="R2")),
+             "rows 2 -> 1, expected 2"),
+    "drawings": (_without(_DRAW), "drawings 1 -> 0, expected 1"),
+}
+
+
+def test_every_carrier_the_gate_watches_has_a_case_here():
+    """The table above is the gate's own key set, so a carrier added to
+    `invariants` joins these tests with it."""
+    assert set(_CARRIER_CASES) == set(batch.invariants(""))
+
+
+@pytest.mark.parametrize("key", sorted(_CARRIER_CASES))
+def test_a_carrier_that_moves_ALONE_is_blocked_and_named(key):
+    """Counting it is not gating it. Each step moves exactly one carrier
+    and nothing else, so the failure list is the single line naming that
+    carrier — which is both halves of the gate: that it fired, and that
+    the report says which invariant went and by how much."""
+    step, expected = _CARRIER_CASES[key]
+
+    report = batch.run("b", [batch.Step("drop", step)],
+                       parts=parts_of(CENSUS_BODY))
+
+    assert not report.ok, report.text()
+    assert report.failures == [expected], report.failures
+
+
+def test_a_PENDING_DELETION_stops_a_batch_as_a_pending_insertion_does():
+    """Compare treats a pending revision as ACCEPTED either way, and a
+    deletion is the half where that decides MORE: accepting it removes
+    text the author may still have been weighing. Every fixture here
+    used `w:ins`, so the `del` in the pattern was free."""
+    body = para(run("Kept. "), '<w:del w:id="9" w:author="R">'
+                "<w:r><w:delText>gone</w:delText></w:r></w:del>", pid="E1")
+
+    report = batch.run("b", [], parts=parts_of(body))
+
+    assert not report.ok
+    assert "1 tracked revision(s) still pending" in report.failures[0]
+
+
+def test_a_TABLE_BORDER_is_not_a_pending_revision():
+    """`<w:insideH>` and `<w:insideV>` are the inside borders of an
+    ordinary table and they open on the same three letters as `w:ins`.
+    Without the word boundary every table in the manuscript reads as two
+    pending revisions, and the batch refuses a file with nothing pending
+    in it at all."""
+    body = ('<w:tbl><w:tblPr><w:tblBorders><w:insideH w:val="single"/>'
+            '<w:insideV w:val="single"/></w:tblBorders></w:tblPr>'
+            + _row(1) + "</w:tbl>"
+            + para(run("Figure 1 shows country averages."), pid="E2"))
+
+    report = batch.run("b", [batch.Edit(
+        "a", "Figure 1 shows", "country averages", "country AFIs")],
+        parts=parts_of(body))
+
+    assert report.ok, report.text()
+    assert report.applied == ["a"]
+
+
+def test_diagnose_names_a_label_whose_text_PRESERVES_its_space():
+    """A label that ends on a space — `Table 3 `, the ordinary shape when
+    the link swallows the separator — is written `<w:t
+    xml:space="preserve">`, and a pattern wanting a bare `<w:t>` reads no
+    label at all: the refusal falls through to "a reason preflight does
+    not model", which is the answer that means go and look."""
+    spaced = LINK_LABEL.replace(
+        "<w:t>Table 3</w:t>", '<w:t xml:space="preserve">Table 3 </w:t>')
+    assert spaced != LINK_LABEL, "the fixture applied"
+    xml = document(para(f"{spaced}<w:r><w:t>shows where older "
+                        "workers are.</w:t></w:r>", pid="A1"))
+
+    said = batch.diagnose(xml, "shows where", "Table 3")
+
+    assert "hyperlink label 'Table 3 '" in said, said
+
+
+def test_diagnose_does_not_blame_an_equation_it_could_READ_the_prose_of():
+    """The equation branch asks whether `old` is missing from the raw
+    `<w:t>` text, and a run whose text opens or closes on a space carries
+    `xml:space="preserve"` — every run in a sentence built around an
+    equation, as it happens. Read with a bare `<w:t>` the join comes back
+    EMPTY, so any anchor at all reads as spanning the equation and the
+    reader is sent after OMML that has nothing to do with it."""
+    math = "<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"
+    body = para(run("The value ", preserve=True), math,
+                run(" is small.", preserve=True), pid="A2")
+
+    said = batch.diagnose(document(body), "is small", "The value")
+
+    assert "spans an equation" not in said, said
+    assert "preflight does not model" in said, said
+
+
+@pytest.mark.parametrize("mark", [".", ":"])
+def test_the_near_sentence_is_cut_at_a_FULL_STOP_and_at_a_COLON(mark):
+    """`(?<=[.:])\\s` splits the paragraph the hint quotes from, and the
+    colon is there because these papers open a paragraph with one:
+    `Note: …`, `Источник: …`, a caption's own label. Each fixture carries
+    ONE of the two marks, because a paragraph with both cannot say which
+    of them did the cutting — and with neither the hint quotes the whole
+    paragraph, sending the reader to a sentence the anchor never drifted
+    to."""
+    body = para(run(f"The share of older workers rose{mark} "
+                    "The share of older workers fell later."), pid="A1")
+
+    said = batch.diagnose(document(body), "fell later",
+                          "The share of older workers held steady")
+
+    assert "`old` is not in that paragraph" in said, said
+    assert "rose" in said, said
+    assert "fell" not in said, said
