@@ -77,10 +77,10 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Eleven gates, all of which must pass:
+Twelve gates, all of which must pass:
 
 ```
-python tools/gates.py   # all eleven, in order, first failure stops
+python tools/gates.py   # all twelve, in order, first failure stops
 ```
 
 Two of them can SKIP rather than pass: `sweep` needs a corpus of real
@@ -99,11 +99,23 @@ python -m pyright       # what Pylance shows in the editor
 python tools/optional_audit.py --callers tests   # can this `| None` ever BE None?
 python tools/coverage_floor.py
 python tools/unrun_assertions.py   # which assertion did not RUN?
+python tools/verify_equivalents.py --anchors   # does every claim still name its line?
 python tools/api_check.py          # did this break the API the papers call?
-python -m deptry src               # does the SHIPPED package declare what it imports?
+python -m deptry src tools         # does this repo declare what it imports?
 python tools/sweep.py              # needs DOCXKIT_CORPUS; skips without
 python tools/verify_committed.py   # HEAD, not the working copy
 ```
+
+**Working in a worktree while a sweep runs?** The chain's pytest arm is
+ninety seconds of `-n 8` and a mutant that crosses its 30 s deadline is
+graded KILLED, so running it beside a live session reads as a better
+figure than the truth. `gates.py` says so before it starts, and
+`tools/stale_figures.py --running` answers on its own. The
+worktree-sized check while you wait is the module's own harness, `ruff`
+— **and `mypy` on the changed paths**. Ruff is not the type gate: a
+`Match[str] | None` handed to a helper wanting a `Match[str]` passed
+both the harness and ruff and was caught only by the central chain
+(2026-09-18). Mypy on one file costs seconds.
 
 **Use the runner, or chain them with `&&`.** Never `;`, and never a
 pipe: the status of `pytest -q | tail -2` is TAIL's, so a red suite
@@ -347,7 +359,8 @@ body of method in this repository and it now lives in its own file:
 
 **[`docs/mutation-testing.md`](docs/mutation-testing.md)** — the tools
 (`mutate.py`, `mutation_session.py`, `mutation_survivors.py`,
-`kill_check.py`, `stale_figures.py`), the eight measured sweeps, the
+`kill_check.py`, `stale_figures.py`, `render_survivors.py`,
+`can_it_fail.py`, `unobservable.py`), the eight measured sweeps, the
 calibration table, and the 32 lessons that came out of them: what an
 equivalent mutant is and how to argue one, why a figure is void when the
 harness moves, which of the three kinds of stale a figure has — void, or
