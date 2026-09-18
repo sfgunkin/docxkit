@@ -158,6 +158,19 @@ def regressions(
     comparison. A run that says nothing — every record written before
     this — stays in, because dropping those would throw away the history
     the median is computed from.
+
+    **What this GIVES UP, so the next reader knows which half went.** A
+    regression that only shows under load is now invisible here: a gate
+    that is fine on a quiet machine and pathological beside three sweeps
+    — lock contention, a memory ceiling, a thread pool sized from the
+    CPU count — records `sweeps` on every run that would demonstrate it,
+    and every one of those is excluded. The trade is deliberate: the
+    false alarm fired on EVERY chain for eleven hours, which is the
+    failure that makes a monitor unreadable, and the load-only
+    regression is hypothetical here. But it is a trade, not a
+    strict improvement, and the way to look for the half given up is to
+    read the excluded runs directly rather than to expect this to
+    mention them.
     """
     runs = [r for r in runs if not (r.get("extra") or {}).get("sweeps")]
     found = []
