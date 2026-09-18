@@ -328,6 +328,48 @@ def test_a_vehicle_is_read_per_ROW_not_per_TABLE():
     assert len(display_equations(document(two_rows))) == 2
 
 
+def test_a_vehicle_row_covers_ITS_OWN_row_and_no_other_table():
+    """A row's span is the TABLE's offset plus the row's offset within
+    it, and six mutants lived on that sum — three that move where it
+    starts and three that stretch where it ends. Neither shows in a
+    document that holds one table: a span that begins too early or ends
+    too late still contains the paragraph it was measured from.
+
+    So this document puts a notation table on EACH side of the vehicle.
+    A start that slides back swallows the first table's symbol cells, an
+    end that runs on swallows the second's, and either way the count of
+    display equations stops being one."""
+    preamble = "".join(
+        para(run(f"Paragraph {i} of the preamble, before the tables."))
+        for i in range(7))
+    xml = document(preamble + _notation_table("α", "β")
+                   + _vehicle("(4)") + _notation_table("γ", "δ"))
+
+    assert len(display_equations(xml)) == 1
+    assert len(display_equations(xml, in_tables=True)) == 5
+
+
+def test_only_the_NUMBERED_row_of_a_table_carries_its_equation():
+    """The other half of the row span, and the one a document with the
+    number in its FIRST row cannot ask. Here the numbered row is the
+    second, so the row's own offset inside the table is large — and a
+    span that starts at the table rather than at the row reaches back
+    over the row above it, which holds maths that is not a display
+    equation at all."""
+    maths = ("<m:oMathPara><m:oMathParaPr/>"
+             f"{omath(frac('L', 'N'))}</m:oMathPara>")
+    table = ("<w:tbl><w:tblPr/>"
+             f"<w:tr>{_cell(para(omath(mr('α'))))}"
+             f"{_cell(para(run('what it means')))}</w:tr>"
+             f"<w:tr>{_cell(f'<w:p>{maths}</w:p>')}"
+             f"{_cell(para(run('(5)')))}</w:tr></w:tbl>")
+
+    xml = document(table)
+
+    assert len(display_equations(xml)) == 1
+    assert len(display_equations(xml, in_tables=True)) == 2
+
+
 def test_the_two_KINDS_of_table_are_told_apart_in_one_document():
     """Which is the real shape: this paper has both, and the appendix
     puts them within a few paragraphs of each other."""
@@ -1004,6 +1046,166 @@ def test_standalone_refuses_a_fragment_with_NO_element():
         standalone("")
     with pytest.raises(AnchorError, match="got 2"):
         standalone(omath(mr("x")) + omath(mr("y")))
+
+
+# --- where the ALIGNMENT is written (2026-09-18) ----------------------
+#
+# `m:oMathParaPr` arrives in three shapes — absent, self-closing, and
+# present with or without an `m:jc` inside — and `_set_math_jc` splices
+# a string for each. Thirty-nine mutants lived there, most of them the
+# `+` of a splice written as another operator, which any assertion on
+# the whole paragraph kills; the two that are about the BEHAVIOUR are
+# the test for the self-closing form and the count of the substitution.
+
+_CENTRED = '<m:jc m:val="center"/>'
+
+
+def _display_para(pr: str) -> str:
+    return (f"<w:p><m:oMathPara>{pr}"
+            f"<m:oMath>{mr('x')}</m:oMath></m:oMathPara></w:p>")
+
+
+@pytest.mark.parametrize("have", [
+    pytest.param("", id="no_properties_at_all"),
+    pytest.param("<m:oMathParaPr/>", id="self_closing"),
+    pytest.param("<m:oMathParaPr></m:oMathParaPr>", id="empty_but_paired"),
+    pytest.param('<m:oMathParaPr><m:jc m:val="left"/></m:oMathParaPr>',
+                 id="an_alignment_to_replace"),
+])
+def test_the_alignment_lands_in_the_properties_whatever_shape_they_are_in(
+        have):
+    """One answer from four starting points, byte for byte. The
+    self-closing form is the one with no `</m:oMathParaPr>` to find: read
+    as the paired form it sends `str.index` looking for a close tag that
+    is not there, and the paragraph comes back as a ValueError from
+    inside a formatting call."""
+    from docxkit.equations import _set_math_jc
+
+    got = _set_math_jc(_display_para(have), "center")
+
+    assert got == _display_para(
+        f"<m:oMathParaPr>{_CENTRED}</m:oMathParaPr>")
+
+
+def test_an_alignment_is_replaced_rather_than_ADDED_beside_the_old_one():
+    """The substitution's count is 1 because `m:jc` is the only child
+    `m:oMathParaPr` has: two of them is not a document Word writes or
+    keeps."""
+    from docxkit.equations import _set_math_jc
+
+    got = _set_math_jc(_display_para(
+        '<m:oMathParaPr><m:jc m:val="left"/></m:oMathParaPr>'), "right")
+
+    assert got.count("<m:jc") == 1
+    assert 'm:val="right"' in got and 'm:val="left"' not in got
+
+
+def test_a_paragraph_with_no_display_maths_is_returned_UNTOUCHED():
+    from docxkit.equations import _set_math_jc
+
+    inline = f"<w:p><m:oMath>{mr('x')}</m:oMath></w:p>"
+
+    assert _set_math_jc(inline, "center") == inline
+
+
+# --- the ACCEPTED side of a redline (2026-09-18) ----------------------
+
+
+def test_a_paragraph_whose_prose_is_DELETED_is_read_without_it():
+    """`math --check` reads `visible_text`, which drops `w:delText` and
+    keeps `m:t` — so a paragraph on its way OUT of the document reads as
+    maths and nothing else, the exact signature of a stranded display.
+    It reported one, with a remedy that would have wrapped an equation
+    the author was removing (Aging_Well R78).
+
+    Fourteen mutants lived in the pass that resolves this: the guard
+    that looks for a deletion at all, the walk over the spans, and the
+    splice that takes each one out."""
+    from docxkit.equations import _accepted_side
+
+    para_xml = (
+        "<w:p>"
+        '<w:del w:id="1" w:author="R" w:date="2026-01-01T00:00:00Z">'
+        "<w:r><w:delText>The identity </w:delText></w:r></w:del>"
+        f"<m:oMath>{mr('x')}</m:oMath>"
+        '<w:del w:id="2" w:author="R" w:date="2026-01-01T00:00:00Z">'
+        "<w:r><w:delText> follows.</w:delText></w:r></w:del>"
+        "</w:p>")
+
+    got = _accepted_side(para_xml)
+
+    assert got == f"<w:p><m:oMath>{mr('x')}</m:oMath></w:p>"
+    assert "w:del" not in got
+
+
+def test_a_paragraph_with_NO_deletion_is_handed_back_as_it_stands():
+    """The early return, and the reason the guard is a regex rather than
+    an `in`: a `w:delText` inside a `w:del` is named by both, and a
+    paragraph carrying neither must not be walked at all."""
+    from docxkit.equations import _accepted_side
+
+    para_xml = f"<w:p><w:r><w:t>Plain.</w:t></w:r>{omath(mr('x'))}</w:p>"
+
+    assert _accepted_side(para_xml) == para_xml
+
+
+# --- the width table of `_space_text` (2026-09-18) --------------------
+#
+# `\qquad` is 2em, `\,` is a sixth of one, and what the spacing repair
+# DRAWS for a width is arithmetic over three characters: an em space per
+# whole unit, then an en or a thin space for the remainder. The tests
+# above assert that a gap exists, that a wider command gives a wider one
+# and that a negative one draws nothing — none of which pins the
+# arithmetic, and seventeen mutants lived in it.
+#
+# Held as a table, both directions: a width whose answer changes fails
+# its own row, and the module's three space characters are named here so
+# that swapping one for an ASCII space fails too.
+
+EM_SPACE, EN_SPACE, THIN_SPACE = " ", " ", " "
+
+
+@pytest.mark.parametrize("width,drawn", [
+    pytest.param("", "", id="nothing_at_all"),
+    pytest.param("junk", "", id="not_a_width"),
+    pytest.param("2", "", id="no_unit"),
+    pytest.param("1.2.3em", "", id="matches_the_pattern_but_is_no_number"),
+    pytest.param("0em", "", id="zero"),
+    pytest.param("-0.5em", "", id="a_negative_fraction"),
+    pytest.param("-2em", "", id="a_negative_whole"),
+    pytest.param("1em", EM_SPACE, id="one_em"),
+    pytest.param("2em", EM_SPACE * 2, id="two_em"),
+    pytest.param(" 2em ", EM_SPACE * 2, id="spaces_round_the_width"),
+    pytest.param("3em", EM_SPACE * 3, id="three_em"),
+    pytest.param("0.2em", THIN_SPACE, id="a_thin_remainder"),
+    pytest.param("0.39em", THIN_SPACE, id="just_under_the_en_cut"),
+    pytest.param("0.4em", EN_SPACE, id="exactly_the_en_cut"),
+    pytest.param("0.5em", EN_SPACE, id="an_en_remainder"),
+    pytest.param("1.2em", EM_SPACE + THIN_SPACE, id="whole_plus_thin"),
+    pytest.param("1.5em", EM_SPACE + EN_SPACE, id="whole_plus_en"),
+    pytest.param("2.5em", EM_SPACE * 2 + EN_SPACE, id="two_whole_plus_en"),
+])
+def test_what_a_spacing_WIDTH_draws(width, drawn):
+    """The cut is at 0.4 of an em: at or above it an en space, below it
+    and above zero a thin one, and nothing at all for a remainder of
+    zero. `1.2.3em` matches the width pattern and is not a number, which
+    is the one input that reaches the `except` — there is no other way
+    into it, since the pattern admits only digits and dots."""
+    from docxkit.equations import _space_text
+
+    assert _space_text(width) == drawn
+
+
+def test_the_three_SPACE_characters_are_the_ones_the_module_uses():
+    """The other direction of the table above: the widths are held
+    against these three, so a repair that drew an ASCII space — the very
+    character `edit.preserve_space` exists to rescue from Word — would
+    pass every row while changing what reaches the page."""
+    from docxkit import equations
+
+    assert (equations._EM_SPACE, equations._EN_SPACE,
+            equations._THIN_SPACE) == (EM_SPACE, EN_SPACE, THIN_SPACE)
+    assert " " not in EM_SPACE + EN_SPACE + THIN_SPACE
 
 
 # The other sixteen are equivalent by construction, each checked with
