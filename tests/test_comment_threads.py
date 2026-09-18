@@ -194,6 +194,27 @@ def _ext_part(*elements: str) -> bytes:
             + "</w15:commentsEx>").encode("utf-8")
 
 
+@pytest.mark.parametrize("spelling,resolved", [
+    ("1", True), ("true", True), ("on", True),
+    ("0", False), ("false", False), ("off", False)])
+def test_EVERY_ST_OnOff_spelling_of_the_done_flag_is_read(spelling, resolved):
+    """ST_OnOff has three spellings a side, and the reader holds three of
+    them in a set — a set no mutant can reach, so `on` sat in it untested
+    while `1` and `true` had a fixture each. A thread another producer
+    resolved with `on` reads as OPEN: a settled query back on the work
+    list, and `tasks --check` failing a round that is finished.
+
+    Written out rather than parametrised over the set itself, which would
+    lose its case with the member it is meant to hold."""
+    parts = make_parts()
+    parts["word/commentsExtended.xml"] = _ext_part(
+        f'<w15:commentEx w15:paraId="AAAA0001" w15:done="{spelling}"/>')
+
+    done = {t.comment.cid: t.done for t in threads(parts)}
+
+    assert done["1"] is resolved
+
+
 def test_a_done_flag_spelled_TRUE_is_read_as_done():
     """`w15:done` is ST_OnOff. Word writes 1 and 0; the schema also
     allows true/false and on/off, and a comment another producer

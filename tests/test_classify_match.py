@@ -47,6 +47,26 @@ def test_revision_text_wins_over_a_neighbour_in_the_same_paragraph():
     assert next(cm for sig, cm in RULES if sig in c.haystack).startswith("A7")
 
 
+def test_the_PARAGRAPH_is_read_before_the_window_that_CONTAINS_it():
+    """Dropping the middle scope does not lose the signature — it loses
+    the ORDER, which is the whole mechanism.
+
+    `_context` builds the window out of 3,000 characters of markup
+    ENDING at the revision, so the paragraph's own words are inside it.
+    A9's signature is in the paragraph, A7's is a sentence above, and the
+    table lists A7 first: read at window scope the revision takes the
+    neighbour's comment, which is the AFI r2 mislabelling this module
+    exists to stop. Every other fixture here gives the two scopes
+    disjoint text, where dropping the paragraph shows up as no match at
+    all rather than as the wrong one.
+    """
+    para = "the growth slowdown is now attributed"
+    c = ctx(text="0.42", para=para,
+            window=f"unused capacity translates into output. {para}")
+
+    assert point(match(RULES), c).startswith("A9")
+
+
 def test_falls_back_to_paragraph_then_window():
     by_para = point(match(RULES), ctx(text="0.42", para="the growth slowdown"))
     assert by_para.startswith("A9")

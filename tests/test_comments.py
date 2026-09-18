@@ -298,6 +298,31 @@ def test_reclassify_repairs_the_generic_comment_AFTER_an_empty_one():
     MD.parseString(com)
 
 
+def test_reclassify_reads_a_comment_whose_id_is_not_its_FIRST_attribute():
+    """XML fixes no attribute order, and this package's other readers of
+    the comment parts are already pinned that way — `remove` clears an
+    extension entry written either way round. The comment ELEMENT's own
+    reader is the one nothing asked: wanting `w:id` first, `reclassify`
+    sees no comment at all and reports a generic balloon as unrepairable
+    while it sits in the file.
+
+    Not a shape met in the wild — every one of the 1,052 `<w:comment>`
+    elements in 600 corpus packages on this machine writes `w:id` first —
+    so this pins the contract the `[^>]*` is there for rather than a
+    producer's habit.
+    """
+    parts = make_parts(para(ins("a")), comment_items=(comment(1, "seed"),))
+    annotate(parts, lambda ctx: None)              # comment 2 is generic
+    com = _com(parts)
+    head = re.search(r'<w:comment w:id="2"([^>]*)>', com)
+    assert head is not None, com
+    parts["word/comments.xml"] = com.replace(
+        head.group(0), f'<w:comment{head.group(1)} w:id="2">').encode("utf-8")
+
+    assert reclassify(parts, always("R8: repaired")) == (1, [])
+    assert "R8: repaired" in _com(parts)
+
+
 def test_a_new_comment_is_cloned_from_a_comment_with_TEXT_not_an_empty_one():
     """The scaffold is the first comment Word wrote. An EMPTY first one
     read as an open tag took the next comment with it, and the clone of

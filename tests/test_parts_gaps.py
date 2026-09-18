@@ -162,6 +162,84 @@ def test_remove_clears_extension_entries_written_in_ANOTHER_attribute_order(
         assert needle in parts[name].decode("utf-8"), f"{name} lost comment 2"
 
 
+def test_remove_reads_a_comment_paragraph_whose_paraId_is_not_FIRST():
+    """The thread key is the comment body paragraph's `w14:paraId`, and
+    the reader wants `<w:p …>` with anything before it. Word writes the
+    paraId first in 441,435 of 441,500 paragraphs in 600 corpus packages
+    on this machine — and in 65 it does not, after an `w:rsidR`. Wanting
+    it first, the comment loses its key: its three extension entries
+    stay behind for a comment that no longer exists."""
+    parts = _commented(1, 2)
+    com = parts["word/comments.xml"].decode("utf-8")
+    word = '<w:p w14:paraId="AAAA0001"'
+    assert word in com
+    parts["word/comments.xml"] = com.replace(
+        word, '<w:p w:rsidR="00713F42" w14:paraId="AAAA0001"').encode("utf-8")
+
+    assert remove(parts, ["1"]) == 1
+
+    for name, needle in (("word/commentsExtended.xml", "AAAA0001"),
+                         ("word/commentsIds.xml", "AAAA0001"),
+                         ("word/commentsExtensible.xml", "00000001")):
+        assert needle not in parts[name].decode("utf-8"), f"{name} kept it"
+
+
+def test_remove_reads_a_durableId_with_HEX_LETTERS_in_it():
+    """A durableId is eight hex digits, and letters are the ordinary
+    case: this module mints them from `0x6B000000`, and 1,013 of the
+    1,050 in 600 corpus packages here carry one. Read as decimal the id
+    is not found, so the comment's `commentsExtensible` entry survives
+    it — the one part keyed by durableId rather than by paraId, and the
+    only extension entry every fixture in this file could spell with
+    digits alone."""
+    parts = _commented(1, 2)
+    for name in ("word/commentsIds.xml", "word/commentsExtensible.xml"):
+        xml = parts[name].decode("utf-8")
+        assert "00000001" in xml
+        parts[name] = xml.replace("00000001", "6B000001").encode("utf-8")
+
+    assert remove(parts, ["1"]) == 1
+
+    ext = parts["word/commentsExtensible.xml"].decode("utf-8")
+    assert "6B000001" not in ext, "the extensible entry outlived its comment"
+    assert "00000002" in ext, "comment 2 lost its entry"
+
+
+def _id_second(xml: str, cid: int) -> str:
+    """Comment `cid`'s three anchors with `w:displacedByCustomXml` in
+    front of the id — the attribute `_anchor_re`'s docstring names, on
+    the side of the id nothing had a fixture for."""
+    out = xml
+    for tag in ("commentRangeStart", "commentRangeEnd", "commentReference"):
+        out = out.replace(
+            f'<w:{tag} w:id="{cid}"/>',
+            f'<w:{tag} w:displacedByCustomXml="next" w:id="{cid}"/>')
+    assert out.count("displacedByCustomXml") == 3, out
+    return out
+
+
+def test_remove_drops_anchors_whose_id_is_not_their_FIRST_attribute():
+    """`<w:… w:id="1" w:displacedByCustomXml="next"/>` is already
+    covered by the tail of the pattern; the same two attributes in the
+    other order were not, and XML fixes neither. Not found, the range
+    and the reference stay in the body pointing at a comment that is
+    gone, which is what Word calls unreadable content.
+
+    No corpus package here writes one that way — all 3,156 anchors in
+    600 of them put the id first — so this pins what the `[^>]*` in
+    front of `w:id` is for rather than a habit anyone has met.
+    """
+    parts = _commented(1, 2)
+    parts["word/document.xml"] = _id_second(
+        parts["word/document.xml"].decode("utf-8"), 1).encode("utf-8")
+
+    assert remove(parts, ["1"]) == 1
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert 'w:id="1"' not in doc, "an anchor survived in document.xml"
+    assert 'w:id="2"' in doc, "comment 2's anchors were destroyed"
+
+
 def _spaced(xml: str, cid: int) -> str:
     """Comment `cid`'s three anchors closed ` />`, as another producer
     writes them (30 of each in 4 of 2,954 corpus packages)."""
