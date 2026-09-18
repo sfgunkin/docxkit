@@ -462,6 +462,45 @@ exited 0. The lines are what a person reads, the code is what a script
 reads, and they disagreed — on the one tool whose whole subject is a
 claim that has quietly stopped being true.
 
+**The CHEAP half is the twelfth gate**, because the rule above — *run it
+after changing a module whose claims touch the lines you moved* — had no
+enforcement and was therefore not kept. `4ce85a7` added a conjunct to
+two claimed lines of `_cite_grammar.py` and left four claims behind;
+three of them argued *"the half is empty either way"*, which is the
+exact assumption that commit disproved by finding a tab and a no-break
+hyphen dropped from the page. That module's check exited 1 from then on,
+for everyone, and nobody ran it — because the full check is minutes per
+module and cannot sit in a chain.
+
+`verify_equivalents.py --anchors` asks only whether each `was` still
+names exactly one line of its module: no mutants, no pytest, the whole
+repository in **0.54 seconds**. Switching it on found four MORE expired
+claims the same afternoon, in `find.py` and `probe.py`, from fixes
+nobody had connected to a claim at all. Eight were sitting in that file
+and one person had noticed one. It cannot see a claim that has started
+being KILLED — that stays the full check's job, per module, in a round.
+
+**And one rule about writing a claim, which would have caught five of
+them at the moment they were written:**
+
+> If a claim's `why` names the input that would break it, the claim is a
+> test waiting to be written.
+
+Five `_compare_read` claims argued that every ordering respelling of
+`kind == "begin"` was equivalent, because ST_FldCharType defines three
+values that sort the way the comparisons need. But `FLDCHAR_RE` captures
+`(\w+)`, so a marker typed anything reaches the walk — `abc` opens a
+field that never closes, `cba` closes one early, `foo` is adopted as a
+separator. **The walk IGNORING an unknown value is what makes those
+mutants reachable, not what makes them safe.** Every one of those claims
+spelled the exclusion out in its own `why` — *"what the claim excludes
+is a fldCharType outside that enumeration"* — and was filed anyway,
+under a note in that same file saying a DOCUMENT argument is a guess
+until somebody builds the document it excludes. Third time in this
+campaign, which is why the narrow, checkable form above is worth more
+than "be careful with DOCUMENT arguments". (mut-compare-read, deleting
+its own five.)
+
 ### Many survivors on ONE line is a design question, not a missing test
 
 The usual survivor is a line whose behaviour no test happens to reach,
