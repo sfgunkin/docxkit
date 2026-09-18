@@ -302,6 +302,33 @@ def figure(module: str) -> str:
     return f"{counts.share:5.1f}%  ({len(counts.real)}/{counts.base}){mark}"
 
 
+def running() -> list[tuple[str, int]]:
+    """Which modules a sweep is grading RIGHT NOW, and under which pid.
+
+    `mutation_session._mark_running` writes `.mutation-<stem>.running`
+    beside the session and removes it on the way out. A killed session
+    leaves the file, so the pid is checked rather than the file trusted
+    — through `_alive`, which on Windows is a `tasklist` query and not
+    `os.kill(pid, 0)`, that call being a kill there.
+
+    Imported inside the function, the way `mutation_session` reaches
+    back here for `lines_of`: these tools are each other's.
+    """
+    from mutation_session import _alive  # noqa: PLC0415
+
+    by_stem = {session_stem(m): m for m in HARNESS}
+    out = []
+    for mark in sorted(ROOT.glob(".mutation-*.running")):
+        stem = mark.name[len(".mutation-"):-len(".running")]
+        try:
+            pid = int(mark.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+        if _alive(pid):
+            out.append((by_stem.get(stem, f"{stem} (not in the map)"), pid))
+    return out
+
+
 def main() -> int:
     utf8_stdout()
     ap = argparse.ArgumentParser(
@@ -311,7 +338,27 @@ def main() -> int:
                     help="print only the modules whose figure is void")
     ap.add_argument("--figures", action="store_true",
                     help="print each module's real-survival figure too")
+    ap.add_argument("--running", action="store_true",
+                    help="name the modules a sweep is grading right now, "
+                         "and exit 1 if any is — ask BEFORE a merge")
     args = ap.parse_args()
+
+    if args.running:
+        # Exit 1 while a stream is live, so the question chains:
+        #
+        #     python tools/stale_figures.py --running && git cherry-pick ...
+        #
+        # A merge that touches a module under a stream voids its figure
+        # however far it has got. `_table_core.py` lost 1,372 mutants to
+        # a cherry-pick twenty-five minutes before the run would have
+        # finished (2026-09-18), and the round that landed was itself
+        # fine — there was simply nothing to ask.
+        live = running()
+        for module, pid in live:
+            print(f"{module:24s} being swept now (pid {pid})")
+        if not live:
+            print("nothing is being swept")
+        return 1 if live else 0
 
     worst = 0
     for module, tests in sorted(HARNESS.items()):

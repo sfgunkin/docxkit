@@ -166,6 +166,30 @@ def _take_lock() -> None:
     return None
 
 
+def _mark_running(stem: str) -> None:
+    """Say, in the repository, which module is being swept right now.
+
+    The lock says a WORKTREE is busy and holds only a pid; it lives
+    beside whatever directory `--in` named, so nothing in the checkout
+    can find it, and nothing in the checkout could name the module even
+    if it did. What was missing is the other direction: *is this file
+    under a stream at this moment*, asked by somebody about to merge.
+
+    On 2026-09-18 a survivor round was cherry-picked onto master at
+    04:17, two of its commits touching `_table_core.py`, which had been
+    planned from master at 04:00 and went on grading until 04:42. The
+    figure — 1,372 mutants — was void the moment the merge landed, and
+    nothing anywhere could have been asked beforehand. `stale_figures.py
+    --running` is that question; this is what answers it.
+
+    A killed session leaves the marker behind, exactly as it leaves the
+    lock, so the reader checks the pid rather than trusting the file.
+    """
+    mark = ROOT / f".mutation-{stem}.running"
+    mark.write_text(str(os.getpid()), encoding="utf-8")
+    atexit.register(lambda: mark.unlink(missing_ok=True))
+
+
 def _run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
     proc: subprocess.CompletedProcess[str] = subprocess.run(
         cmd, text=True, capture_output=True, **kw)
@@ -666,6 +690,7 @@ def main() -> int:
         (ROOT / f".mutation-{stem}.coverage.json").unlink(missing_ok=True)
 
     _take_lock()
+    _mark_running(stem)
     # BEFORE the worktree is refreshed from the live tree: on a resume
     # the plan is already built, and a module that has changed since
     # makes every offset in it describe a different file.

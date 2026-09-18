@@ -544,3 +544,56 @@ def test_a_BACKSLASHED_test_path_is_the_SAME_file(tmp_path, monkeypatch):
                "tests" + chr(92) + "test_other.py"]
 
     assert sf.drifted("thing.py", windows) == ([], [])
+
+
+def test_a_LIVE_sweep_is_named_and_makes_the_check_exit_1(tmp_path,
+                                                          monkeypatch,
+                                                          capsys):
+    """The question asked before a merge, and the reason it chains.
+
+    A cherry-pick that touches a module under a stream voids its figure
+    however far the run has got: `_table_core.py` lost a 1,372-mutant
+    run to one, twenty-five minutes before it would have finished
+    (2026-09-18). The round that landed was fine. There was simply
+    nothing to ask, so `--running && git cherry-pick ...` has to answer
+    NONZERO while a stream is live.
+    """
+    import stale_figures  # pyright: ignore[reportMissingImports]
+    from stale_figures import main  # pyright: ignore[reportMissingImports]
+
+    (tmp_path / ".mutation-table_core.running").write_text(str(os.getpid()))
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running"])
+
+    code = main()
+
+    out = capsys.readouterr().out
+    assert "_table_core.py" in out, "it has to name the module, not the stem"
+    assert str(os.getpid()) in out
+    assert code == 1, "a live stream must stop the chain"
+
+
+def test_a_marker_whose_SESSION_IS_GONE_does_not_block_a_merge(tmp_path,
+                                                               monkeypatch,
+                                                               capsys):
+    """A killed sweep leaves its marker behind, exactly as it leaves its
+    lock — which is how an unattended run is stopped. Obeying the file
+    rather than the pid would refuse every merge for the rest of the day
+    over a process that no longer exists."""
+    import stale_figures  # pyright: ignore[reportMissingImports]
+    from stale_figures import main  # pyright: ignore[reportMissingImports]
+
+    # A pid that is certainly GONE, obtained by outliving one rather
+    # than by picking a number: 0 is the System Idle Process on Windows
+    # and `tasklist` reports it as running, which is how the first
+    # version of this test failed.
+    dead = subprocess.Popen([sys.executable, "-c", ""])
+    dead.wait()
+    (tmp_path / ".mutation-table_core.running").write_text(str(dead.pid))
+    monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running"])
+
+    code = main()
+
+    assert "nothing is being swept" in capsys.readouterr().out
+    assert code == 0
