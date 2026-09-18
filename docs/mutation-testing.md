@@ -2401,6 +2401,40 @@ written down first, measured by another hand — and the check earned its
 keep on the one thing the author could not have seen: not the verdict,
 which was right, but the sentence under it.
 
+**And the author then found the SAME mistake in its own next table,
+where nothing saved the conclusion.** The ten survivors at L877 were
+sorted six killable, three equivalent, one borderline — on the premise
+that `end <= le` always. Measured, the two sides are not symmetric:
+
+    math FIRST, wrap [0,12): text 'xySmith 2020', spans [(2,12)]
+        -> split_run raises; the guard is never reached
+    math LAST,  wrap [0,12): text 'Smith 2020xy', spans [(0,10)]
+        -> RETURNS. end=12, le=10, so end > le and the guard IS reached
+
+So three of the mutants called equivalent are killable: `<=`, `==` and
+`is` all fail to fire at `end > le`, where the real guard fires and
+drops the shell.
+
+**A claim on any of those would have verified SURVIVED for ever.** They
+do survive today's harness — that is what "killable but untested"
+means. The claim's reason would have been false from the moment it was
+written, and no instrument in this repository could have contradicted
+it: `verify_equivalents` applies the mutant and reports what happens,
+which is exactly what the claim predicted.
+
+That is the same rule from the other side, and it is the worse side. A
+reason that ROTS can at least be caught by the anchor gate when the line
+moves or by the full check when the mutant starts dying. **A reason that
+was never true is invisible to both, permanently.** The only thing that
+finds it is somebody building the input the reason says cannot exist —
+which is also the rule for writing the claim in the first place: *if a
+claim's `why` names the input that would break it, the claim is a test
+waiting to be written.*
+
+The prediction file kept the wrong table beside the correction rather
+than instead of it, which is the right instinct: deleting it would make
+the record read better than the work was.
+
 Which is also the case for re-reading an argued list. The figure does
 not move when a survivor is argued rather than killed, so a module
 whose remaining survivors are all argued reads as unchanged forever;
