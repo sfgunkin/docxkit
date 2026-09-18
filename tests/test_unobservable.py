@@ -191,6 +191,36 @@ def test_with_NO_coverage_file_the_tool_claims_nothing_about_it(world):
     assert not found.uncovered
 
 
+def test_a_mutant_already_argued_COSMETIC_is_counted_not_listed(world,
+                                                                monkeypatch):
+    """A cosmetic claim is settled and deliberately stays in the FIGURE
+    — it leaves the queue of tests to write and stays in the claim about
+    how much of the module is held. So it reaches these rows, and
+    unlabelled it reads as an unobservable candidate.
+
+    Found by reading my own two: both of `snapshot.py`'s fresh clusters
+    were quote widths I had argued cosmetic myself, hours earlier. The
+    count says so rather than the list.
+    """
+    # keyed as `claimed_equivalents` keys them: the line the mutation
+    # PRODUCED, stripped, which is what `became` renders
+    monkeypatch.setattr(
+        unobservable, "claimed_equivalents",
+        lambda src, kind="equivalent": (
+            {"if end > le and not after:": "a width",
+             "if end == le and not after:": "a width"}
+            if kind == "cosmetic" else {}))
+    _session(world, [
+        (5, 20, "A", "SURVIVED", "    if end > le and not after:"),
+        (5, 20, "B", "SURVIVED", "    if end == le and not after:"),
+    ])
+    dropped = unobservable.Dropped()
+
+    assert unobservable.clusters_in("thing.py", 2, dropped) == []
+    assert dropped.cosmetic == 2
+    assert "2 argued cosmetic" in dropped.show()
+
+
 def test_a_FRESH_small_cluster_outranks_a_STALE_large_one(world, capsys,
                                                           monkeypatch):
     """Staleness belongs in the SORT, not only in the label — found by

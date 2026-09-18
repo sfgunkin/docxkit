@@ -200,13 +200,15 @@ class Dropped:
     markers: int = 0
     excluded: int = 0
     claimed: int = 0
+    cosmetic: int = 0       # argued cosmetic: settled, and not a test
     mixed: int = 0          # the line also had a KILL, so it can act
 
     def show(self) -> str:
         return (f"discounted: {self.annotations} annotation, "
                 f"{self.markers} keyword-only, {self.excluded} no-cover, "
-                f"{self.claimed} already claimed; {self.mixed} line(s) had "
-                f"a kill as well and can act")
+                f"{self.claimed} already claimed, {self.cosmetic} argued "
+                f"cosmetic; {self.mixed} line(s) had a kill as well and "
+                f"can act")
 
 
 def clusters_in(module: str, least: int, dropped: Dropped, *,
@@ -230,6 +232,15 @@ def clusters_in(module: str, least: int, dropped: Dropped, *,
     covered = covered_lines(db)
     claims = claimed_equivalents(src)
     by_operator = claimed_by_operator(src)
+    # A COSMETIC claim is settled too, and deliberately stays in the
+    # figure — it leaves the LIST, which is a queue of tests to write,
+    # and stays in the RATE, which is a claim about how much of the
+    # module is held. So it reaches this tool's rows and, unlabelled,
+    # reads as an unobservable candidate: both of `snapshot.py`'s fresh
+    # clusters were quote widths I had argued cosmetic myself, hours
+    # earlier. Counted and named rather than dropped, because "already
+    # argued, and not worth a test" is a fourth answer of its own.
+    cosmetic = claimed_equivalents(src, kind="cosmetic")
 
     rows = sqlite3.connect(str(db)).execute(_QUERY).fetchall()
     ran = [r for r in rows if r[3] != "SKIPPED"]
@@ -256,6 +267,9 @@ def clusters_in(module: str, least: int, dropped: Dropped, *,
         mutant = became(diff)
         if (mutant in claims or operator in by_operator) and not keep_claimed:
             dropped.claimed += 1
+            continue
+        if mutant in cosmetic and not keep_claimed:
+            dropped.cosmetic += 1
             continue
         survivors[row, col].append((mutant, operator))
 
