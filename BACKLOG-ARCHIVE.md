@@ -14,6 +14,48 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — a sweep reported a session it had KILLED as one that refused~~ — FIXED 18.09, `da5e6ef`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 reading a sweep log, and it is the day's third instance
+of one shape: a tool stating a REASON it never established.
+
+`edit.py` was stopped by hand a minute into its sweep — the S5 fix was in
+flight and the module must not be measured under it. The log then read:
+
+    edit.py     recording which tests cover which line...
+    edit.py     verifying the unmutated harness (9 files)...
+    edit.py     REFUSED (exit 4294967295) — no measurement taken, and the
+                existing session is untouched. Read it with --report,
+                re-measure it whole, or pass --force.
+
+Nothing refused anything. The session was killed (`Stop-Process` exits −1
+on Windows, which surfaces as 4294967295), and `measure_all` dressed a
+kill as a judgment — with three lines of advice for a decision no code had
+taken. A reader coming back to that log next week reads a tool that
+considered `edit.py` and declined it, and goes looking for the reason,
+which does not exist.
+
+**The tell was available and unread.** The session's OWN exits are 1 (a
+message, always printed), 2 (the `--sample` guard) and 3 (STUCK) — every
+one of them says why on the way out. `measure_all` treated any nonzero
+code as a refusal, so the one case where no reason was printed is exactly
+the case it had no business explaining.
+
+Fixed by keying on the codes the session actually takes. Anything else now
+reads:
+
+    ENDED (exit N) WITHOUT REFUSING — the session takes no such exit, so
+    it was killed or it crashed. Nothing was measured and the existing
+    session is untouched; the lines above are all it said.
+
+Related, and why this is worth the entry rather than a silent patch: the
+same file was fixed twice already today for adjacent versions of it —
+`dad12ee` (a sweep that graded a chunk and then refused threw away the
+reason) and the diagnosis block above it (no chunk graded). Both fixes
+made the tool say MORE. Neither asked whether what it already said was
+true.
 ### ~~S2 — the glyph gate never reads an equation, and no test holds the tag that lets it~~ — FIXED 18.09, `a6e4524`
 
 <!-- status: fixed -->
