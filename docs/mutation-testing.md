@@ -904,6 +904,24 @@ therefore reads: **a figure is void when the source or the harness has
 moved SINCE the run — or DURING it.** `stale_figures.py` answers the
 first; the session itself now answers the second.
 
+**And a MERGE moves the tree, which is the easy way to do this by
+accident.** The `tracked.py` case above was somebody editing the file a
+sweep was reading, and reads like carelessness nobody would repeat. The
+ordinary way is duller: `_table_core.py` was planned at 04:00 from
+master, a survivor round was cherry-picked onto master at 04:17 — two of
+its commits touching that module — and the sweep graded on until 04:42
+against its 04:00 snapshot (2026-09-18). Nobody edited anything. A
+finished, gated, reviewed round landed on master, which is the thing
+this campaign does all day, and it voided a 1,372-mutant figure that had
+another twenty-five minutes to run.
+
+So the integration loop and the sweep queue are in direct conflict, and
+neither can simply wait for the other. What holds is knowing which
+modules are under a stream before a cherry-pick — `SWEEP_QUEUE.md` names
+them — and reaching for `render_survivors` afterwards rather than
+re-running, because the WORK survives a merge even when the FIGURE does
+not.
+
 A void figure does not have to be re-swept to be useful.
 `python tools/replay_survivors.py src/docxkit/<module>.py` asks its
 survivor list again, one mutation at a time through `kill_check`, and
