@@ -2440,6 +2440,77 @@ def test_withdraw_does_not_take_a_redline_named_after_a_RESCUE(project):
     assert quoting.is_file(), "the session's own copy is not this to touch"
 
 
+#: A redline `withdraw` will read as the last one promote wrote. The
+#: bytes are the fixture's own: nothing on this path opens a package, it
+#: hashes files and reads stamps, which is what lets these two tests pin
+#: an ORDER between two digests instead of hoping for one.
+_REDLINE = "_redline_20260918-120000-000000.docx"
+#: Chosen so that `sha256` puts them either side of the proposal's: both
+#: comparisons below are identity tests, and an ordering mutant of one
+#: passes half the time on arbitrary bytes. Each test asserts the order
+#: it needs, so a fixture that drifts says so rather than going quiet.
+_PROPOSAL = b"the proposal the author then saved over"
+_OTHER_REDLINE = b"a redline copy 1"
+_REBUILT_BATCH = b"a batch rebuilt 0"
+
+
+def _promoted_by_hand(project, redline_bytes: bytes, live_bytes: bytes):
+    """A paper as `promote` leaves one: a stamped redline in the folder,
+    the manuscript stamped with the baseline it was built on."""
+    from docxkit import guard
+
+    project.redline_dir.mkdir(parents=True, exist_ok=True)
+    redline = project.redline_dir / f"{project.working.stem}{_REDLINE}"
+    redline.write_bytes(redline_bytes)
+    project.working.write_bytes(live_bytes)
+    guard.stamp(project.working, base_sha256=guard.sha256(project.prev))
+    return redline
+
+
+def test_withdraw_refuses_a_manuscript_SAVED_SINCE(project):
+    """The question is "is this still the bytes promote put there", and
+    the answer is identity — the digests are equal or they are not.
+
+    An ordering in its place agrees half the time by accident, so the
+    fixture pins the half where it does not: the redline's digest sorts
+    BELOW the manuscript's, where `>` reads as "unchanged" and withdraws
+    a proposal the author has already opened and saved.
+    """
+    from docxkit import guard
+
+    redline = _promoted_by_hand(project, _OTHER_REDLINE, _PROPOSAL)
+
+    assert guard.sha256(redline) < guard.sha256(project.working), \
+        "the fixture no longer sorts the way the case needs"
+    with pytest.raises(ProtocolError, match="no longer the batch"):
+        revision.withdraw(project, why="the author saved it first")
+
+
+def test_withdraw_KEEPS_a_batch_that_is_not_the_proposal_it_withdrew(project):
+    """`build/batch.docx` goes only when it IS the withdrawn proposal:
+    staged, `verdict` would read it as this round's batch and log the
+    author's next save as that batch rejected in full. A batch rebuilt
+    since is a different file and stays where it is.
+
+    Identity again, and the fixture again pins the ordering that tells an
+    identity test from a `<=`: the rebuilt batch's digest sorts below the
+    proposal's, so a `<=` deletes a file nobody asked it to.
+    """
+    from docxkit import guard
+
+    _promoted_by_hand(project, _PROPOSAL, _PROPOSAL)
+    project.batch.parent.mkdir(parents=True, exist_ok=True)
+    project.batch.write_bytes(_REBUILT_BATCH)
+
+    assert guard.sha256(project.batch) < guard.sha256(project.working), \
+        "the fixture no longer sorts the way the case needs"
+    report = revision.withdraw(project, why="rebuilt before the author saw it")
+
+    assert report.removed_batch is False
+    assert project.batch.read_bytes() == _REBUILT_BATCH, \
+        "a batch rebuilt since is not this to delete"
+
+
 # ----------------------------------------------------------- validate
 
 class _FakeDoc:
