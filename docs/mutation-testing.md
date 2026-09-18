@@ -2506,10 +2506,35 @@ instances were not one shape, which their author did not know.
   since landed. A fresh 2× is a better candidate than a stale 11×,
   because the stale one may already be dead.
 
-And the number it produces wants stating as its author stated it: **116
-CANDIDATES, not 116 unobservable lines.** The first cluster that turns
-out to be merely under-tested is the one that gives the false-positive
-rate, and until somebody reads one, three of three is the whole sample.
+**And then somebody read four, and 116 became three species.** The top
+four clusters were not what the tool is named for:
+
+    equations.py:1089   11 mutants turning `para_xml[:lo] + para_xml[hi:]`
+                        into `-`, `*`, `/` — between two STRINGS
+    refstyle.py:998-9   7, 6 and 6 more of the same shape
+
+`str - str` raises the moment the line executes. Eleven survivors there
+is not subtlety, it is **a line nothing ran** — confirmed from the
+session's own coverage file, where 1089 is absent while all three known
+unobservable clusters are present.
+
+One signature, three species, and they want opposite work:
+
+    NOT COVERED    a test that reaches the line, or a deletion.
+                   NEVER a reading of the callee.
+    in a MESSAGE   untested wording — the cosmetic answer.
+    the rest       read the callee.
+
+Across 66 sessions the 116 divide **72 / 27 / 17**. So the question the
+tool was built to answer — *how much residual survival is unobservable
+rather than untested* — was never answered by 116: at most 72 are even
+candidates, and that is still an upper bound until somebody reads them.
+
+**The first version would have shipped a ranked list whose top five
+entries pointed the reader at the wrong question.** What caught it was
+reading four candidates instead of trusting the ranking — the same habit
+that caught two wrong predictions the same afternoon, and the same one
+whose absence produced them.
 
 Which is also the case for re-reading an argued list. The figure does
 not move when a survivor is argued rather than killed, so a module
