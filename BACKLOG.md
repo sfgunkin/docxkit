@@ -262,50 +262,6 @@ loudest; the second is what a human does. A round that fixes this must also
 say what `tables.update` does with a cell it cannot read, because refusing
 mid-update is its own hazard.
 
-### S2 — link_all mints a bookmark for an institutional author and writes no hyperlink
-
-<!-- status: open -->
-
-Found 2026-09-18 beside the citations test-fixture work, and filed because
-it is currently NEITHER a defect nor a documented limit — which is the worst
-of the three states it could be in.
-
-An entry whose author is an ORGANISATION — long, and carrying a parenthesis
-of its own — gets a bookmark minted and **no hyperlink at all**, so the
-mention stays plain text on the page:
-
-    bookmarks   ['StateCommitteeoftheRepublicofUzbe2022']
-    anchors     []
-    hyperlinks  0
-
-The same fixture with an ordinary surname gets the whole pair: an entry
-bookmark, a `<key>txt` marker, and a hyperlink each way.
-
-So `link_all` does half the work and reports no problem. The bookmark is
-there, the reference list looks wired, and the mention a reader would click
-is not a link. Nothing in the report says which of the two happened.
-
-**Repro:** `scratchpad\agents\audit\link_all_institutional_author.py` — the
-two cases side by side, read-only, no Word.
-
-**What is not yet known**, and what would settle it: whether the matcher is
-defeated by the NESTED PARENTHESES or by the LENGTH. Those are different
-fixes and the repro does not distinguish them; a third case with a long
-organisational name and no parenthesis, and a fourth with a short one that
-has a parenthesis, would.
-
-**Either answer is acceptable and the current state is not.** If `link_all`
-cannot wire an institutional author, that is a limit worth saying out loud
-in its docstring, because a Bank or a State Committee is an ordinary author
-in this corpus and somebody will rely on the linking. If it is meant to and
-does not, it is an S2 — wrong output, no gate sees it, and the failure is
-invisible because the half that works is the half that leaves evidence.
-
-Not investigated further in the round that found it, because whether that
-author OUGHT to link is a question about `citations` rather than about the
-test that turned it up — and the round declined to freeze the present
-behaviour into a test either way, which was the right call.
-
 ### S3 — the lint refusal may be FALSE for three classes, and the check needs Word
 
 <!-- status: open -->

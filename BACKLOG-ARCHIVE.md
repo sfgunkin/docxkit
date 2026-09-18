@@ -14,6 +14,70 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — link_all mints a bookmark for an institutional author and writes no hyperlink~~ — FIXED 18.09, `cb4cc87`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 beside the citations test-fixture work, and filed because
+it was NEITHER a defect nor a documented limit — the worst of the three
+states it could be in.
+
+An entry whose author is an ORGANISATION — long, and carrying a parenthesis
+of its own — got a bookmark minted and **no hyperlink at all**, so the
+mention stayed plain text on the page:
+
+    bookmarks   ['StateCommitteeoftheRepublicofUzbe2022']
+    anchors     []
+    hyperlinks  0
+
+The same fixture with an ordinary surname got the whole pair: an entry
+bookmark, a `<key>txt` marker, and a hyperlink each way. So `link_all` did
+half the work and reported no problem.
+
+**What was not known:** whether the matcher was defeated by the NESTED
+PARENTHESES or by the LENGTH — different fixes, and the repro did not
+distinguish them.
+
+**Settled by four fixtures, one variable at a time** (18.09,
+`scratchpad\agents\linkall\four_cases.py`):
+
+    long org (94 chars), no parenthesis      2 hyperlinks
+    long org (103 chars), with "(UNICEF)"    0
+    short org (24 chars), with "(UNICEF)"    0
+    short org (15 chars), no parenthesis     2 hyperlinks
+
+The PARENTHESIS, and length does not enter it. **And it was never about
+organisations.** Varying the mention against a fixed institutional entry
+(`mention_forms.py`) linked five forms out of six — the acronym alone, a
+word run of the name, both narrative forms, the full name with the
+parenthesis dropped — which is `_entry_keys`' documented position on
+institutional authors, working. The one form that failed was a
+PARENTHETICAL mention holding a parenthesis of its own, and ordinary
+surnames fail it too:
+
+    (Ravallion 2011; see also Deaton (2013))   -> Ravallion lost
+    (Nussbaum 2000; Sen (2009))                -> Nussbaum lost
+
+`_cite_grammar._PAREN_RE` was `\(([^()]*)\)` — a group with nothing nested
+in it — so the OUTER group of a nested pair was never scanned for citation
+segments, and the narrative pattern (which reads the whole line) picked up
+only the inner work. The same blindness is why no gate saw it: `citations`
+audits UNLINKED mentions on this grammar, so a mention it cannot read is
+not a mention it can miss. The answer was the second of the two the entry
+offered: meant to, and did not.
+
+**The fix** is `_GROUP_RE`, a group nesting one level, plus `_scannable`,
+which walks the group AND the groups inside it. Both levels, because the
+hazard of widening the scan is symmetrical: "(see (Smith 2020))" is a
+citation only the INNER group closes, and a one-line widening traded one
+silent miss for another (measured before it was written). One level of
+nesting, because a nested group is an aside or an acronym, never another
+citation list.
+
+Three tests, each verified RED against the break it is about with
+`tools/can_it_fail.py`: the two forms above at the grammar, and the
+backlog's own institutional fixture end to end through `link_all`.
+
 ### ~~S3 — can_it_fail broke the wrong TWIN and reported CANNOT FAIL about a function nobody had broken~~ — FIXED 18.09, `2c831cd`
 
 <!-- status: fixed -->
