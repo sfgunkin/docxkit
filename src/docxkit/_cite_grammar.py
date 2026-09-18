@@ -872,6 +872,23 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
     # of a wrap whole, so dropping the half on sight deleted a tab, a
     # no-break hyphen or a line break from the page — and `visible_text`
     # renders none of them, so every text assertion here still passed.
+    # **The two are not mirrors, although they read as a pair.**
+    # `split_run` puts a child standing AT the cut on the left, so the
+    # left half can be a shell — `<w:r></w:r>`, or one carrying the
+    # run's `w:rPr` — and that guard does real work. The RIGHT half of
+    # a cut at or past a run's own end is `''` outright, measured over
+    # every shape named above (plain, styled, tab-after, hyphen-after,
+    # break-after), so the second guard assigns "" to something already
+    # empty and cannot currently act. Ten mutants sat on it undisturbed
+    # for exactly that reason, and no fixture can kill one (2026-09-18).
+    #
+    # It stays: `split_run` HAS returned a shell on the right, which is
+    # the defect the paragraph above describes, and this is the
+    # belt-and-braces against its return. What would notice a change is
+    # `test_no_wrap_leaves_behind_a_run_that_holds_NOTHING`, which asks
+    # the property through `run_holds_content` rather than looking for a
+    # literal `<w:r></w:r>` — a shell carrying `xml:space` slips past
+    # that spelling.
     if at <= fs and not run_holds_content(before):
         before = ""
     if end >= le and not run_holds_content(after):
