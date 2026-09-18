@@ -46,6 +46,66 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — FLDCHAR_RE matches a marker with no closing tag: one walk returns garbage, the other is right by luck
+
+<!-- status: open -->
+
+Found 2026-09-18 by mut-xml-fields and confirmed independently in a
+second module by mut-compare-read — and it is filed against the CARRIER
+rather than against either reader, because fixing one walk and not the
+other is precisely the drift being fixed.
+
+**`FLDCHAR_RE` does not require the closing `>`.** So a truncated
+marker — `<w:fldChar w:fldCharType="separate"` with the tag never closed
+— matches as a real field character, and `m.end()` lands just inside the
+broken tag instead of past the marker.
+
+Both readers of that pattern are wrong about it, in opposite ways, and
+the difference is the interesting part:
+
+* **`_xml.fields`** hands its caller a slice that starts mid-tag —
+  garbage, and the caller cannot tell.
+* **`_compare_read._field_marks`** masks the page number CORRECTLY, and
+  not by care: the first `<w:t>` after that offset happens to be the
+  field's result, and masking only rewrites `w:t` text, so a slice
+  starting mid-tag is put back unchanged. **Tolerant by luck, not by
+  design** — which is worse than the first case, because nothing will
+  ever reveal it.
+
+**Fix the pattern, not the walks.** `FLDCHAR_RE` has exactly two users
+in `src` — `_compare_read.py:642` and `_xml.py:864` — and everything
+else naming it is the definition, the `__all__` entry and a docstring.
+Measured, not assumed.
+
+The pattern change was verified against every marker form this package
+has met: Word's own, pandoc's spaced self-close, `w:fldLock`, attributes
+written before the type, `w:dirty`, and the open-tag form carrying a
+`w:fldData` child — while rejecting the truncated one. `[^>]*` cannot
+cross a `>`, so nothing over-matches, and `m.end()` moves from "after
+the attribute's quote" to "past the marker" in every case.
+
+**One caveat to carry into the fix**: the open-tag-with-`fldData` form
+is the only one where `m.end()` is not the end of the marker ELEMENT —
+the match ends at the opening tag's `>`, so what follows is the binary
+blob. Harmless for both walks, since `fldData` rides on a `begin` and
+results start at the `separate`, but better named now than rediscovered.
+
+**Why a non-parsing part can reach these walks at all**, since the first
+answer given was wrong and the correction is the useful part:
+`package.malformed_parts` has exactly one caller, `package.write`. It is
+a WRITE gate. Nothing on the read path goes through it — `read_parts`
+unzips to bytes, `load_parts` decodes them, and the comparison is regex
+over strings by design with no lxml parse in between. So a part that
+never parsed can reach the walk when it arrives from a file; what cannot
+happen is this package writing one.
+
+That correction is also the general rule this entry stands on: **naming
+the upstream that refuses an input is only worth as much as checking the
+upstream is on the path.**
+
+**Both walks in ONE commit**, by whoever takes it. One walk each is the
+drift.
+
 ### S3 — three readers of field_spans want the MARKERS and get the runs: a bookmark over the prose, and two false refusals
 
 <!-- status: open -->
