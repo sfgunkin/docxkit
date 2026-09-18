@@ -177,6 +177,12 @@ def covered_lines(db: Path) -> set[int] | None:
         return {int(line) for line in json.load(fh)}
 
 
+#: How far a session's word can be trusted, for the sort. Anything the
+#: staleness check does not call fresh or stale — "never measured", a
+#: module that moved — ranks last: its line numbers are its own
+#: snapshot's and the cluster may name a line that no longer exists.
+_AGE = {"fresh": 0, "stale": 1}
+
 #: What a session says about one row, once the discounts are applied.
 _QUERY = """
     SELECT s.start_pos_row, s.start_pos_col, s.operator_name,
@@ -289,13 +295,20 @@ def report(modules: list[str], least: int, keep_claimed: bool = False) -> int:
           "and a line\nnothing tests look the same from here. What tells "
           "them apart is reading the\nCALLEE — the value the line depends "
           "on may be fixed before the input arrives.\n")
-    # Three species, and only the first is what this tool is named for.
-    # A cluster on a line nothing RUNS wants a test or a deletion; one
-    # inside a message wants somebody to decide whether the wording is
-    # worth asserting; the rest want the callee read. Sorted so the
-    # third comes first — on the first whole run the other two took the
-    # top of the ranking and buried it.
+    # Read-the-callee clusters first, then messages, then the lines
+    # nothing runs: three species, and only the first is what this tool
+    # is named for. Within each, FRESH before stale before void, and
+    # only then by size.
+    #
+    # The staleness belongs in the SORT and not only in the label, which
+    # the first run by a second reader found: the two 11x clusters at
+    # the top were `equations.py`'s, from a stale session, and both had
+    # been killed hours earlier by another round. A reader sorting by
+    # count met a settled cluster first, twice. A FRESH 2x is a better
+    # candidate than a stale 11x — the stale one may already be dead,
+    # and the fresh one cannot be.
     for cluster in sorted(found, key=lambda c: (c.uncovered, c.in_message,
+                                                _AGE.get(c.staleness, 2),
                                                 -c.survived, c.module,
                                                 c.line)):
         print(cluster.show())

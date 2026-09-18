@@ -191,6 +191,36 @@ def test_with_NO_coverage_file_the_tool_claims_nothing_about_it(world):
     assert not found.uncovered
 
 
+def test_a_FRESH_small_cluster_outranks_a_STALE_large_one(world, capsys,
+                                                          monkeypatch):
+    """Staleness belongs in the SORT, not only in the label — found by
+    the first reader other than me to run this. The two biggest clusters
+    in the package came from a stale session and had been killed hours
+    earlier by another round; sorted by count, a settled cluster was the
+    first thing anybody met, twice.
+
+    A fresh 2x is the better candidate: the stale one may already be
+    dead, and the fresh one cannot be.
+    """
+    _session(world, [
+        (5, 20, "A", "SURVIVED", "    if end > le and not after:"),
+        (5, 20, "B", "SURVIVED", "    if end == le and not after:"),
+    ], module="fresh.py")
+    _session(world, [
+        (5, 20, f"S{n}", "SURVIVED", f"    if end > le and not after: # {n}")
+        for n in range(6)
+    ], module="stale.py")
+    ages = {"fresh.py": "fresh", "stale.py": "stale"}
+    monkeypatch.setattr(unobservable, "state",
+                        lambda module, *a, **k: (ages[module], []))
+
+    unobservable.report(["fresh.py", "stale.py"], 2)
+
+    said = capsys.readouterr().out
+    assert said.index("fresh.py") < said.index("stale.py"), said
+    assert "6x" in said, "the stale one is still listed, and still counted"
+
+
 def test_the_report_says_a_cluster_is_a_CANDIDATE(world, capsys):
     """The sentence belongs where a hurried reader meets it, which is
     the report rather than the docstring."""
