@@ -999,6 +999,18 @@ and the claims rest on the SAME pre-fix source. Two readings of a line
 that no longer exists will always agree, and neither is evidence about
 today. A void figure cannot corroborate a claim the same commit voided.
 
+**The two halves cost very differently to find, and the cheap one will
+otherwise be mistaken for the whole.** `--anchors` catches an
+UNANCHORED claim in half a second, over the whole repository, in the
+chain — which is why it is a gate. It cannot see a claim a change made
+FALSE: that one's line still exists, it reads exactly like a good claim,
+and only `verify_equivalents` re-running the mutant says otherwise. Of
+the six above, the four expired ones failed cheaply and automatically;
+the two false ones failed only because somebody ran the full check.
+
+So after a change that touches a claimed module, the gate is not the
+answer — it is the half of the answer that is free.
+
 **A claim needed a source edit to anchor: also void, and the edit looks
 harmless.** `verify_equivalents.anchored` insists a claim's `was` be
 exactly one line of the module, so a line the module writes TWICE cannot
