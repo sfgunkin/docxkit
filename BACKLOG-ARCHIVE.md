@@ -277,8 +277,22 @@ them dead code:
   Measured both ways (`scratchpad\agents\losses\probe_fold.py`). Harmless,
   but the module's comment says every entry is there because a real
   document produced it, and these two are answered by the step above them.
-  Somebody removing the U+2010 fold would silently take U+2011's cover with
-  it.
+
+  **Kept, and the first reason given here for keeping them was wrong.**
+  It read: *"somebody removing the U+2010 fold would silently take
+  U+2011's cover with it"* — true in effect and false in mechanism, and
+  the mechanism is what a reader would act on. The U+2011 entry provides
+  no cover now and would provide none then: NFKC has already turned
+  every U+2011 into U+2010 before `translate` sees the text, so dropping
+  the U+2010 entry breaks U+2011 documents whether or not U+2011's own
+  key is present. The two lines are DOCUMENTATION, not defence.
+
+  Which is exactly what makes them dangerous left bare: the next person
+  to read the table sees a key for U+2011 and concludes the case is
+  handled by it. So they stay, and they want one line above them saying
+  NFKC gets there first — to be written by whatever next touches that
+  file rather than as a commit of its own. (mut-repack, correcting this
+  entry.)
 * `_names`' `loss.key` and `f"{loss.kind}:{loss.what}"` are the same string,
   so each covers the other and neither can be pinned alone — a redundancy in
   the tuple rather than a hole in the tests.

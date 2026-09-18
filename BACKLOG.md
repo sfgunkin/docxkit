@@ -46,6 +46,70 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S3 — three readers of field_spans want the MARKERS and get the runs: a bookmark over the prose, and two false refusals
+
+<!-- status: open -->
+
+Found 2026-09-18 by mut-xml-fields, auditing all seven callers of
+`_xml.field_spans` after the S1 fix — and the audit is the finding, not
+the two defects in it. `field_spans` returns RUN boundaries, because a
+field's markers live inside runs; five callers need exactly that and two
+do not, and the two are not the same kind of wrong.
+
+**The seven, by what they need.** Written out because the next person to
+change `field_spans`' bounds will need this table and it cost a round to
+build:
+
+| caller | needs | verdict |
+|---|---|---|
+| `_cite_repair.remove_outer_field` | markers | FIXED `c3db190` |
+| `_cite_repair.wrap_link_in_bookmark` | markers | **D2 below** |
+| `_cite_repair.respan_link` | markers | **D3 below** |
+| `_cite_repair._delete_char` | runs | safe, refuses |
+| `body.prose_props` | runs | safe, reads only |
+| `edit._label_spans_in` | runs | safe, but see below |
+| `edit.insert_in_para` | runs | safe, refuses |
+
+Run boundaries are RIGHT for the last four and required for two of them:
+`set_run_text` on a run holding a `fldChar` would drop the marker, and
+`prose_props` masks spans before matching `RUN_RE` over the mask, so
+masking only the markers would leave half-runs for that pattern to
+match.
+
+**D2 — `wrap_link_in_bookmark` puts the bookmark round the prose too.**
+It inserts around the span, so on a field whose begin run also holds
+prose the `<key>txt` bookmark wraps the whole sentence instead of the
+link. Nothing is lost and nothing warns.
+
+This one **cannot be fixed by moving the bounds**, which is why it is
+filed rather than patched beside the S1: a `<w:bookmarkStart>` inside a
+`<w:r>` is invalid WordprocessingML, so the begin run has to be SPLIT
+first. That is a different operation from cutting at the markers, and it
+belongs with whatever next works on run splitting.
+
+**D3 — `respan_link` refuses a span it should be able to repair.** It
+rebuilds the paragraph from the span, so shared prose would be dropped;
+three guards catch that and it refuses (`wrap_visible_span`'s range
+check first, the visible-text post-condition behind it). Safe, and a
+FALSE refusal: the repair it declines is one it could make if it cut at
+the markers.
+
+**And the same through-line reaches `edit.py`.** `_label_spans_in` is
+right to ask about runs, but the label it derives then covers the prose
+sharing the marker runs — so `replace_in_para` and
+`replace_keeping_links` refuse to edit that prose, with *"the match
+starts in the result of a field"* and *"the link label straddles"*. No
+corruption, another false refusal, and the same cause as the two above.
+
+**So the shape to fix is one shape, three times**: a reader that wants
+the field and gets the runs the field lives in. A pass that gives
+`_xml.fields` a marker-position reading, and moves these three onto it,
+closes all three at once — and `remove_outer_field` already shows what
+that reading looks like.
+
+Repro for the audit: `scratchpad\agents\xml_fields\audit_field_spans_callers.py`
+— all seven callers against one shared-run fixture, read-only, no Word.
+
 ### S2 — batch._LABEL misses a label whose run carries a second property, 35% of the corpus
 
 <!-- status: open -->
