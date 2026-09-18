@@ -2885,6 +2885,24 @@ That assessment is its author's, arrived at by pointing the tool at
 answers already in hand and reporting what it missed — which is the only
 way a tool's limits get stated before somebody relies on them.
 
+**And the three want asking in an ORDER**, because they cost wildly
+different amounts:
+
+1. **Coverage first.** It answers the cheap third in seconds and costs
+   nothing to ask. Never reason about whether a line runs; look.
+2. **Reading second**, because *computed-and-discarded has no instrument
+   at all.* `_snap` ran on every `regrid` and its answer went in the
+   bin; the only reason anybody knows is that **83 survivors in one
+   function were too many to be a coincidence**.
+3. **`can_it_fail` third**, on suspicion rather than on a sweep —
+   asserted-from-the-fixture is invisible until somebody doubts a
+   specific test.
+
+The middle one is the one with no tooling, **and it probably cannot have
+any: it needs a reader who finds a number implausible.** That is worth
+saying plainly, because the instinct after a day like this one is to
+build a third tool, and the gap is not tool-shaped.
+
 ### A test that reads its own FIXTURE back cannot fail
 
 `_table_layout.py` read 11.2 % (405/3614) and **83 of those survivors
