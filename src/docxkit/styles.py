@@ -344,15 +344,6 @@ class Cascade:
             sid = self._based.get(sid)
         return None
 
-    def _chain_el(self, sid: str | None, tag: str) -> str | None:
-        seen: set[str] = set()
-        while sid and sid in self._own and sid not in seen:
-            seen.add(sid)
-            if (found := _element(self._own[sid], tag)) is not None:
-                return found
-            sid = self._based.get(sid)
-        return None
-
     def _para_sources(self, ppr: str | None,
                       pstyle: str | None) -> Iterator[str]:
         """The property blobs a paragraph resolves through, nearest first.
