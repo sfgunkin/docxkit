@@ -471,6 +471,35 @@ def test_the_two_lists_print_TEN_and_then_a_count(field, head):
     assert "    ... and 11 more" in rendered(21)
 
 
+def test_the_HEADER_line_carries_all_four_of_its_numbers(monkeypatch):
+    """The one line every build prints, held WHOLE.
+
+    The data census of 2026-09-18 took each of its four numbers out in
+    turn and only the revision count was pinned: the comment total, the
+    unclassified count and the elapsed seconds could each be dropped
+    from the f-string and nothing here noticed. A report cannot fail by
+    saying less — it just says less — and these three are what a reader
+    decides on: how many comments came through, how many of them nobody
+    could classify, and whether the build took twenty seconds or twenty
+    minutes.
+
+    Asserted as the whole line rather than by substring, so a number
+    ADDED without a case fails here too, which is the half a
+    parametrisation over the fields cannot give.
+    """
+    ticks = itertools.chain([1.0], itertools.repeat(8.5))
+    from docxkit import _tracked_report
+    monkeypatch.setattr(_tracked_report, "time", type("T", (), {
+        "perf_counter": staticmethod(lambda: next(ticks))}))
+    report = tracked.BuildReport()          # 1.0
+    report.revisions = 12
+    report.comments_total = 5
+    report.unclassified = 2
+
+    assert report.format() == (
+        "revisions 12, comments 5 (2 unclassified), 8s total")
+
+
 def test_the_math_KEPT_line_appears_only_when_something_was_kept():
     """A revision that overlaps an equation without being of it is left
     tracked on purpose, and saying so is how a reader knows the number
