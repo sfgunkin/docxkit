@@ -480,6 +480,43 @@ nobody had connected to a claim at all. Eight were sitting in that file
 and one person had noticed one. It cannot see a claim that has started
 being KILLED — that stays the full check's job, per module, in a round.
 
+**And the half it cannot see is the dangerous half.** A deleted line now
+announces itself in half a second. A line that LIVES THROUGH A REWRITE
+while its premise dies announces nothing at all:
+
+> When a commit rewrites a function, the claims whose anchors SURVIVE
+> are the ones to check.
+
+`6dc5263` replaced `body_elements`' hand-rolled `while (at :=
+xml.find("<w:tbl>", pos)) != -1:` walk with `element_spans`. Two claims
+keyed on that line died loudly and correctly — the gate above names them
+in 0.54 seconds. A third claim on the same function, `out.sort(key=lambda
+el: el[1])`, came through the rewrite word for word, and its argument is
+that the spans are pairwise DISJOINT — which rested on the OLD walk
+skipping a nested table with `pos = end`. The new docstring says a nested
+table "rides along inside its outer one", which reads like overlap, and
+overlap would kill the argument outright.
+
+Measured rather than assumed: `element_spans` returns ONE span for a
+nested pair, the outer, so they are still disjoint and the claim still
+holds. **It survived by luck of what the rewrite happened to preserve**,
+not because anyone checked. And the four `_cite_grammar` claims above
+would have been invisible to the gate too, had `4ce85a7` rewritten the
+body around those lines instead of adding a conjunct to them.
+
+So the gate is a floor, not a ceiling: after a REWRITE, run the full
+check for that module rather than trusting the anchors. (mut-compare-read,
+auditing its own claims after the gate named two of them.)
+
+**A third verdict, which the four in CONTRIBUTING do not cover.** A
+survivor is normally KILLABLE, EQUIVALENT, COSMETIC or a DEFECT to file.
+`_xml.fields` produced two that are none of them: the mutants' answer is
+BETTER than the code's, so no test should pin the current behaviour and
+no claim should argue it is equivalent. The verdict is a defect against
+the real code, the claim is WITHDRAWN rather than reworded to match, and
+the fix is filed. Writing a test there would have frozen the wrong
+answer into the suite under the name of progress.
+
 **And one rule about writing a claim, which would have caught five of
 them at the moment they were written:**
 
