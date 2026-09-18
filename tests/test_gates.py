@@ -459,3 +459,57 @@ def test_the_advisory_never_raises_when_git_cannot_answer(monkeypatch):
     said: list[str] = []
     gates._say_behind(said.append)
     assert said == []
+
+
+# --- gating on top of a live sweep -------------------------------------
+
+
+def test_a_LIVE_sweep_is_named_BEFORE_the_chain_runs(monkeypatch):
+    """At the START, because at the end the damage is done.
+
+    The chain's pytest arm is ninety seconds of `-n 8`, and a mutant
+    that crosses its 30 s deadline is graded KILLED — so a session
+    measured under this load reads OPTIMISTIC and nothing in it says so.
+    `mutation_session` verifies its harness at the start of each chunk,
+    which catches a machine already busy and not one that gets busy
+    halfway through.
+    """
+    said: list[str] = []
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(stale_figures, "running",
+                        lambda: [("_table_layout.py", 4242)])
+    gates._say_sweeping(said.append)
+
+    assert len(said) == 1
+    assert "_table_layout.py" in said[0] and "4242" in said[0]
+    assert "KILLED" in said[0], "it has to say what the damage IS"
+
+
+def test_a_QUIET_machine_says_nothing_before_the_chain(monkeypatch):
+    """Silent when there is nothing, like the timing monitor beside it:
+    a line printed before every green chain is a line people stop
+    seeing."""
+    said: list[str] = []
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    monkeypatch.setattr(stale_figures, "running", list)
+    gates._say_sweeping(said.append)
+
+    assert said == []
+
+
+def test_the_sweep_warning_never_raises(monkeypatch):
+    """It runs before every chain, including in a tarball with no git
+    and no markers. A chain that died because it could not ask whether
+    a sweep was live would be the tail wagging the dog."""
+    said: list[str] = []
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    def boom():
+        raise OSError("no markers here")
+
+    monkeypatch.setattr(stale_figures, "running", boom)
+    gates._say_sweeping(said.append)
+
+    assert said == []

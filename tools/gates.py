@@ -388,6 +388,40 @@ def _record(entries: list[dict[str, object]], outcome: str,
                               extra={"sweeps": live} if live else None)
 
 
+def _say_sweeping(say: Callable[[str], None]) -> None:
+    """Warn, BEFORE the chain runs, that a sweep is live.
+
+    The chain's pytest arm is ninety seconds of `-n 8`, and a mutant
+    that crosses its 30 s deadline is graded KILLED — so a session
+    measured under this load reads OPTIMISTIC, and nothing in it says
+    so. `mutation_session` verifies the unmutated harness at the START
+    of each chunk, which catches a machine that is already busy and not
+    one that gets busy halfway through.
+
+    Said at the START, not the end, because at the end the damage is
+    done: ninety seconds have already been spent on the other session's
+    figure. Never refuses — gating master during a campaign is
+    sometimes the right call, and this is the sentence that makes it a
+    call rather than an accident.
+
+    Two agents made this mistake on 2026-09-18 in different forms, one
+    of them reading the queue's rule as being about a shared WORKTREE
+    rather than about LOAD. The rule now names the shape; this says it
+    where it is needed, to whoever is about to do it.
+    """
+    try:
+        sys.path.insert(0, str(ROOT / "tools"))
+        from stale_figures import running  # noqa: PLC0415
+
+        live = running()
+    except Exception:                           # no markers, no git, no say
+        return
+    for module, pid in live:
+        say(f"SWEEPING  {module} (pid {pid}) — this chain's pytest arm "
+            f"may push its mutants past the deadline, which grades them "
+            f"KILLED and reads as a better figure than the truth")
+
+
 def _say_behind(say: Callable[[str], None]) -> None:
     """Say how far this checkout is behind master, if it is behind.
 
@@ -467,6 +501,7 @@ def run(gates: Sequence[Gate] = tuple(GATES),
     """
     entries: list[dict[str, object]] = []
     outcome = "green"
+    _say_sweeping(say)
     try:
         for gate in gates:
             name, argv, _reads = gate
