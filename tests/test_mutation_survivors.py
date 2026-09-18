@@ -899,8 +899,15 @@ def test_the_SHIPPED_claims_file_parses_and_every_claim_is_complete():
         assert entry.get("claims"), f"{module} has no claims"
         for claim in entry["claims"]:
             assert set(claim) <= {"was", "line", "operator", "why",
-                                  "kind"}, claim
+                                  "kind", "nth"}, claim
             assert {"was", "why"} <= set(claim), claim
+            # `nth` names WHICH occurrence of a repeated anchor, 1-based
+            # and counted the way `kill_check`'s fifth case element
+            # counts. Only meaningful where the line really does repeat,
+            # and `anchored` refuses an index the file has not got.
+            if "nth" in claim:
+                assert isinstance(claim["nth"], int), claim
+                assert claim["nth"] >= 1, claim
             assert claim.get("kind", "equivalent") in {"equivalent",
                                                        "cosmetic"}, claim
             assert len(claim["why"]) > 40, claim["why"]

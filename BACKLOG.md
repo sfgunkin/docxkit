@@ -46,6 +46,52 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — a Table's continuation claims a FIGURE's number, so the reader clicks a figure and lands on a table
+
+<!-- status: open -->
+
+Found 2026-09-18 by the `crossrefs.py` survivor round.
+
+`continuation_re`'s window — `[^.;:()]{0,30}?` — is CLAUSE-bounded and
+not LABEL-bounded, so a Table's continuation can reach across a Figure
+list and claim a figure's number. Measured:
+
+    "Compare Tables 1 and 2 with Figures 1 and 3, and see Figures 2 here."
+    captions: Table 3, Figure 3
+
+    link_more -> counts {'Table3': 1}
+
+and the `3` a reader sees inside **"Figures 1 and 3"** is wrapped in
+`<w:hyperlink w:anchor="Table3">`.
+
+**The reader clicks a figure number and lands on a table.** Visible
+text is unchanged, so nothing downstream can notice: `audit` reports the
+mention as linked, because it IS linked — to the wrong thing. The window
+in that sentence is 22 characters of ordinary prose, comfortably inside
+the 30 the pattern allows, so this is not a pathological input.
+
+Repro: `scratchpad\agents\edit_replace\defect_6.py` — self-contained,
+no fixture files.
+
+**The fix the docstring already implies**: refuse a window that
+contains another LABEL form. The function documents itself as *"anchored
+to a nearby plural-capable label"*, which is the rule — the pattern just
+does not enforce the second half of it. Any label word between the
+caption's label and the digit means the digit belongs to that series,
+not this one.
+
+**Not fixed in the round that found it**, per the protocol, and the
+round was right to leave it: the fix changes which mentions get linked,
+which wants its own measurement against the corpus rather than a patch
+beside a survivor.
+
+**One survivor is parked on this entry.** `link_more`'s continuation
+loop writes `continue` where `break` would drop a second series' later
+continuation — and the only fixture that distinguishes them is this
+defect's own. Its assertion evaporates when the defect is fixed, so the
+row cannot honestly be killed or claimed until then. Once the fix lands,
+that row and its twin in the main loop are equivalent by one argument.
+
 ### S3 — wrap_visible_span refuses an OMML-preceded span with a helper's ValueError, not its own AnchorError
 
 <!-- status: open -->

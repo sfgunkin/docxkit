@@ -2549,6 +2549,7 @@ def test_the_helper_MARKS_the_mention_unless_it_is_told_not_to():
     content = "As Table 4 shows, it rises."
     run_xml = run(content)
     m = mention_re("Table", "4").search(content)
+    assert m is not None, "the fixture must contain the mention it splits on"
     split = _split_run_at(
         run_xml, content, m,
         t_span=(run_xml.index("<w:t"),

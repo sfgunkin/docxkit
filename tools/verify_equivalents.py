@@ -69,10 +69,14 @@ CLAIMS = ROOT / "tools" / "equivalents.toml"
 #: block is printed, so it never reaches a reader.
 TALLY = "::not-as-argued"
 
-Case = tuple[str, str, str, bool]
+#: A `kill_check` case. The fifth element, when present, says WHICH
+#: occurrence of a repeated anchor to mutate — 1-based, counted the way
+#: `kill_check` counts, so a case moved between the two tools means what
+#: it meant.
+Case = tuple[str, str, str, bool] | tuple[str, str, str, bool, int]
 
 
-def anchored(src: Path, stripped: str) -> str | None:
+def anchored(src: Path, stripped: str, nth: int | None = None) -> str | None:
     """The claim's line as it appears in the file, indentation and all.
 
     A claim stores its lines stripped, because that is how
@@ -80,9 +84,30 @@ def anchored(src: Path, stripped: str) -> str | None:
     match on sight. `kill_check` needs the real text: it insists the
     anchor occur EXACTLY once, and a stripped line either misses (the
     file has indentation) or hits several places at once.
+
+    **`nth` is how a claim on a REPEATED line is spelled**, 1-based, the
+    same counting `kill_check`'s fifth case element uses. Without it a
+    line a module writes twice could not be claimed at all: `anchored`
+    answered None, the verifier reported ANCHOR GONE, and the only way
+    out was a trailing comment in the SOURCE to make the line
+    unique — which changes the module, and so invalidates every session
+    keyed to it and costs a re-sweep.
+
+    `crossrefs.py` had four rows stuck behind exactly that: `if r_open <
+    0:` is written in both `_link_mention` and `_wrap_label`, and one
+    argument covers both sites (2026-09-18).
+
+    **The discount is still line-keyed**, and that is the limit to know:
+    `mutation_survivors` counts a claim against the PRODUCED line, so a
+    claim on a repeated line settles every twin. Safe only where the
+    argument covers all of them — which is the case above, and is NOT
+    the case where the twins differ, so those stay unclaimable until the
+    source distinguishes them.
     """
     hits = [ln for ln in src.read_text(encoding="utf-8").splitlines()
             if ln.strip() == stripped]
+    if nth is not None:
+        return hits[nth - 1] if 1 <= nth <= len(hits) else None
     return hits[0] if len(hits) == 1 else None
 
 
@@ -101,12 +126,15 @@ def cases_for(module: str, claims: list[dict[str, str]],
         return None
     cases: list[Case] = []
     for claim in claims:
-        old = anchored(src, claim["was"])
+        raw_nth = claim.get("nth")
+        nth: int | None = int(raw_nth) if raw_nth is not None else None
+        old = anchored(src, claim["was"], nth)
         if old is None:
             # Not a failure of the argument — a failure to FIND what it
             # was about, which is the same thing for a reader and must
             # not pass quietly as "survived, as claimed".
-            say(f"ANCHOR GONE  {module}: {claim['was'][:60]!r} is no "
+            which = f" (nth = {nth})" if nth is not None else ""
+            say(f"ANCHOR GONE  {module}: {claim['was'][:60]!r}{which} is no "
                 f"longer a line of that file, or is now several")
             continue
         if "operator" in claim:
@@ -125,8 +153,15 @@ def cases_for(module: str, claims: list[dict[str, str]],
                           f"{claim['was'][:40]}", old, "", False))
             continue
         indent = old[:len(old) - len(old.lstrip())]
-        cases.append((f"{claim['was'][:40]} -> {claim['line'][:40]}",
-                      old, indent + claim["line"], False))
+        label = f"{claim['was'][:40]} -> {claim['line'][:40]}"
+        if nth is None:
+            cases.append((label, old, indent + claim["line"], False))
+        else:
+            # `kill_check`'s fifth element: WHICH occurrence to mutate.
+            # Counted the same way, so a case moved between the two
+            # tools means what it meant.
+            cases.append((f"{label} [#{nth}]", old,
+                          indent + claim["line"], False, nth))
     return cases
 
 
@@ -317,9 +352,13 @@ def main(argv: list[str] | None = None) -> int:
                 gone += 1
                 continue
             for claim in doc[module].get("claims", []):
-                if anchored(src, claim["was"]) is None:
-                    print(f"ANCHOR GONE  {module}: {claim['was'][:60]!r} is "
-                          f"no longer a line of that file, or is now several")
+                raw = claim.get("nth")
+                if anchored(src, claim["was"],
+                            int(raw) if raw is not None else None) is None:
+                    which = f" (nth = {raw})" if raw is not None else ""
+                    print(f"ANCHOR GONE  {module}: {claim['was'][:60]!r}"
+                          f"{which} is no longer a line of that file, or is "
+                          f"now several")
                     gone += 1
         if gone:
             print(f"{gone} claim(s) name a line their module no longer has. "
