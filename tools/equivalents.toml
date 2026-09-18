@@ -1244,4 +1244,33 @@ claims = [
 claims = [
   { was = 'return style_xml if at == -1 else style_xml[:at]', line = 'return style_xml if at <= -1 else style_xml[:at]', why = "`at` is `str.find`'s answer and its floor is -1, so `<= -1` holds exactly where `== -1` does. The five OTHER mutants on this line slice the body one character short — the `>` of its last closing tag — and a test kills them. An argument from the CODE." },
   { was = 'return style_xml if at == -1 else style_xml[:at]', line = 'return style_xml if at is -1 else style_xml[:at]', why = "CPython keeps one object for every int from -5 to 256 and `str.find` returns that object for -1, so identity answers as equality wherever this line is reached. An argument from the CODE." },
+
+  # `_note_at` is asked about a RUN's offset, and `spans` are whole note
+  # ELEMENTS: `<w:footnote w:id="5">` opens before the run and
+  # `</w:footnote>` closes after it, so `lo < at < hi` holds for every
+  # offset this is asked about. (`_NOTE_EL_RE` carries a `(?<!/)>` guard,
+  # so an empty `<w:footnote w:id="4"/>` — which holds no run — is not a
+  # span at all.) The four spellings that move an endpoint agree there.
+  { was = 'return next((nid for lo, hi, nid in spans if lo <= at < hi), None)', line = 'return next((nid for lo, hi, nid in spans if lo != at < hi), None)', why = "A run's offset is never the note element's own start: the opening tag `<w:footnote w:id=\"5\">` occupies the first bytes of the span. So `lo != at` holds wherever `lo <= at` does. An argument from the DOCUMENT — the part's shape, which `_NOTE_EL_RE` spans element by element." },
+  { was = 'return next((nid for lo, hi, nid in spans if lo <= at < hi), None)', line = 'return next((nid for lo, hi, nid in spans if lo < at < hi), None)', why = "The same: a run cannot begin at the element's own first byte, so `<` and `<=` agree. An argument from the DOCUMENT." },
+  { was = 'return next((nid for lo, hi, nid in spans if lo <= at < hi), None)', line = 'return next((nid for lo, hi, nid in spans if lo <= at != hi), None)', why = "A run inside the element ends before `</w:footnote>` begins, so `at < hi` and `at != hi` hold together; and for an offset at or past `hi` both are false. An argument from the DOCUMENT." },
+  { was = 'return next((nid for lo, hi, nid in spans if lo <= at < hi), None)', line = 'return next((nid for lo, hi, nid in spans if lo <= at <= hi), None)', why = "`at == hi` would be a run starting exactly where `</w:footnote>` ends, and nothing can: `w:footnotes` holds note elements and nothing else, so the next run is inside the NEXT element, past its opening tag. An argument from the DOCUMENT." },
+  { was = 'return next((nid for lo, hi, nid in spans if lo <= at < hi), None)', line = 'return next((nid for lo, hi, nid in spans if lo <= at is not hi), None)', why = "Identity here is `!=` — `at` and `hi` are computed apart — and `at != hi` holds for every offset this is asked about, as the `!=` claim above says. An argument from the DOCUMENT." },
+  { was = 'return next((nid for lo, hi, nid in spans if lo <= at < hi), None)', line = 'return next((nid for lo, hi, nid in spans if lo is not at < hi), None)', why = "`lo is not at` is `lo != at` for two offsets computed apart, and a run never starts at the element's first byte. An argument from the DOCUMENT." },
+
+  { was = 'label = "fn" if part == FOOTNOTES else "en"', line = 'label = "fn" if part >= FOOTNOTES else "en"', why = "The three parts this walks are `word/document.xml`, `word/endnotes.xml` and `word/footnotes.xml`, and only the last is `>= FOOTNOTES`: document and endnotes both sort before it. An argument from the CODE." },
+  { was = 'label = "fn" if part == FOOTNOTES else "en"', line = 'label = "fn" if part is FOOTNOTES else "en"', why = "`raised_prose` iterates the three part constants THEMSELVES — `for part in (DOCUMENT, FOOTNOTES, ENDNOTES)` — so the value here is one of those objects and identity answers as equality. An argument from the CALLERS." },
+  { was = 'if custom and j == 0:', line = 'if custom and j <= 0:', why = "`j` is `enumerate`'s index over the paragraph's runs and is never negative, so `<= 0` is `== 0`. An argument from the CODE." },
+
+  # The deleted-span check, for the same reason as `_note_at` above: `at`
+  # is a run's offset and `gone` holds whole `w:del` elements. The two
+  # spellings that ask about `hi` are NOT here — a run starting exactly
+  # at `hi` is the run AFTER the deletion, which a test pins.
+  { was = 'if any(lo <= at < hi for lo, hi in gone):', line = 'if any(lo != at < hi for lo, hi in gone):', why = "A run's offset is never the `w:del` element's own start: `<w:del w:id=\"9\" …>` occupies the first bytes of the span. An argument from the DOCUMENT." },
+  { was = 'if any(lo <= at < hi for lo, hi in gone):', line = 'if any(lo < at < hi for lo, hi in gone):', why = "The same: a run cannot begin at the `w:del`'s first byte, so `<` and `<=` agree. An argument from the DOCUMENT." },
+  { was = 'if any(lo <= at < hi for lo, hi in gone):', line = 'if any(lo <= at != hi for lo, hi in gone):', why = "For a run inside the deletion both hold; for the run that starts exactly at `hi` — the first run after `</w:del>` — `at != hi` is false and `at < hi` is false, so both answer NOT inside. An argument from the CODE." },
+  { was = 'if any(lo <= at < hi for lo, hi in gone):', line = 'if any(lo is not at < hi for lo, hi in gone):', why = "`lo is not at` is `lo != at` for two offsets computed apart, and a run never starts at the element's first byte. An argument from the DOCUMENT." },
+
+  { was = 'if got.kind == STYLE and got.value in _RAISING:', line = 'if got.kind >= STYLE and got.value in _RAISING:', why = "The four kinds are `run`, `style`, `default` and `nowhere`, and only `style` is `>= \"style\"`: the other three sort before it. An argument from the CODE." },
+  { was = 'if got.kind == STYLE and got.value in _RAISING:', line = 'if got.kind is STYLE and got.value in _RAISING:', why = "Every `Resolved` is built in `Cascade._resolve` with the module's own kind constants, and `resolve` memoises those objects rather than rebuilding them, so the kind here IS the `STYLE` object. An argument from the CODE." },
 ]

@@ -235,3 +235,67 @@ def test_no_styles_part_answers_NOTHING_rather_than_guessing():
 
 def test_an_empty_run_is_not_prose():
     assert raised_prose(parts(note(MARK + styled("   ")))) == []
+
+
+# --- the run of 2026-09-18: 16.6 %, and the part walk it measured -----
+
+
+def custom_ref(nid: int = 1) -> str:
+    """A body reference that says the mark is the TEXT after it."""
+    return (f'<w:r><w:footnoteReference w:id="{nid}" '
+            'w:customMarkFollows="1"/></w:r>')
+
+
+def test_the_run_a_CUSTOM_reference_points_at_is_the_one_exempt():
+    """`runs[j - 1]`: the run BEFORE this one, and nothing else. The
+    paragraph carries two custom references, each followed by its mark,
+    and then ordinary raised prose — so "the run before" is a different
+    run for every j, and an index that lands anywhere else either
+    exempts the prose or reports a mark."""
+    body = ("<w:p>" + custom_ref(1) + styled("*") + custom_ref(2)
+            + styled("†") + styled(PROSE) + "</w:p>")
+
+    found = raised_prose(parts(note(MARK + "<w:r><w:t>fine.</w:t></w:r>"),
+                               doc_body=body))
+
+    assert [r.text for r in found] == [PROSE]
+
+
+def test_a_run_inside_a_DELETION_that_kept_its_w_t_is_still_going_away():
+    """A deleted run normally carries `w:delText`, which `visible_text`
+    does not read — so it never reaches the offset check at all. The
+    check is for the file that wraps a `w:t` run in `w:del` instead:
+    Word repairs such a part on save, and docxkit reads what is on disk.
+    The run after it is a finding, which is how the walk says it did not
+    stop at the deletion."""
+    struck = ('<w:del w:id="9" w:author="R" w:date="2026-01-01T00:00:00Z">'
+              + styled(PROSE) + "</w:del>")
+
+    found = raised_prose(parts(note(MARK + struck + styled("after"))))
+
+    assert [r.text for r in found] == ["after"]
+
+
+def test_a_run_stating_its_own_SUPERSCRIPT_is_deliberate_too():
+    """`baseline` is the documented case and this is the other half: the
+    check is about raising a run INHERITS, and a `vertAlign` the run
+    states is a decision somebody made in the document. Only a STYLE
+    supplying it is a finding."""
+    own = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/>'
+           '<w:vertAlign w:val="superscript"/></w:rPr>'
+           f"<w:t>{PROSE}</w:t></w:r>")
+
+    assert raised_prose(parts(note(MARK + own))) == []
+
+
+def test_a_BODY_finding_is_named_by_its_paragraph_NUMBER():
+    """`¶{i + 1}`, one-based, because that is how a reader counts
+    paragraphs — and with the finding in the FIRST paragraph every
+    arithmetic on `i` gives the same answer."""
+    body = ("<w:p><w:r><w:t>An ordinary first paragraph.</w:t></w:r></w:p>"
+            "<w:p>" + styled(PROSE) + "</w:p>")
+
+    found = raised_prose(parts(note(MARK + "<w:r><w:t>fine.</w:t></w:r>"),
+                               doc_body=body))
+
+    assert [r.where for r in found] == ["¶2"]
