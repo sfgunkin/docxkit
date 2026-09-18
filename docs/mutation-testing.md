@@ -703,6 +703,28 @@ The fix is a parametrisation per constant, so that THE PARAMETRISATION
 IS THE CONSTANT and a tag added without a case is a tag the census
 finds.
 
+**And that fix does not work in the other direction**, which took a
+second census to notice (`lint.py`, 2026-09-18, 55 members across nine
+tables). A test that draws its cases FROM the list it is checking loses
+a case when the list loses a member — and then passes. The census
+deletes a member; the parametrisation quietly shrinks by one; every
+remaining case is green; the mutant survives the very test written to
+catch it.
+
+So the two directions want opposite shapes, and only one of them is the
+elegant one:
+
+    a member ADDED with no case    parametrise over the constant
+    a member REMOVED               hold the constant against a list
+                                   WRITTEN OUT in the test
+
+The second is the two-lists shape this repo normally dislikes — the same
+literal in two places, drifting apart — and here it is exactly right,
+because the drift IS the thing being watched.
+`test_text_parts_covers_what_a_reader_reads` already does it one module
+over. A census round writes both, and the reviewer who deletes the
+written-out list as duplication removes the only test that can fail.
+
 **And the census comes back CLEAN sometimes, which is what makes it
 worth running.** `_compare_read.py` has `VOLATILE_FIELDS` (16 members)
 and `TEXT_PART_RE` (5 alternatives) — exactly the unreachable shape.
