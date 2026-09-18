@@ -727,6 +727,52 @@ def test_spans_that_TIE_are_wider_first_when_the_NARROW_one_is_found_first():
     assert spans[0][1] > spans[1][1], "wider first, however it was found"
 
 
+def test_a_field_marker_is_read_whatever_ORDER_its_attributes_are_in():
+    """`FLDCHAR_RE`'s own carrier, from the census of 2026-09-18 — a
+    pattern string has nothing in it for a mutation operator to take
+    hold of, so this guard sat unmeasured in a module reading 3.6 %.
+
+    Attribute order is not meaningful in XML and Word writes `w:fldLock`
+    on a field it has locked, so the type is not always the first
+    attribute. Narrow `[^>]*` to whitespace and that begin marker
+    vanishes: its instruction reads as one whose `begin` an edit cut
+    off, and the field stops being a link on the page at all.
+    """
+    locked = '<w:fldChar w:fldLock="1" w:fldCharType="begin"/>'
+    xml = ("<w:p>" + _run(locked) + _code(r" REF Table1 \h ") + _run(SEP)
+           + _run("<w:t>Table 1</w:t>") + _run(END) + "</w:p>")
+
+    (field,) = fields(xml)
+
+    assert field.end > 0, "the locked begin opened a field that then closed"
+    assert internal_links(xml) == [("Table1", "Table 1")]
+
+
+def test_an_instrText_with_NO_closing_tag_is_not_a_field_code():
+    """`INSTR_RE`'s third carrier. The closing tag is what says the code
+    is all there: a part cut inside the element gives the walk no way to
+    know where the instruction ends, and the bytes after it are as
+    likely to be the next element as more code.
+
+    So a cut one is read as nothing, which is the same answer
+    `run_holds_content` and the `sep_end` fallback give to a part
+    truncated mid-tag. Pinned here because nothing in the package pinned
+    it, and because the other reading — trust the bytes and report the
+    bookmark the fragment names — is defensible enough that it should be
+    a decision somebody makes rather than one that drifts.
+    """
+    whole = "<w:p>" + _run(BEGIN) + _code(r" REF Table1 \h ")
+    cut = whole[:whole.index(" REF")] + " REF Table1 "
+
+    (opened,) = fields(cut)
+
+    assert (opened.instr, opened.at) == ("", -1), \
+        "the begin was seen; the code it opened was not"
+    assert field_anchors(cut, clickable=False) == []
+    assert fields(whole)[0].instr == r" REF Table1 \h ", \
+        "the same code, closed, IS read"
+
+
 def test_dead_links_sees_the_label_that_follows_a_nested_field():
     """A field's result ends at ITS end, not at the first one. Cut short
     at the nested field's end, the label after it was invisible and the

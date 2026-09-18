@@ -1523,6 +1523,11 @@ def test_a_PAIRED_run_property_present_TWICE_comes_out_in_full():
     pytest.param("", False, id="nothing_at_all"),
     pytest.param("   ", False, id="whitespace"),
     pytest.param("<w:r></w:r>", False, id="an_empty_run"),
+    # one carrier each, and nothing else a reader sees: with two, the
+    # pattern could lose either guard and the other would still answer
+    pytest.param('<w:r w:rsidR="00AB12CD"></w:r>', False,
+                 id="an_empty_run_with_the_rsid_Word_writes"),
+    pytest.param("<w:r>\n  </w:r>", False, id="an_empty_run_laid_out"),
     pytest.param('<w:r><w:rPr><w:b/></w:rPr></w:r>', False,
                  id="only_its_own_properties"),
     pytest.param('<w:r><w:rPr><w:b/></w:rPr><w:tab/></w:r>', True,
@@ -1539,6 +1544,20 @@ def test_run_holds_content_asks_PAST_the_runs_own_properties(run_xml, holds):
     The properties are cut OUT before the question is asked, so both
     ends of that cut matter: left in, every formatted run looks like
     content, and the island reads as something to keep.
+
+    The last two cases are the pattern's own carriers, found by the
+    census of 2026-09-18 rather than by a sweep — cosmic-ray plans no
+    mutant on a pattern STRING, so `_BARE_RUN_RE` was unmeasured in a
+    module reading 3.6 %. Drop `[^>]*` and a run carrying the `w:rsidR`
+    Word writes on nearly every one reads as content; drop `\\s*` and so
+    does a run laid out over two lines. Both make `split_run`'s caller
+    keep a half that holds nothing.
+
+    Two of its guards ARE unpinnable, and neither is a gap: the `\\b`
+    after the tag name and the `(?<!/)` before the `>` both need an
+    input this can never see, because the match is a `fullmatch` that
+    ends in `</w:r>` — a self-closing tag cannot complete one, and no
+    element whose name merely starts with `w:r` closes with that tag.
     """
     assert run_holds_content(run_xml) is holds
 
