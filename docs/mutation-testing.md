@@ -849,6 +849,32 @@ agreeing from the other side: the registry flags a spelled name only
 where a LONGER element name exists, and OOXML has none extending
 `w:fldChar`, so its silence is itself the argument.
 
+**Two cautions, both of which cost nothing to honour.**
+
+*Do not ask "the suite MINUS the registry".* That is not the same
+question as "does a fixture hold this": the registry is not the only
+source-level test in this package — four source-grep tests that could
+not fail at all were filed the same morning — so deselecting one file
+leaves the category. Apply the drop and let the WHOLE suite name the
+failing test. `kill_check` prints the killer per case, so the
+distinction is free.
+
+*And do not let the two kinds of source-level test read alike.* A
+source-grep test that CANNOT fail and a convention test that catches a
+real change are opposite findings, and the second is not a defect. The
+registry earned its place here: it is the only thing that noticed the
+`\b`, and it noticed it for the right reason. The finding is not "a
+convention test killed it" — it is that the carrier's SPELLING is
+watched and its MEANING is not.
+
+**Which turns the census into a question about the READER rather than
+the table.** Sixteen members of `OMML_STRUCT` come back killed, every
+one of them by the registry: ask of each *would anyone notice this
+changing*, and if the answer is one or two yes and fourteen no, that is
+a finding about `compare`'s FORMULA layer, not about a tuple. Same
+question the optionals gate asks of a branch and a claims file asks of a
+mutant.
+
 **And the census comes back CLEAN sometimes, which is what makes it
 worth running.** `_compare_read.py` has `VOLATILE_FIELDS` (16 members)
 and `TEXT_PART_RE` (5 alternatives) — exactly the unreachable shape.
