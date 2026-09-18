@@ -848,6 +848,33 @@ survivor, so a round that deletes one is re-swept rather than bounded.
 And it does not hold when the module moved as well — `revision/_promote.py`
 changed in f856e4d, which is the first case, whatever its harness did.
 
+### A log line is not a figure — the claims move too
+
+`stale_figures.py` watches the source and the harness. Nothing watches
+the third input, and a sweep's own `REAL SURVIVAL` line is a reading of
+`equivalents.toml` at the instant it printed.
+
+`_compare_read.py` finished at **1.6 % (8/491)** and the log still says
+so. Read out of the session an hour later it is **0.4 % (2/485), 0 to
+actually look at** — because the six claims that round had just argued
+were committed while the sweep ran, and the difference between the two
+numbers is exactly those six. Both readings are correct about the
+moment they were taken. Only one of them is about the repository.
+
+On 2026-09-18 a survivor round was dispatched on the log line: an agent
+briefed to settle eight survivors that no longer existed, against a
+module whose list was empty. The cost was small because the census half
+of that brief was worth doing anyway. It would not have been small on a
+module with a real list, and the correction is one command:
+
+    python tools/mutation_survivors.py .mutation-<stem>.sqlite src/docxkit/<module>.py
+
+**So quote the session, never the log.** The log says what a run did;
+the session says what is true now, with today's claims applied and
+today's staleness banner on top of it. The two agree only until somebody
+argues a mutant — which, in a campaign whose whole activity is arguing
+mutants, is most of the time.
+
 ### And void when the tree moves DURING the run — the worst kind
 
 `tracked.py` stands at 4.9 % (29/589), verified, every remaining
