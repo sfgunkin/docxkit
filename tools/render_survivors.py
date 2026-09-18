@@ -70,11 +70,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Left at module level rather than deferred into the functions: this
 # tool does nothing at all without cosmic-ray, and a lazy import would
 # buy an `--help` that works on a machine where no command does.
-from cosmic_ray.mutating import (
-    mutate_code,  # pyright: ignore[reportMissingImports]
+# The ignore goes on the `from` LINE, where pyright anchors a missing
+# module — not on the name below it. Both checkers were being silenced
+# by the single `# type: ignore` that used to sit here: pyright honours
+# a `type: ignore` comment as a blanket suppression of its own
+# diagnostics too, so taking it out for mypy's sake took pyright's cover
+# with it, and CI answered `render_survivors.py:73:6 - error: Import
+# "cosmic_ray.mutating" could not be resolved` (2026-09-18).
+from cosmic_ray.mutating import (  # pyright: ignore[reportMissingImports]
+    mutate_code,
 )
-from cosmic_ray.plugins import (
-    get_operator,  # pyright: ignore[reportMissingImports]
+from cosmic_ray.plugins import (  # pyright: ignore[reportMissingImports]
+    get_operator,
 )
 from harness_map import harness_for  # pyright: ignore[reportMissingImports]
 from kill_check import check  # pyright: ignore[reportMissingImports]

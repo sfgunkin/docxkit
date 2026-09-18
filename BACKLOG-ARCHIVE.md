@@ -82,6 +82,27 @@ without a clean checkout — `scratchpad/block_cr.py` is a pytest plugin
 whose `MetaPathFinder` makes cosmic-ray absent, and the full suite under
 it reads `8112 passed, 21 skipped`. The mypy half is answered by
 configuration rather than by a run.
+
+**And the fix had a tail, which is the part worth remembering.** Taking
+the inline `# type: ignore[import-untyped]` off the import turned
+PYRIGHT red on the next push — green until then on the same absent
+module:
+
+    render_survivors.py:73:6 - error: Import "cosmic_ray.mutating"
+        could not be resolved (reportMissingImports)
+
+`# type: ignore` is not mypy's alone. Pyright honours it as a blanket
+suppression of its own diagnostics on that line, so a comment written
+for one checker had been covering both, and removing it for the first
+silently uncovered the second. The file's `# pyright: ignore` was on the
+imported NAME, one line below, where pyright does not anchor a missing
+MODULE — so it had never been doing the work it appeared to do.
+
+Fixed in the commit carrying this note, by putting `# pyright: ignore` on the
+`from` line of each import, where the error actually lands. Worth
+knowing generally: a `type: ignore` removed on mypy's account takes
+pyright's cover with it, and only a machine without the module can tell.
+
 ### ~~S4 — a sweep reported a session it had KILLED as one that refused~~ — FIXED 18.09, `da5e6ef`
 
 <!-- status: fixed -->
