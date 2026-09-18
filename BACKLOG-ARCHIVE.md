@@ -14,6 +14,74 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — CI red for two pushes while eleven gates read green: the deps gate was pointed at src alone~~ — FIXED 18.09, `2aad032`
+
+<!-- status: fixed -->
+
+CI went red on `e5e1af8` (23:37) and stayed red through `3d44613`
+(23:54), and the eleven-gate chain reported green over both pushes.
+
+`tools/render_survivors.py` imports cosmic-ray:
+
+    from cosmic_ray.mutating import mutate_code
+    from cosmic_ray.plugins import get_operator
+
+CI does not install cosmic-ray — nothing does; it is in no extra, and it
+lives on the one machine that runs the sweeps. So the push that merged
+that tool took down two gates at once:
+
+    tools/render_survivors.py:67: error: Cannot find implementation or
+        library stub for module named "cosmic_ray.mutating"
+    tools/render_survivors.py:67: error: Unused "type: ignore" comment
+    E   ModuleNotFoundError: No module named 'cosmic_ray'
+
+The second mypy error is the instructive one. The import carried
+
+    # type: ignore[import-untyped]
+
+with a comment arguing that cosmic-ray did NOT belong in pyproject's
+missing-imports list because that list "answers for the OPTIONAL EXTRAS
+a contributor may not have installed, and this is not one of those." It
+is one of those, only more so: an extra is at least declared, and can be
+installed by name. A dev dependency in no extra at all is absent
+everywhere except the machine that happens to have it. The ignore was
+right about the local machine and wrong about every other one, and mypy
+flagged the comment itself as unused on the runner where it mattered.
+
+**The gate that exists for exactly this said Success.** `deps` — deptry
+— is in the chain to answer *does this repository import anything it
+does not declare*, and `pyproject.toml` records being wrong about it
+three times already (latex2mathml, pymupdf, pandas). It was scoped
+`src` only, on a measurement that over the full tree it reported 41
+issues and none real. That measurement had aged: re-run today the tools
+scan reports 22, of which `known_first_party = ["docxkit"]` answers 20,
+and the remaining two are the live defect.
+
+So the gate was not wrong about `src`. It was pointed at the shipped
+package while the failure was in the tools — and the tools are how the
+shipped package is measured, which makes a tool that cannot be imported
+a gate that cannot run.
+
+**Fixed four ways**, because each is a different hole:
+
+* `deps` now scans `src` AND `tools`, with `known_first_party` for the
+  package's own name. Run against the broken tree it names exactly the
+  two lines and nothing else.
+* cosmic-ray is declared, as a `mutation` extra. It says where the
+  dependency belongs instead of leaving it to the next red CI log.
+* `cosmic_ray.*` joins the `ignore_missing_imports` list, and the inline
+  ignores come out.
+* `tests/test_render_survivors.py` opens with `importorskip`, like the
+  latex tests. A skip is honest here: the tool only runs where a SESSION
+  exists, and a session only exists where cosmic-ray planned it.
+
+**And the reason no local run could have caught it** is worth keeping:
+the gate machine has every dev dependency installed, so an import CI
+lacks is invisible to all eleven gates. The pytest half is now checkable
+without a clean checkout — `scratchpad/block_cr.py` is a pytest plugin
+whose `MetaPathFinder` makes cosmic-ray absent, and the full suite under
+it reads `8112 passed, 21 skipped`. The mypy half is answered by
+configuration rather than by a run.
 ### ~~S4 — a sweep reported a session it had KILLED as one that refused~~ — FIXED 18.09, `da5e6ef`
 
 <!-- status: fixed -->
