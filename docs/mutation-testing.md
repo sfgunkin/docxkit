@@ -1023,6 +1023,116 @@ in either region, so it was left out. Coverage without assertions is not
 a harness — here is that sentence inside a single module, with the
 biggest coverage number attached to the file that could not kill.
 
+### The root of it: a context names the test that got there FIRST
+
+Three instrument findings of 2026-09-18 have one cause, and it is worth
+stating once rather than three times:
+
+> **A coverage context names the test that got there first, not the
+> tests that get there.**
+
+From it follow the whole-package table's failure above, the idle
+column's failure below, and the per-line map's status as a hint rather
+than a reading. The ALONE-RUN is the only measurement that answers *does
+this file reach this code*, and the KILL STEP is the only one that
+answers *would anything notice it breaking*.
+
+**The idle column fails in the other direction too**, which is the
+dangerous one, because it argues for DELETING something. `word.py`'s map
+appeared to carry two test files executing nothing. Run alone,
+`tests/test_equations.py` really does reach 0 lines of it — and
+`tests/test_revision.py` reaches **177**. Its zero in the suite was
+another file getting there first. Nobody acted on it, and the removal
+would have taken a third of that harness away for an artefact.
+
+`test_value_types.py` is the sharper version: run alone it reaches 101
+lines of `footnotes.py`, the fourth-largest contributor to that module,
+and reads as invisible in a suite run. Not because contexts cannot see
+inspect-style tests — because everything it touches has been touched by
+the time it runs. So the honest rule is narrower than "contexts miss
+this kind of test": **a whole-suite context run cannot tell "reaches
+nothing" from "reached it last."**
+
+Re-verified the alone way, all three rows other rounds were leaning on
+hold — and now on evidence rather than on an artefact:
+
+    word.py       map reaches 541 lines;  4 candidates, all 0 beyond
+    footnotes.py  map reaches 354 lines;  7 candidates, all 0 beyond
+    lint.py       map reaches 208 lines;  8 candidates, all 0 beyond
+
+### Reading the session's per-line map — five rules
+
+`mutant_tests.py --build` records which tests cover which line with ONE
+pytest run under `--cov-context=test`, so it carries the same artefact
+at harness scale. **Grading is not exposed to it**, and that was checked
+in the code rather than taken from the docstring: `main` tries the
+covering tests first, and only pytest's exit 1 — a real failure —
+settles a mutant as killed. Every other outcome, "no tests collected"
+included, falls through to a run of the whole harness. A short, stale or
+wrong map therefore costs wall clock and never a verdict, and every
+survivor on the board was declared by the full harness.
+
+What is exposed is a ROUND reading the map as "this line is covered by
+these two tests", which is how it reads. The rules, measured on
+`find.py`'s stored map of 150 lines:
+
+1. **Names on a BODY line** — some test really executed it. WHICH names
+   is a scheduling hint.
+2. **Names on a DEF line** — inherited from the enclosing function by
+   `_enclosing`, never observed: a `def` runs at import, where there is
+   no test context. 14 of that map's 16 `def` lines carry names and all
+   14 are inheritance. A mutation spanning a `def` line AND a body line
+   takes the UNION of inherited and observed credit, so a short run's
+   list is not all observation.
+3. **An EMPTY list** — claims nothing.
+4. **ABSENT** — not measured at all.
+5. **The line NUMBERS are the SNAPSHOT's, not today's.** The map is
+   built when the session is planned and `--fresh` discards session and
+   map together, which is what keeps the two in step. Joining the map to
+   the session's own rows is sound — both in snapshot coordinates — and
+   joining it to a fresh reading of the module is not, which is the
+   natural thing to reach for: `word.py` had moved two lines by the time
+   it was mined, `revision/_losses.py` three.
+
+Rules 3 and 4 differ in what they claim about MEASUREMENT and never in
+what the runner does: `covering_tests` reads `covering.get(str(line),
+())`, so an absent line contributes an empty tuple exactly as a stored
+empty list does, `if tests:` is false, and the run goes to the whole
+harness — as a missing map file does one level up. `find.py`'s three
+`@lru_cache` decorator lines are stored empty, so the least observable
+lines in the module are graded safely by construction rather than by
+luck.
+
+For rule 5 the pointer is `tools/render_survivors.py`, which is the same
+correction applied to the rows instead of to the map.
+
+So: a round may use the map for reachability triage — *is this line
+executed by the suite at all* — with rule 2 as the exception, and must
+not use it for *these are the tests that cover this line*.
+
+Rules 2 and 5 and the reachability framing are mut-repack's, from a
+survivor on a default argument and from a bare-stem "harness drift" that
+turned out to be its own misreading. Three of the five came out of a
+round's mistakes rather than its results.
+
+### Reaching is not asserting, and asserting is not always available
+
+Three rungs, and the campaign has a concrete case of each:
+
+* **Reaching.** `test_compare_paragraph.py` executes more of `styles.py`
+  than any other candidate and kills nothing in either region.
+* **Asserting.** The two files that were added to that map each kill in
+  a region nothing else can reach.
+* **Available.** Six `word.py` survivors change an argument to Word's
+  own `Document.Range`. The fake returns a Range for `(-1, 0)` as
+  happily as for `(0, 0)`, so the line is covered, the assertion passes,
+  and only a real Word can refuse.
+  `test_what_WORD_does_with_the_RANGE_shapes_no_fake_can_answer` in
+  `tests/test_word_session_ruler.py` says in its own docstring that it
+  has never been run. That is the shape a finding takes when the
+  instrument is unavailable rather than unwritten, and it is not a gap
+  to be closed by writing more tests against the fake.
+
 ### The seeded sample was never the same draw twice
 
 The section above is right about the population and wrong about
