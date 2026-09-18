@@ -331,6 +331,23 @@ def figure(module: str) -> str:
     return f"{counts.share:5.1f}%  ({len(counts.real)}/{counts.base}){mark}"
 
 
+@cache
+def main_checkout() -> Path:
+    """The repository's MAIN working tree, from any worktree of it.
+
+    `--git-common-dir` answers with the main repo's `.git` wherever it
+    is asked from, so its parent is the checkout the sessions live
+    beside. Falls back to this tree when git cannot answer — a tarball,
+    or no git at all — which is the same answer as today for anyone
+    working in the main checkout anyway.
+    """
+    out = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=ROOT, capture_output=True, text=True, check=False)
+    common = out.stdout.strip()
+    return Path(common).parent if common else ROOT
+
+
 def running() -> list[tuple[str, int]]:
     """Which modules a sweep is grading RIGHT NOW, and under which pid.
 
@@ -342,12 +359,26 @@ def running() -> list[tuple[str, int]]:
 
     Imported inside the function, the way `mutation_session` reaches
     back here for `lines_of`: these tools are each other's.
+
+    **The markers are looked for in the MAIN checkout, not in this
+    one**, and that is the whole reliability of the check. Sessions live
+    in the main repository; a round is worked in a worktree. Globbing
+    the tool's own `ROOT` therefore found nothing from anywhere except
+    `D:/docxkit`, and answered *"nothing is being swept"* — a FALSE SAFE
+    in the one check whose entire job is to refuse an unsafe merge.
+    Reported 2026-09-18 by an agent who noticed the answer did not match
+    four live streams and checked by hand anyway: *"the tool answered
+    safe for a reason unrelated to the question."*
+
+    It is the same defect as the staleness banner's, found the same day
+    and fixed the same way — a tool resolving state against the checkout
+    it happens to be running from rather than the one the state is in.
     """
     from mutation_session import _alive  # noqa: PLC0415
 
     by_stem = {session_stem(m): m for m in HARNESS}
     out = []
-    for mark in sorted(ROOT.glob(".mutation-*.running")):
+    for mark in sorted(main_checkout().glob(".mutation-*.running")):
         stem = mark.name[len(".mutation-"):-len(".running")]
         try:
             pid = int(mark.read_text(encoding="utf-8").strip())

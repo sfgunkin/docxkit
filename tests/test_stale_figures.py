@@ -563,6 +563,9 @@ def test_a_LIVE_sweep_is_named_and_makes_the_check_exit_1(tmp_path,
 
     (tmp_path / ".mutation-table_core.running").write_text(str(os.getpid()))
     monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    stale_figures.main_checkout.cache_clear()
+    monkeypatch.setattr(stale_figures, "main_checkout",
+                        lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running"])
 
     code = main()
@@ -591,6 +594,9 @@ def test_a_marker_whose_SESSION_IS_GONE_does_not_block_a_merge(tmp_path,
     dead.wait()
     (tmp_path / ".mutation-table_core.running").write_text(str(dead.pid))
     monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    stale_figures.main_checkout.cache_clear()
+    monkeypatch.setattr(stale_figures, "main_checkout",
+                        lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running"])
 
     code = main()
@@ -611,6 +617,9 @@ def test_PATHS_narrow_the_question_to_the_merge_in_hand(tmp_path,
 
     (tmp_path / ".mutation-batch.running").write_text(str(os.getpid()))
     monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    stale_figures.main_checkout.cache_clear()
+    monkeypatch.setattr(stale_figures, "main_checkout",
+                        lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running",
                                       "tests/test_compare.py"])
 
@@ -634,6 +643,9 @@ def test_a_round_that_only_adds_TESTS_still_voids_the_harness_it_adds_to(
 
     (tmp_path / ".mutation-batch.running").write_text(str(os.getpid()))
     monkeypatch.setattr(stale_figures, "ROOT", tmp_path)
+    stale_figures.main_checkout.cache_clear()
+    monkeypatch.setattr(stale_figures, "main_checkout",
+                        lambda: tmp_path)
     monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running",
                                       harness[0]])
 
@@ -693,3 +705,41 @@ def test_without_the_session_path_it_looks_in_the_WRONG_tree(tmp_path,
     assert stale_figures.state("guard.py", [])[0] == "never measured"
     assert stale_figures.state("guard.py", [], db)[0] == "stale", \
         "handed the session, it must answer about THAT one"
+
+
+def test_the_markers_are_read_from_the_MAIN_checkout_not_this_one(
+        tmp_path, monkeypatch, capsys):
+    """A FALSE SAFE in the one check whose job is to refuse a merge.
+
+    Sessions live in the main repository; a round is worked in a
+    worktree. Globbing the tool's own ROOT therefore found no markers
+    from anywhere but `D:/docxkit` and answered "nothing is being
+    swept" — with four streams live. Reported 2026-09-18 by an agent who
+    noticed the answer did not match what it had been told and checked
+    by hand anyway: *the tool answered safe for a reason unrelated to
+    the question.*
+
+    Same defect as the staleness banner's, same day, same shape: state
+    resolved against the checkout the tool runs from rather than the one
+    the state is in.
+    """
+    import stale_figures  # pyright: ignore[reportMissingImports]
+    from stale_figures import main  # pyright: ignore[reportMissingImports]
+
+    main_tree = tmp_path / "main"
+    worktree = tmp_path / "a-round"
+    main_tree.mkdir()
+    worktree.mkdir()
+    (main_tree / ".mutation-batch.running").write_text(str(os.getpid()))
+
+    # The tool is standing in the WORKTREE and the marker is not there.
+    monkeypatch.setattr(stale_figures, "ROOT", worktree)
+    stale_figures.main_checkout.cache_clear()
+    monkeypatch.setattr(stale_figures, "main_checkout", lambda: main_tree)
+    monkeypatch.setattr(sys, "argv", ["stale_figures.py", "--running"])
+
+    code = main()
+
+    out = capsys.readouterr().out
+    assert "batch.py" in out, "the live sweep must be seen from a worktree"
+    assert code == 1
