@@ -26,6 +26,7 @@ from docxkit._table_layout import (
     _bump,
     _cell_extents,
     _check_rule,
+    _divide_pinned,
     _keep_with_table,
     _own_tblpr,
     _round_to,
@@ -36,6 +37,7 @@ from docxkit._table_layout import (
     _set_tc_w,
     _snap,
     _to_places,
+    _water_fill,
 )
 from docxkit.errors import AnchorError
 
@@ -159,6 +161,168 @@ def test_a_snapped_header_reaches_the_DOCUMENT_when_the_grid_collapses():
     spans = [int(m.group(1)) for m in
              re.finditer(r'<w:gridSpan w:val="(\d+)"/>', first_row.group(0))]
     assert spans == [2], "the header's second cell covers the last two"
+
+
+# --- _water_fill: the branch that makes it not an equal division --------
+#
+# Coverage answers the question the survivor list asks: lines 696-700 of
+# `_table_layout` never ran under this harness, so `_water_fill`'s
+# distinguishing case — a column needing MORE than an equal share takes
+# its need and the rest re-divide — was unreached rather than untested.
+# It is the case the docstring is about: "Percentage Points gained"
+# wants 2,287 dxa where an equal share is 908, and an equal division
+# wraps it to three lines to give six siblings room they do not need.
+#
+# The same shape as `_snap` in this module and `regrid` above it: a
+# whole function's worth of survivors usually means the line never ran.
+
+
+@pytest.mark.parametrize("label,budget,needs,wanted", [
+    ("homogeneous columns ARE an equal division", 3000, [500, 500, 500],
+     [1000, 1000, 1000]),
+    # the remainder of the integer division has to land somewhere:
+    # dropping it leaves the table narrower than its own tblW
+    ("the remainder lands on the first column", 1000, [100, 100, 100],
+     [334, 333, 333]),
+    ("a column over its share takes its NEED", 3000, [2287, 200, 200, 200],
+     [2287, 238, 238, 237]),
+    ("and the rest re-divide, round after round", 3100,
+     [2000, 900, 100, 100], [2000, 900, 100, 100]),
+    ("one column takes the lot", 900, [100], [900]),
+    # A column needing EXACTLY an equal share is not a hungry one: it
+    # takes the share like its siblings, and the remainder of the
+    # integer division is still there to be placed. Read as `>=` it
+    # takes its need instead, the loop ends with `left` unspent, and the
+    # table comes back a twip narrower than its own tblW.
+    ("a need equal to the share is not over it", 1000, [333, 333, 333],
+     [334, 333, 333]),
+])
+def test_water_fill_gives_a_hungry_column_its_need(label, budget, needs,
+                                                   wanted):
+    assert _water_fill(budget, needs) == wanted, label
+    assert sum(_water_fill(budget, needs) or []) == budget, label
+
+
+def test_water_fill_REFUSES_a_budget_that_cannot_meet_every_need():
+    """None, and the caller then falls back to shaving — which is what
+    `_divide` already does, so this says "not my case" rather than
+    guessing at one."""
+    assert _water_fill(500, [300, 300]) is None
+    assert _water_fill(599, [300, 300]) is None
+    assert _water_fill(600, [300, 300]) == [300, 300]
+
+
+# --- _divide_pinned: the stub gets its one-line need --------------------
+
+
+def test_the_PINNED_stub_gets_its_full_need_and_the_rest_share():
+    """A row label broken in two costs a line on EVERY data row; a
+    column heading broken in two costs one line once. Proportional
+    division cannot express that — it gave Table A2's stub 797 dxa it
+    had no use for, and shaved Table 2's to 1,627 against a need of
+    2,093, wrapping country names on twenty rows."""
+    pinned = _divide_pinned(
+        [3000, 2000, 2000], [800, 400, 400], [2093, 900, 900],
+        [True, True, True], 7000)
+    assert pinned is not None, "pinning was refused"
+    widths, cramped = pinned
+
+    assert widths == [2093, 2454, 2453], "the stub is pinned, the rest even"
+    assert sum(widths) == 7000
+    assert cramped is False
+
+
+def test_when_the_value_columns_will_not_FIT_they_are_shaved_not_refused():
+    """The middle branch of `_divide`, over the reduced budget: every
+    value column's FULL need does not fit beside the pinned stub, so
+    they are shaved from full toward hard in proportion to the room
+    each one has."""
+    pinned = _divide_pinned(
+        [3000, 2000, 2000], [800, 400, 400], [2093, 1800, 1800],
+        [True, True, True], 5000)
+    assert pinned is not None, "pinning was refused"
+    widths, cramped = pinned
+
+    assert widths == [2093, 1453, 1454]
+    assert sum(widths) == 5000
+    assert cramped is False, "shaved is not cramped: every hard minimum met"
+
+
+def test_a_stub_and_ONE_value_column_is_enough_to_pin():
+    """Two live columns is the smallest table with a stub to pin, and
+    the refusal above it is written `< 2` — a two-column table of
+    country names and one estimate is an ordinary shape, not an edge."""
+    pinned = _divide_pinned(
+        [3000, 2000], [800, 400], [2093, 900], [True, True],
+        4000)
+    assert pinned is not None, "pinning was refused"
+    widths, cramped = pinned
+
+    assert widths == [2093, 1907]
+    assert cramped is False
+
+
+def test_a_SPACER_column_keeps_its_width_and_is_out_of_the_budget():
+    """`avail` is the total less the columns nothing fills — a spacer
+    between two blocks of estimates keeps the width the grid gave it,
+    and the division happens over what is left."""
+    pinned = _divide_pinned(
+        [3000, 2000, 500], [800, 400, 0], [2093, 900, 0],
+        [True, True, False], 5500)
+    assert pinned is not None, "pinning was refused"
+    widths, _ = pinned
+
+    assert widths == [2093, 2907, 500]
+    assert sum(widths) == 5500
+    assert widths[2] == 500, "the spacer is untouched"
+
+
+def test_a_budget_that_EXACTLY_meets_the_hard_minima_is_not_refused():
+    """The refusal is for a budget that leaves the value columns UNDER
+    their unbreakable minima. Meeting them exactly is the tightest
+    table that still sets, and `<=` would send it back to a division
+    that gives the stub less than it needs."""
+    pinned = _divide_pinned(
+        [3000, 2000, 2000], [800, 400, 400], [2093, 1800, 1800],
+        [True, True, True], 2893)
+    assert pinned is not None, "pinning was refused"
+    widths, _ = pinned
+
+    assert widths == [2093, 400, 400]
+
+
+def test_the_shave_is_PROPORTIONAL_to_the_room_each_column_has():
+    """Shaved from full toward hard, in proportion to the distance
+    between them — a column whose heading is nearly as wide as its
+    content has little to give and is asked for little. Two columns
+    with DIFFERENT room, because equal room cannot tell a difference
+    from a sum or a product."""
+    pinned = _divide_pinned(
+        [3000, 2000, 2000], [800, 400, 1000], [2093, 1800, 1800],
+        [True, True, True], 5000)
+    assert pinned is not None, "pinning was refused"
+    widths, _ = pinned
+
+    assert widths == [2093, 1359, 1548]
+    assert sum(widths) == 5000
+    assert widths[1] < widths[2], "the column with more room gives more"
+
+
+@pytest.mark.parametrize("label,need_h,need_f,filled,total", [
+    ("the value columns would fall under their hard minima",
+     [800, 900, 900], [2093, 1800, 1800], [True, True, True], 3000),
+    ("there is no value column to divide anything over",
+     [800, 400], [2093, 900], [True, False], 5000),
+])
+def test_pinning_the_stub_is_REFUSED_rather_than_forced(label, need_h,
+                                                        need_f, filled,
+                                                        total):
+    """None, and the caller keeps the ordinary division. Pinning a stub
+    at the price of a value column's unbreakable minimum trades a wrap
+    on the labels for a wrap in the numbers."""
+    grid = [3000, 2000, 2000][:len(need_h)]
+
+    assert _divide_pinned(grid, need_h, need_f, filled, total) is None, label
 
 
 # --- _to_places: the MIDPOINT flag, which nothing read ------------------

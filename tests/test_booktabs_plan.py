@@ -383,6 +383,53 @@ def test_a_plain_column_needs_its_TEXT_times_pad_plus_the_margins():
     assert need_f[0] == math.ceil(full * pad) + side
 
 
+# --- the three boundaries the header walk turns on ----------------------
+#
+# Every one of `plan_booktabs`'s survivors is a comparison against
+# `header` or `len(rows)`, and the fixtures above stop one row short of
+# each boundary: a header that ends BEFORE the last row, a header of one
+# or two rows, a stats row that is not the first data row. The rows
+# below are those three tables and nothing else.
+
+
+def test_a_table_that_is_ALL_header_rows_stops_at_the_last_one():
+    """The walk runs `header` up to `len(rows)` and the clause after it
+    asks for `rows[header]` — read as `<=`, that is an IndexError on
+    every table whose rows are all group heads and empty stubs. It
+    happens: a table cut down to its heading block by an edit, and the
+    plan is computed before anything notices."""
+    plan = plan_of([["", "a", "b"], ["Group"]], width=3)
+
+    assert plan.header_rows == 2
+    assert plan.group_rows == []
+
+
+def test_a_THREE_row_header_ending_on_a_group_head_takes_the_row_below():
+    """A group head is never the last header row — the row of column
+    names it heads is. With three rows above that row, `header - 1` and
+    `header >> 1` are different rows: the first asks whether the row
+    just consumed spans, the second asks about one nowhere near the
+    boundary."""
+    plan = plan_of([["", "a"], ["", "b"], ["Group"], ["Label", "x"]],
+                   width=2)
+
+    assert plan.header_rows == 4, "the row under the group head joins it"
+    assert plan.group_rows == [2], "and the group head is the cmidrule row"
+
+
+def test_the_FIRST_data_row_is_a_summary_row_when_its_label_says_so():
+    """The summary block opens at the first row whose label names a
+    statistic, and the guard beside it — do not open a second block
+    directly under the first — is written `i > header`. Read as `>=` it
+    asks about the last HEADER row instead, and a table whose group head
+    happens to read like a statistic loses its summary rule."""
+    plan = plan_of([["Observations"], ["Observations", "1,000"],
+                    ["R-squared", "0.42"]], width=2)
+
+    assert plan.header_rows == 1
+    assert plan.stats_rows == [1], "the first data row opens the block"
+
+
 def test_a_LAST_row_that_is_only_a_label_opens_no_panel():
     """A panel rule under the last row rules off nothing — the row it
     would separate from what follows has nothing following it.
