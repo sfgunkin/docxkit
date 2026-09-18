@@ -285,6 +285,13 @@ def test_the_layout_measures_the_document_it_was_given():
     # before anything reads them — the search range on every find, the
     # probe on every page question — so the offsets they are born with
     # cannot reach an answer.
+    #
+    # THAT PREMISE IS PINNED BY THIS TEST, which is what makes the
+    # argument safe to leave standing. Measured with
+    # `tools/can_it_fail.py` on 2026-09-18: replacing either
+    # `SetRange` in `word._Layout` with `pass` turns this test red. An
+    # edit that stopped re-aiming would therefore be caught here rather
+    # than turning six parked survivors into six real ones in silence.
 
 
 # --- locate_in -------------------------------------------------------------

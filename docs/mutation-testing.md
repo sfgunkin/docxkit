@@ -1229,6 +1229,59 @@ Three rungs, and the campaign has a concrete case of each:
   instrument is unavailable rather than unwritten, and it is not a gap
   to be closed by writing more tests against the fake.
 
+### UNREACHED and UNRUNNABLE-HERE look identical in a survivor list
+
+Three modules on 2026-09-18 had a cluster of survivors in one function
+and the same cause: the line never ran. `_snap` held 83 because `regrid`
+computes it and then returns the document unchanged when the grid is
+already canonical; `_water_fill` held 19 because the branch that makes
+it not an equal division was never entered; `regrid`'s own test asserted
+its fixture back. The tell was reliable enough to state as a rule — **a
+whole function's worth of survivors, including arithmetic between two
+strings that could only raise `TypeError`, means the line never ran at
+all.**
+
+`word.py`'s six read exactly the same way and mean the opposite.
+`_Layout.__init__` holds all of them, they are the three argument shapes
+of `doc.Range(0, 0)` on each of two lines, and the module is at **100 %
+coverage under its own harness**: L971 and L983 both RAN. The line is
+reached, the assertion passes, and the mutant survives because the
+instrument that could refuse it is a real Word — which `-m word` keeps
+out of the everyday suite, and which the sweep therefore never had.
+
+So the two questions have to be asked in that order, and coverage
+answers the first one in seconds:
+
+* **did the line RUN?** No → unreached, and the round is a fixture that
+  reaches it. This is the common case and the profitable one.
+* **it ran, and nothing could tell the difference** → ask what the
+  difference would be *visible to*. If the answer is a program this
+  machine does not run, the survivor is parked with its reason, not
+  killed against a fake.
+
+The second half divides once more, and `word.py` is the worked example
+of both sides:
+
+* **the module's half**, which needs no Word and CAN be settled: nothing
+  reads the extent either probe is born with, because `find` re-aims the
+  search range with `SetRange(start, self.end)` before every `Execute`
+  and `at` re-collapses the probe with `SetRange(pos, pos)` before every
+  page question. That is not an argument any more — it is measured:
+  `tools/can_it_fail.py` turns
+  `test_page_and_line_are_reported_for_each_anchor` red by replacing
+  either `SetRange` with `pass`. The premise of the park has a test
+  under it, so a future edit that stopped re-aiming would go red rather
+  than quietly turning six parked survivors into six real ones.
+* **Word's half**, which cannot: whether `Document.Range(-1, 0)` raises,
+  clamps or is accepted. `test_what_WORD_does_with_the_RANGE_shapes_no_
+  fake_can_answer` exists to settle it and says in its own docstring
+  that it has never been run.
+
+A fake that refuses a mutant is a fake asserting its own shape. The
+useful work on an unrunnable-here cluster is to settle and PIN the half
+that does not need the instrument, name the half that does, and leave
+the second for whoever has the machine.
+
 ### The seeded sample was never the same draw twice
 
 The section above is right about the population and wrong about
