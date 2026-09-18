@@ -22,7 +22,7 @@ import re
 
 import pytest
 
-from docxkit._xml import printed_text, visible_text
+from docxkit._xml import RUN_RE, printed_text, run_holds_content, visible_text
 from docxkit.citations import wrap_visible_span
 from docxkit.errors import AnchorError
 
@@ -267,6 +267,70 @@ def test_a_printing_child_at_the_END_of_the_wrapped_run_survives_too():
 
     assert printed_text(out) == printed_text(para) == "see Rowe 1987\tand more"
     assert _linked(out) == "Rowe 1987"
+
+
+def _holds_nothing(out: str) -> list[str]:
+    """Every run in `out` that holds nothing — the shells a wrap leaves.
+
+    Asked through `run_holds_content`, the primitive the guard itself
+    calls, rather than by looking for the literal `<w:r></w:r>`: the
+    shell of a run whose `w:t` carried `xml:space` comes back as
+    `<w:r><w:t xml:space="preserve"></w:t></w:r>`, which that string
+    does not match. Ten mutants of the two guards below lived behind
+    exactly that gap in the assertion.
+    """
+    return [m.group(0) for m in RUN_RE.finditer(out)
+            if not run_holds_content(m.group(0))]
+
+
+def test_no_wrap_leaves_behind_a_run_that_holds_NOTHING():
+    """The property both edge guards exist for, asked of the output
+    rather than of either guard: after a wrap, every run still in the
+    paragraph holds something.
+
+    Asked through `run_holds_content`, which is the primitive the guards
+    themselves call — the test above looks for the literal
+    `<w:r></w:r>`, and the shell of a run whose `w:t` carried
+    `xml:space` is `<w:r><w:t xml:space="preserve"></w:t></w:r>`, which
+    that string does not match.
+
+    It kills no mutant of either guard, and that is the finding it
+    records rather than a shortcoming: `split_run` returns `''` for the
+    right half of a cut at a run's own end, for every run shape — plain,
+    styled, and with a tab, a hyphen or a break after the text — so
+    `after` is already empty wherever `end >= le` and the guard beneath
+    it cannot change the paragraph. The left half of a cut at 0 IS a
+    shell, which is why the guard above it does work. If `split_run`
+    ever returns a shell on the right, this test is what notices.
+    """
+    para = _p("see ", "Rowe 1987", " and on")
+
+    out = _wrap(para, "Rowe 1987")
+
+    assert _linked(out) == "Rowe 1987"
+    assert _holds_nothing(out) == [], out
+
+
+def test_a_span_ending_INSIDE_the_maths_past_its_last_run():
+    """`end > le`, and the asymmetry with the guard above it: offsets
+    count the maths and `RUN_RE` does not, so a span running to the end
+    of `Rowe 1987xy` ends two characters past the last `w:r` it covers,
+    and `split_run` is asked for a cut past the run's length.
+
+    That RETURNS. The mirror case — maths BEFORE the prose, so the span
+    starts before its first covered run — raises `ValueError: offset -2
+    is before the run` instead. Two sides of one function, one of them
+    reachable and one refused, and neither the guards nor their comments
+    say which is which."""
+    math = "<m:oMath><m:r><m:t>xy</m:t></m:r></m:oMath>"
+    para = ('<w:p><w:r><w:t xml:space="preserve">see </w:t></w:r>'
+            '<w:r><w:t xml:space="preserve">Rowe 1987</w:t></w:r>'
+            + math + "</w:p>")
+
+    out = _wrap(para, "Rowe 1987xy")
+
+    assert _holds_nothing(out) == [], out
+    assert printed_text(out) == printed_text(para), "no glyph may move"
 
 
 def test_a_run_with_nothing_but_its_PROPERTIES_is_still_dropped():
