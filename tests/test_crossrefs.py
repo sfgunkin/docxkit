@@ -915,7 +915,10 @@ def test_a_marker_the_helper_cannot_move_ahead_is_left_and_said_so():
 
     out, counts = crossrefs.link_more(xml)
 
-    assert "Figure2txt moved" not in counts
+    assert counts == {}, (
+        "nothing linked and nothing moved: the rebuilt marker would land "
+        "in the paragraph it started in, so the walk leaves it alone "
+        "rather than reporting a move it did not make")
     assert out.count('w:name="Figure2txt"') == 1
     assert crossrefs.audit(out)["misplaced_anchor"]
 
@@ -2273,6 +2276,53 @@ def test_a_caption_that_TYPES_its_number_in_a_computed_series():
     assert "Table 3" in found and "types its number" in found
 
 
+def test_the_finding_names_the_KIND_of_series_and_HOW_MANY_compute():
+    """The message carries the two facts a reader acts on: which kind of
+    series this is — a body series computes, an annex may legitimately
+    not — and how many others in it compute, which is what makes the odd
+    one out odd. Fourteen mutants lived on those two, and the assertion
+    above them read only the caption's own name."""
+    from docxkit.crossrefs import fieldless
+
+    xml = doc(_computed("Table", "1") + _computed("Table", "2")
+              + _typed("Table", "3") + _computed("Table", "4"))
+
+    (found,) = fieldless(xml)
+
+    assert found == ("Table 3 (body) types its number; the other 3 in "
+                     "the series compute it")
+
+
+def test_an_annex_series_that_MOSTLY_computes_is_named_an_annex():
+    """The other half of the kind: `Table A1`…`A3` with a field on all
+    but one is the same defect in a lettered series, and the word says
+    which series a reader should go and look at."""
+    from docxkit.crossrefs import fieldless
+
+    xml = doc(_computed("Table", "A1") + _computed("Table", "A2")
+              + _typed("Table", "A3"))
+
+    (found,) = fieldless(xml)
+
+    assert found == ("Table A3 (annex) types its number; the other 2 in "
+                     "the series compute it")
+
+
+def test_a_LITERAL_series_does_not_stop_the_walk_over_the_others():
+    """`Figure` is literal throughout — a house style, skipped — and the
+    `Table` series after it carries the real defect. Stopping at the
+    first literal series reports nothing at all, in a document that has
+    something to report."""
+    from docxkit.crossrefs import fieldless
+
+    xml = doc(_typed("Figure", "1") + _typed("Figure", "2")
+              + _computed("Table", "1") + _typed("Table", "2"))
+
+    (found,) = fieldless(xml)
+
+    assert "Table 2" in found
+
+
 def test_the_VISIBLE_text_is_identical_either_way():
     """Why every existing check missed it: the defect is invisible to
     anything reading the caption's text, which is what all of them
@@ -2454,3 +2504,388 @@ def test_a_GHOST_link_neither_REACHES_nor_MENTIONS_an_exhibit():
     assert got["linked"] == [], got
     assert got["unreached"] == ["Table5: nothing links to the caption"], got
     assert crossrefs.audit(first)["misplaced_anchor"] == []
+
+
+# --- the report's line, and the two helpers' defaults ------------------
+
+def test_the_report_names_what_it_REPAIRED_and_a_clean_run_is_silent():
+    """`repaired` is a bucket of its own — nothing new points anywhere,
+    something that already pointed somewhere can be followed back again
+    — and it reads as a repair only while the line says so. Inverted,
+    the line appears on every run that repaired NOTHING, naming nobody,
+    and is missing from the one run a person needs it on."""
+    done = crossrefs.LinkReport(linked=["Table1"], repaired=["Figure2"])
+    clean = crossrefs.LinkReport(linked=["Table1"])
+
+    assert ("half-linked, bookmark rebuilt under the surviving link: "
+            "Figure2") in done.format()
+    assert "bookmark rebuilt" not in clean.format(), clean.format()
+
+
+def test_the_helper_MARKS_the_mention_unless_it_is_told_not_to():
+    """`mark=True` by default, in both halves of the splice. Marking is
+    the ordinary job; `mark=False` exists for the repair of a mention
+    whose link Word ate, where the `<key>txt` bookmark SURVIVED and a
+    second one under the same name is a duplicate no gate would enjoy.
+    Defaulted the other way, every ordinary link comes out unmarked and
+    the caption has nothing to point back at."""
+    from docxkit.crossrefs import _link_mention, _split_run_at
+    from docxkit.find import mention_re
+
+    xml = doc(para(run("As Table 4 shows, it rises.")),
+              para(run("Table 4. Employment")))
+    (cap,) = crossrefs.find_captions(xml)
+    mention = paragraph_holding(xml, "As Table 4 shows")
+
+    marked, mode = _link_mention(mention, cap, 7)
+
+    assert mode == "linked"
+    assert '<w:bookmarkStart w:id="7" w:name="Table4txt"/>' in marked
+    assert '<w:bookmarkEnd w:id="7"/>' in marked
+    plain, _ = _link_mention(mention, cap, 7, mark=False)
+    assert "bookmark" not in plain, plain
+
+    # and the run-splitter under it, which carries the same default
+    content = "As Table 4 shows, it rises."
+    run_xml = run(content)
+    m = mention_re("Table", "4").search(content)
+    split = _split_run_at(
+        run_xml, content, m,
+        t_span=(run_xml.index("<w:t"),
+                run_xml.index("</w:t>") + len("</w:t>")),
+        anchor="Table4", bookmark_name="Table4txt", bid=7)
+
+    assert '<w:bookmarkStart w:id="7" w:name="Table4txt"/>' in split
+    assert '<w:bookmarkEnd w:id="7"/>' in split
+
+
+def test_the_marker_around_a_WRAPPED_hyperlink_gets_both_of_its_ends():
+    """The mention is already a link — an author's own cross-reference —
+    so the walk marks it where it stands instead of splitting a run. A
+    bookmark is a PAIR: a start whose end never arrives runs to the end
+    of the document as far as Word is concerned, and the next round's
+    `delete_bookmark` finds no end to take with it."""
+    from docxkit.crossrefs import _link_mention
+
+    xml = doc(para(run("As "),
+                   '<w:hyperlink w:anchor="Elsewhere">' + run("Figure 2")
+                   + "</w:hyperlink>", run(" shows.")),
+              para(run("Figure 2. The framework")))
+    (cap,) = crossrefs.find_captions(xml)
+    mention = paragraph_holding(xml, "As Figure 2 shows.")
+
+    wrapped, mode = _link_mention(mention, cap, 7)
+
+    assert mode == "kept the author's own anchor 'Elsewhere'"
+    assert (wrapped.index('<w:bookmarkStart w:id="7" w:name="Figure2txt"/>')
+            < wrapped.index("<w:hyperlink"))
+    assert (wrapped.index('<w:bookmarkEnd w:id="7"/>')
+            > wrapped.index("</w:hyperlink>"))
+    plain, _ = _link_mention(mention, cap, 7, mark=False)
+    assert "bookmark" not in plain, plain
+
+
+def test_ONE_malformed_node_in_a_CAPTION_does_not_cost_its_back_link():
+    """`continue`, not `break`, under `_wrap_label`'s own `r_open` guard
+    — the twin of the mention-side test above. A `w:t` that no run opens
+    before it cannot be measured from, and the label the caption is
+    actually wrapped by is in the run after it. Breaking there refuses a
+    caption whose label is sitting right there, with the message that
+    says it is split across runs — and the refusal is an exception, so
+    it costs the whole document and not one caption."""
+    xml = doc(
+        para(run("As Table 4 shows, it rises.")),
+        para('<w:t xml:space="preserve">Table 4. </w:t>'
+             + run("Table 4. Employment")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table4"], report.format()
+    caption = paragraph_holding(out, "Table 4. Table 4. Employment")
+    assert 'w:anchor="Table4txt"' in caption, caption
+    assert '<w:t xml:space="preserve">Table 4. </w:t>' in caption, \
+        "the malformed node is left exactly as it was"
+
+
+def test_an_anchor_reached_BOTH_ways_is_still_one_anchor_reached():
+    """`|`, not `^`. A manuscript mid-round holds both forms of the same
+    link — Word rewrites a field into an element whenever the author
+    saves — and an anchor reached TWICE is reached, not neither. Under
+    symmetric difference the exhibit linked most thoroughly in the paper
+    is the one `audit` files as unreached and `link` offers to repair."""
+    xml = doc(para(run("See ") + _ref_field("Table5")),
+              _mention("Table5", "Table 5"),
+              para(run("Table 5. The caption")))
+
+    assert crossrefs.reaching(xml) == {"Table5"}
+
+
+# --- half-linked, where the surviving link is a FIELD ------------------
+
+def _hyperlink_field(anchor: str, text: str) -> str:
+    """The same link Word wrote as a field: `HYPERLINK \\l "X"`, whose
+    anchor is QUOTED — which is what makes it one the repair can wrap,
+    where a `REF` naming its bookmark bare is not."""
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> HYPERLINK '
+            + chr(92) + f'l "{anchor}" </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            + run(text)
+            + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_a_half_linked_exhibit_whose_FORWARD_link_is_a_field_is_repaired():
+    """`reaches | fielded`, and the UNION is what makes the repair reach
+    the case it was written for. A forward link in field form is still a
+    forward link with its marker eaten. Subtract the fielded names
+    instead — or take the symmetric difference, which here is the same
+    subtraction, since every fielded name is one `reaching` returns —
+    and the one half-linked state this cannot see is the state Word
+    itself produces, reported as "ALREADY LINKED BY A WORD FIELD" and
+    repaired by nobody (Aging_Well R11)."""
+    xml = doc(
+        para(run("As shown in "),
+             _hyperlink_field("Figure2", "Figure 2"),
+             run(", the gap widens.")),
+        _FIGURE2_CAPTION)
+
+    out, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.repaired == ["Figure2"], report.format()
+    assert report.field_form == [], report.format()
+    assert 'w:name="Figure2txt"' in out
+
+
+def test_a_REPAIRED_exhibit_does_not_stop_the_ones_after_it():
+    """`continue`, not `break`. Word eats the run-level hyperlinks of
+    every paragraph an author rewrites, so a round produces half-linked
+    exhibits by the dozen — and a pass that repairs the first and walks
+    away is one the author runs once per figure."""
+    xml = doc(
+        para(run("As shown in "),
+             '<w:hyperlink w:anchor="Figure2">' + run("Figure 2")
+             + "</w:hyperlink>", run(", the gap widens.")),
+        _FIGURE2_CAPTION,
+        para(run("And in "),
+             '<w:hyperlink w:anchor="Figure3">' + run("Figure 3")
+             + "</w:hyperlink>", run(", it narrows.")),
+        para('<w:bookmarkStart w:id="11" w:name="Figure3"/>'
+             + run("Figure 3: The narrowing.")
+             + '<w:bookmarkEnd w:id="11"/>'),
+    )
+
+    out, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.repaired == ["Figure2", "Figure3"], report.format()
+    assert out.count('w:name="Figure2txt"') == 1
+    assert out.count('w:name="Figure3txt"') == 1
+
+
+def test_a_FIELD_over_a_missing_bookmark_is_reported_not_doubled():
+    """`not (have_cap and have_txt)`: a field reaches one of this
+    object's two names and only ONE of the two bookmarks is there, so
+    linking it would stack a second scheme on the same caption. Say so.
+    Read as "neither bookmark is there" — which cannot be true, since a
+    name the field reaches is a bookmark that exists — the guard never
+    fires and the pass writes the second scheme it exists to refuse."""
+    xml = doc(
+        para('<w:bookmarkStart w:id="9" w:name="Figure2txt"/>'
+             + run("As Figure 2 shows, the gap widens.")
+             + '<w:bookmarkEnd w:id="9"/>'),
+        para(run("Figure 2: The gap over time.") + _ref_field("Figure2txt")),
+    )
+
+    out, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.field_form == ["Figure2"], report.format()
+    assert report.linked == [] and report.repaired == []
+    assert out == xml, "a document it refuses to double is one it leaves"
+
+
+def test_a_caption_whose_back_link_is_a_FIELD_gets_no_SECOND_one():
+    """`not have_cap`, and the `or` in front of it. The caption is
+    bookmarked and a REF field already links home from it, so the back
+    step is done and the guard's job is to skip it. Drop the negation
+    and "done" becomes the reason to do it again: the caption comes back
+    carrying a field back-link and an element one over the same label,
+    which is the doubled scheme the whole module is written to avoid."""
+    xml = doc(
+        para('<w:bookmarkStart w:id="9" w:name="Figure2txt"/>'
+             + run("As Figure 2 shows, the gap widens.")
+             + '<w:bookmarkEnd w:id="9"/>'),
+        para('<w:bookmarkStart w:id="1" w:name="Figure2"/>'
+             + run("Figure 2: The gap over time.")
+             + _ref_field("Figure2txt")
+             + '<w:bookmarkEnd w:id="1"/>'),
+    )
+
+    out, report = crossrefs.link(xml, labels=("Figure",))
+
+    assert report.linked == ["Figure2"], report.format()
+    caption = paragraph_holding(out, "Figure 2: The gap over time.")
+    assert 'w:anchor="Figure2txt"' not in caption, caption
+
+
+# --- rehoming a marker: which mentions count, and what stops the walk --
+
+def _marked(anchor: str, text: str, mark: str, bid: int) -> str:
+    """A mention that is a link, with its `<key>txt` marker around it."""
+    return para(f'<w:bookmarkStart w:id="{bid}" w:name="{mark}"/>'
+                f'<w:hyperlink w:anchor="{anchor}">{run(text)}</w:hyperlink>'
+                f'<w:bookmarkEnd w:id="{bid}"/>')
+
+
+def _caption_for(anchor: str, text: str, bid: int) -> str:
+    return para(f'<w:bookmarkStart w:id="{bid}" w:name="{anchor}"/>'
+                f'<w:bookmarkEnd w:id="{bid}"/>' + run(text))
+
+
+def test_an_exhibit_with_NO_marker_does_not_end_the_rehoming_walk():
+    """`continue`, not `break`, on the marker that is not there at all.
+    An exhibit nobody has linked yet has no `<key>txt` bookmark, and a
+    paper holds both kinds at once — so breaking there leaves every
+    exhibit after the first unlinked one exactly where it was."""
+    xml = doc(
+        para(run("Figure 2 is introduced here.")),
+        para(run("Table 5 is introduced here.")),
+        _marked("Table5", "Table 5", "Table5txt", 9),
+        CAPTION2,
+        _caption_for("Table5", "Table 5. The caption", 2),
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Figure2": 1, "Table5": 1, "Table5txt moved": 1}, counts
+    assert out.count('w:name="Table5txt"') == 1
+
+
+def test_a_marker_that_NEED_NOT_move_does_not_end_the_walk_either():
+    """`continue`, not `break`, on the marker that is already home. The
+    common case in a paper that has been through this once: most markers
+    are where they belong and the one that is not is the point."""
+    xml = doc(
+        _marked("Figure2", "Figure 2", "Figure2txt", 9),
+        para(run("Table 5 is introduced here.")),
+        _marked("Table5", "Table 5", "Table5txt", 8),
+        CAPTION2,
+        _caption_for("Table5", "Table 5. The caption", 2),
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table5": 1, "Table5txt moved": 1}, counts
+    assert out.index('w:name="Figure2txt"') < out.index("introduced"), \
+        "the marker that was already home is still there"
+
+
+def test_a_marker_whose_OTHER_mention_comes_LATER_is_where_it_belongs():
+    """`pos < at` — EARLIER, and only earlier. The convention puts the
+    marker on the FIRST mention, so a second mention further down the
+    paper is not a reason to touch it. Reach for it anyway and the move
+    is attempted against a link the helper may not be able to rebuild,
+    which reports a failure about a document that is correct."""
+    xml = doc(
+        para('<w:bookmarkStart w:id="9" w:name="Figure2txt"/>'
+             + run("As ") + _ref_field("Figure2")
+             + run(" shows, it rises.")
+             + '<w:bookmarkEnd w:id="9"/>'),
+        para(run("And again in ") + _ref_field("Figure2") + run(".")),
+        CAPTION2,
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {}, counts
+    assert out == xml
+
+
+def test_a_mention_in_the_SAME_paragraph_is_not_a_reason_to_move():
+    """PARAGRAPHS, not offsets: `_where(paras, pos) != home`. Whether
+    the marker wraps its own link or sits a few characters after it is a
+    linker's choice and means nothing to a reader — comparing the raw
+    offsets called 100 of those a finding. Identity in place of equality
+    says the same thing in a subtler way: two paragraph labels built
+    apart are never the same OBJECT, so every paragraph differs from
+    itself and every marker in the paper is reached for."""
+    xml = doc(
+        para(run("As ") + _ref_field("Figure2") + run(" shows, ")
+             + '<w:bookmarkStart w:id="9" w:name="Figure2txt"/>'
+             + run("it rises.") + '<w:bookmarkEnd w:id="9"/>'),
+        CAPTION2,
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {}, counts
+    assert out == xml
+
+
+def test_a_marker_in_paragraph_TEN_still_sees_the_mention_in_NINE():
+    """`!=`, and `_where` answers a STRING: "¶9" sorts AFTER "¶10", so
+    an ORDERING test drops every single-digit paragraph out of the
+    comparison the moment the marker reaches the tenth — both in the
+    reason to move and in the check on where the move landed. A paper's
+    exhibits are not in its first nine paragraphs, so the ordering forms
+    agree on every short fixture and on no real document."""
+    filler = [para(run(f"Paragraph {i} of the introduction."))
+              for i in range(1, 9)]
+    xml = doc(
+        *filler,
+        para(run("Figure 2 is introduced here.")),
+        _marked("Figure2", "Figure 2", "Figure2txt", 9),
+        CAPTION2,
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Figure2": 1, "Figure2txt moved": 1}, counts
+    first = paragraph_holding(out, "Figure 2 is introduced here.")
+    assert 'w:name="Figure2txt"' in first
+    assert out.count('w:name="Figure2txt"') == 1
+
+
+def test_a_marker_the_helper_CANNOT_rebuild_is_COUNTED_and_the_walk_goes_on():
+    """The earlier mention is a REF field: a mention, and not a link
+    `wrap_link_in_bookmark` can wrap, because a REF names its bookmark
+    unquoted. So the marker stays where it is and the count says so —
+    a silent failure here reads as a document that needed nothing. The
+    refusal belongs to ONE exhibit; the walk goes on to the next."""
+    xml = doc(
+        para(run("As ") + _ref_field("Figure2") + run(" shows, it rises.")),
+        para(run("Intervening prose.")),
+        para('<w:bookmarkStart w:id="9" w:name="Figure2txt"/>'
+             + run("Later, the same picture.")
+             + '<w:bookmarkEnd w:id="9"/>'),
+        para(run("Table 5 is introduced here.")),
+        _marked("Table5", "Table 5", "Table5txt", 8),
+        CAPTION2,
+        _caption_for("Table5", "Table 5. The caption", 2),
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table5": 1,
+                      "Figure2txt not moved": 1,
+                      "Table5txt moved": 1}, counts
+    assert out.count('w:name="Figure2txt"') == 1, "left where it was"
+
+
+def test_a_marker_that_lands_where_it_STARTED_does_not_end_the_walk():
+    """`continue`, not `break`, on the move that would change nothing.
+    Landing in its own paragraph means the earlier mention was not one
+    the helper could wrap, which is this exhibit's news and not the
+    paper's: the rest of the exhibits are still waiting behind it."""
+    xml = doc(
+        para(run("As ") + _ref_field("Figure2") + run(" shows, it rises.")),
+        _marked("Figure2", "Figure 2", "Figure2txt", 9),
+        para(run("Table 5 is introduced here.")),
+        _marked("Table5", "Table 5", "Table5txt", 8),
+        CAPTION2,
+        _caption_for("Table5", "Table 5. The caption", 2),
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table5": 1, "Table5txt moved": 1}, counts
+    assert out.count('w:name="Figure2txt"') == 1, "left where it started"
