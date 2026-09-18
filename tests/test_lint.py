@@ -18,6 +18,160 @@ def _parts(body: str, **extra: str) -> dict[str, bytes]:
     return parts
 
 
+# --- the rule TABLES -----------------------------------------------------
+#
+# `lint` is a rule engine: every check is a walk over a tag table, and
+# cosmic-ray plans no mutant on a tuple's members. The data census of
+# 2026-09-18 took each of the 55 members out alone and ran this harness:
+# 39 of them could go with every test green — `w:trPr` out of the marker
+# parents, so every tracked ROW insertion reads as an empty `w:ins`;
+# ENDNOTES and COMMENTS out of `_PARTS`, so two of the four parts are
+# never read at all; seven of the nine CT_PPr names; ten of the eleven
+# stray properties. `revision/_losses` lost `m:t` from its glyph walk the
+# same way.
+#
+# So each table is held to its CONTENTS, which is the claim it makes —
+# `test_text_parts_covers_what_a_reader_reads` in `test_part_names.py` is
+# the same shape one module over. Not parametrized OVER the table: a test
+# that draws its cases from the list it is checking loses a case when the
+# list loses a member, and passes.
+
+
+def test_the_PARTS_read_are_the_four_text_bearing_ones():
+    """A part missing from this tuple is a part nothing lints, silently:
+    the walk reports on the three it has and the report looks clean."""
+    from docxkit._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES
+    from docxkit.lint import _PARTS
+
+    assert _PARTS == (DOCUMENT, FOOTNOTES, ENDNOTES, COMMENTS)
+
+
+def test_the_BLOCK_CONTAINERS_are_the_five_that_hold_blocks_only():
+    from docxkit.lint import _BLOCK_CONTAINERS
+
+    assert _BLOCK_CONTAINERS == ("footnote", "endnote", "body", "tc",
+                                 "comment")
+
+
+def test_the_RUN_LEVEL_tags_are_the_four_plus_the_two_math_ones():
+    from docxkit.lint import _RUN_LEVEL, _RUN_LEVEL_MATH
+
+    assert _RUN_LEVEL == ("r", "ins", "del", "hyperlink")
+    assert _RUN_LEVEL_MATH == ("oMath", "oMathPara")
+
+
+def test_the_CT_PPr_names_that_must_precede_rPr_are_the_nine():
+    """The schema's order, and the list check 5 is: a name that falls
+    out stops being an ordering error anywhere in the corpus."""
+    from docxkit.lint import _PPR_BEFORE_RPR
+
+    wanted = frozenset({
+        "pStyle", "keepNext", "keepLines", "numPr", "spacing", "ind", "jc",
+        "outlineLvl", "contextualSpacing"})
+
+    assert wanted == _PPR_BEFORE_RPR
+
+
+def test_the_STRAY_paragraph_properties_are_those_nine_and_eleven_more():
+    """Check 1b's table: a property sitting directly in `w:p`, which
+    Word drops in silence. Built from `_PPR_BEFORE_RPR` plus the rest of
+    CT_PPr a builder reaches for, and `w:rPr` is deliberately NOT in it —
+    it is the paragraph mark's own run properties and every tracked
+    paragraph-mark revision carries one."""
+    from docxkit.lint import _PPR_BEFORE_RPR, _PPR_STRAYS, W
+
+    extras = {"pageBreakBefore", "widowControl", "pBdr", "shd", "tabs",
+              "suppressLineNumbers", "textAlignment", "mirrorIndents",
+              "adjustRightInd", "snapToGrid", "bidi"}
+    wanted = frozenset(W + t for t in _PPR_BEFORE_RPR | extras)
+
+    assert wanted == _PPR_STRAYS
+    assert W + "rPr" not in _PPR_STRAYS
+
+
+def test_the_PROPERTIES_elements_and_their_OWNERS_are_the_five():
+    """7b walks the properties elements; 7c asks which element may carry
+    one. Two tables about the same five, and they have to agree."""
+    from docxkit.lint import _OWNER, _PROPS
+
+    assert _PROPS == ("tcPr", "rPr", "pPr", "trPr", "tblPr")
+    assert _OWNER == {"tc": "tcPr", "tr": "trPr", "tbl": "tblPr",
+                      "p": "pPr", "r": "rPr"}
+    assert set(_OWNER.values()) == set(_PROPS)
+
+
+def test_the_BLOCK_CHILDREN_a_revision_may_not_hold_are_the_four():
+    from docxkit.lint import _BLOCK_CHILDREN, W
+
+    wanted = frozenset({W + "p", W + "tbl", W + "tr", W + "tc"})
+
+    assert wanted == _BLOCK_CHILDREN
+
+
+def test_the_MARKER_PARENTS_are_the_RUN_and_the_ROW_properties():
+    """A revision inside one of these is a MARK, not a range: the
+    paragraph mark's own `w:rPr` and the row's `w:trPr`. Losing either
+    makes every marker of that kind read as an empty revision, which is
+    a refusal on a file nothing is wrong with — the defect this list
+    exists to prevent, which the census could take `w:trPr` out of with
+    the whole suite green."""
+    from docxkit.lint import _MARKER_PARENTS, W
+
+    wanted = frozenset({W + "rPr", W + "trPr"})
+
+    assert wanted == _MARKER_PARENTS
+
+
+def test_a_tracked_ROW_revision_is_a_marker_and_not_an_empty_revision():
+    """The behaviour behind the table above, on the half the harness
+    could not see: Word marks an inserted table row with a self-closing
+    `w:ins` inside the row's `w:trPr`, and every redline that adds a row
+    carries one."""
+    row = ('<w:tbl><w:tr><w:trPr><w:ins w:id="9" w:author="A" '
+           'w:date="d"/></w:trPr><w:tc><w:p>' + run("a new row")
+           + "</w:p></w:tc></w:tr></w:tbl>")
+
+    assert lint_parts(_parts(para(run("prose")) + row)) == []
+
+
+def test_EVERY_text_bearing_part_is_linted_not_just_the_body():
+    """Two of the four parts were unpinned: the walk reported on the
+    ones it had and a document whose only damage was in the endnotes or
+    in a comment read as clean."""
+    edge = run(" leading space")          # check 3b, in whichever part
+    endnotes = (f'<w:endnotes {NS}><w:endnote w:id="2"><w:p>{edge}'
+                "</w:p></w:endnote></w:endnotes>")
+    comments = (f'<w:comments {NS}><w:comment w:id="1"><w:p>{edge}'
+                "</w:p></w:comment></w:comments>")
+
+    for part, xml in (("endnotes", endnotes), ("comments", comments)):
+        problems = lint_parts(_parts(para(run("clean")), **{part: xml}))
+        assert any("edge whitespace" in p for p in problems), part
+
+
+@pytest.mark.parametrize("kind", ["rPrChange", "pPrChange"])
+def test_a_FORMATTING_revision_counts_toward_the_duplicate_id_check(kind):
+    """The walk collects ids from four kinds and only the two CONTENT
+    ones were pinned: it could stop reading either formatting kind with
+    the suite green. Word gives a `w:rPrChange` or a `w:pPrChange` an id
+    like any other revision, and two sharing one is what check 8 exists
+    for — Word merges or drops them.
+
+    One paragraph per revision, because a `w:pPrChange` lives in the
+    paragraph's own `w:pPr` and a paragraph has one.
+    """
+    inner = ('<w:rPr><w:rPrChange w:id="7" w:author="A" w:date="d">'
+             "<w:rPr/></w:rPrChange></w:rPr>" if kind == "rPrChange"
+             else '<w:pPr><w:pPrChange w:id="7" w:author="A" w:date="d">'
+                  "<w:pPr/></w:pPrChange></w:pPr>")
+    one = (f"<w:p>{inner}" + run("a") + "</w:p>" if kind == "pPrChange"
+           else f"<w:p><w:r>{inner}<w:t>a</w:t></w:r></w:p>")
+
+    problems = lint_parts(_parts(one + one))
+
+    assert any("duplicate revision w:id" in p for p in problems), problems
+
+
 def test_clean_document_reports_nothing():
     assert lint_parts(_parts(para(run("ordinary prose")))) == []
 
