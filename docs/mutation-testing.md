@@ -2525,10 +2525,36 @@ One signature, three species, and they want opposite work:
     in a MESSAGE   untested wording — the cosmetic answer.
     the rest       read the callee.
 
-Across 66 sessions the 116 divide **72 / 27 / 17**. So the question the
-tool was built to answer — *how much residual survival is unobservable
-rather than untested* — was never answered by 116: at most 72 are even
-candidates, and that is still an upper bound until somebody reads them.
+**And then the author took two of its candidates and the number moved
+again.** Both of `snapshot.py`'s were quote widths it had argued
+COSMETIC itself, hours earlier — its own settled work, handed back as
+open questions by its own tool.
+
+The cause is a distinction this campaign draws deliberately, and
+`claimed_equivalents` answers for one KIND at a time: an EQUIVALENCE
+claim leaves the survivor list and the figure, while a COSMETIC claim
+leaves the list and stays IN the figure, because discounting it would
+report work nobody means to do as work that cannot be done. The tool
+asked only for `equivalent`, so every settled cosmetic mutant in the
+package arrived as a candidate — 120 of them.
+
+    was   116 clusters:  72 read-the-callee, 27 message, 17 never run
+    is     68 clusters:  46 read-the-callee,  6 message, 16 never run
+
+Counted under their own name rather than dropped, so the discount line
+reads *"1,081 already claimed, 120 argued cosmetic"*.
+
+So the question the tool was built to answer — *how much residual
+survival is unobservable rather than untested* — was never answered by
+116, and is not answered by 68 either: at most 46 are candidates, and
+that is an upper bound until somebody reads them.
+
+**Three corrections, all from reading what it ranked highest.** Row
+keying missed two of three known answers; the first ranking put untested
+wording and never-run lines on top; and half the candidates turned out
+to be settled work. **The correction rate on this number is 100 % so
+far** — every time somebody has read the top of the list, it has moved.
+Hold it as provisional. It is still the best list there is.
 
 **The first version would have shipped a ranked list whose top five
 entries pointed the reader at the wrong question.** What caught it was
