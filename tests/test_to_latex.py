@@ -415,3 +415,208 @@ def test_the_math_alphanumeric_block_starts_at_its_FIRST_character():
     assert to_latex(m(r("\U0001d400"))) == "A"
     assert to_latex(m(r("\U0001d465"))) == "x"
     assert to_latex(m(r("ℎ"))) == "ℎ"
+# --- the census of 2026-09-18 -----------------------------------------
+#
+# `to_latex` is six TABLES and a walk over them, and no mutation
+# operator can reach a dict member: taking one out changes no line an
+# operator rewrites, so the whole mapping is invisible to a sweep — 183
+# members of a module measured at 10.3 %.
+#
+# So the membership is held here, written out, and every member is
+# exercised FROM THIS LIST rather than from the table it checks: a test
+# that draws its cases from the table loses a case when the table loses
+# a member, and passes.
+#
+# The expectations are what the member does in a SENTENCE — `x` before
+# it and `y` after — because that is where a mapping shows its work: the
+# guard space that keeps `\le x` from fusing into `\lex`, the invisible
+# operators that render as nothing, the no-break space that renders as
+# one.
+#
+# `_FENCES` has a sixteenth member this does not exercise: `"": "."`,
+# the empty delimiter LaTeX spells `\left.`. `_Walker` cannot reach it —
+# `_mval(...) or "("` replaces "no delimiter" with the default bracket
+# before the table is asked — and that is filed as a defect rather than
+# pinned here.
+
+GREEK = [
+    ('Γ', 'x\\Gamma y'), ('Δ', 'x\\Delta y'),
+    ('Θ', 'x\\Theta y'), ('Λ', 'x\\Lambda y'),
+    ('Ξ', 'x\\Xi y'), ('Π', 'x\\Pi y'),
+    ('Σ', 'x\\Sigma y'), ('Υ', 'x\\Upsilon y'),
+    ('Φ', 'x\\Phi y'), ('Ψ', 'x\\Psi y'),
+    ('Ω', 'x\\Omega y'), ('α', 'x\\alpha y'),
+    ('β', 'x\\beta y'), ('γ', 'x\\gamma y'),
+    ('δ', 'x\\delta y'), ('ε', 'x\\varepsilon y'),
+    ('ζ', 'x\\zeta y'), ('η', 'x\\eta y'),
+    ('θ', 'x\\theta y'), ('ι', 'x\\iota y'),
+    ('κ', 'x\\kappa y'), ('λ', 'x\\lambda y'),
+    ('μ', 'x\\mu y'), ('ν', 'x\\nu y'),
+    ('ξ', 'x\\xi y'), ('π', 'x\\pi y'),
+    ('ρ', 'x\\rho y'), ('ς', 'x\\varsigma y'),
+    ('σ', 'x\\sigma y'), ('τ', 'x\\tau y'),
+    ('υ', 'x\\upsilon y'), ('φ', 'x\\varphi y'),
+    ('χ', 'x\\chi y'), ('ψ', 'x\\psi y'),
+    ('ω', 'x\\omega y'), ('ϑ', 'x\\vartheta y'),
+    ('ϕ', 'x\\phi y'), ('ϖ', 'x\\varpi y'),
+    ('ϱ', 'x\\varrho y'), ('ϵ', 'x\\epsilon y'),
+]
+
+SYMBOLS = [
+    ('#', 'x\\#y'), ('$', 'x\\$y'),
+    ('%', 'x\\%y'), ('&', 'x\\&y'),
+    ('_', 'x\\_y'), ('{', 'x\\{y'),
+    ('}', 'x\\}y'), ('\xa0', 'x y'),
+    ('¬', 'x\\neg y'), ('°', 'x^{\\circ}y'),
+    ('±', 'x\\pm y'), ('×', 'x\\times y'),
+    ('÷', 'x\\div y'), ('‐', 'x-y'),
+    ('–', 'x-y'), ('…', 'x\\dots y'),
+    ('′', "x'y"), ('″', "x''y"),
+    ('\u2061', 'xy'), ('\u2062', 'xy'),
+    ('\u2064', 'xy'), ('ℂ', 'x\\mathbb{C}y'),
+    ('ℏ', 'x\\hbar y'), ('ℓ', 'x\\ell y'),
+    ('ℕ', 'x\\mathbb{N}y'), ('ℚ', 'x\\mathbb{Q}y'),
+    ('ℝ', 'x\\mathbb{R}y'), ('ℤ', 'x\\mathbb{Z}y'),
+    ('←', 'x\\leftarrow y'), ('→', 'x\\to y'),
+    ('↔', 'x\\leftrightarrow y'), ('↦', 'x\\mapsto y'),
+    ('⇐', 'x\\Leftarrow y'), ('⇒', 'x\\Rightarrow y'),
+    ('⇔', 'x\\Leftrightarrow y'), ('∀', 'x\\forall y'),
+    ('∂', 'x\\partial y'), ('∃', 'x\\exists y'),
+    ('∅', 'x\\emptyset y'), ('∇', 'x\\nabla y'),
+    ('∈', 'x\\in y'), ('∉', 'x\\notin y'),
+    ('∋', 'x\\ni y'), ('−', 'x-y'),
+    ('∓', 'x\\mp y'), ('∖', 'x\\setminus y'),
+    ('∗', 'x\\ast y'), ('∘', 'x\\circ y'),
+    ('∝', 'x\\propto y'), ('∞', 'x\\infty y'),
+    ('∧', 'x\\wedge y'), ('∨', 'x\\vee y'),
+    ('∩', 'x\\cap y'), ('∪', 'x\\cup y'),
+    ('∼', 'x\\sim y'), ('≃', 'x\\simeq y'),
+    ('≅', 'x\\cong y'), ('≈', 'x\\approx y'),
+    ('≠', 'x\\ne y'), ('≡', 'x\\equiv y'),
+    ('≤', 'x\\le y'), ('≥', 'x\\ge y'),
+    ('≪', 'x\\ll y'), ('≫', 'x\\gg y'),
+    ('⊂', 'x\\subset y'), ('⊃', 'x\\supset y'),
+    ('⊆', 'x\\subseteq y'), ('⊇', 'x\\supseteq y'),
+    ('⊕', 'x\\oplus y'), ('⊗', 'x\\otimes y'),
+    ('⋅', 'x\\cdot y'), ('⋮', 'x\\vdots y'),
+    ('⋯', 'x\\cdots y'), ('⋱', 'x\\ddots y'),
+    ('⟶', 'x\\longrightarrow y'), ('𝔼', 'x\\mathbb{E}y'),
+]
+
+NARY = [
+    ('∏', '\\prod {x}'), ('∐', '\\coprod {x}'),
+    ('∑', '\\sum {x}'), ('∫', '\\int {x}'),
+    ('∬', '\\iint {x}'), ('∭', '\\iiint {x}'),
+    ('∮', '\\oint {x}'), ('⋀', '\\bigwedge {x}'),
+    ('⋁', '\\bigvee {x}'), ('⋂', '\\bigcap {x}'),
+    ('⋃', '\\bigcup {x}'), ('⨁', '\\bigoplus {x}'),
+    ('⨂', '\\bigotimes {x}'),
+]
+
+FENCES = [
+    ('(', '\\left( x \\right)'), (')', '\\left) x \\right)'),
+    ('[', '\\left[ x \\right)'), (']', '\\left] x \\right)'),
+    ('{', '\\left\\{ x \\right)'), ('|', '\\left| x \\right)'),
+    ('}', '\\left\\} x \\right)'), ('‖', '\\left\\| x \\right)'),
+    ('⌈', '\\left\\lceil x \\right)'), ('⌉', '\\left\\rceil x \\right)'),
+    ('⌊', '\\left\\lfloor x \\right)'), ('⌋', '\\left\\rfloor x \\right)'),
+    ('⟨', '\\left\\langle x \\right)'), ('⟩', '\\left\\rangle x \\right)'),
+]
+
+ACCENTS = [
+    ('¯', '\\bar{x}'), ('̀', '\\grave{x}'),
+    ('́', '\\acute{x}'), ('̂', '\\hat{x}'),
+    ('̃', '\\tilde{x}'), ('̄', '\\bar{x}'),
+    ('̅', '\\bar{x}'), ('̆', '\\breve{x}'),
+    ('̇', '\\dot{x}'), ('̈', '\\ddot{x}'),
+    ('̌', '\\check{x}'), ('⃗', '\\vec{x}'),
+    ('→', '\\vec{x}'),
+]
+
+FUNCS = [
+    ('Pr', '\\Pr {x}'), ('arccos', '\\arccos {x}'),
+    ('arcsin', '\\arcsin {x}'), ('arctan', '\\arctan {x}'),
+    ('arg', '\\arg {x}'), ('cos', '\\cos {x}'),
+    ('cosh', '\\cosh {x}'), ('cot', '\\cot {x}'),
+    ('coth', '\\coth {x}'), ('csc', '\\csc {x}'),
+    ('det', '\\det {x}'), ('dim', '\\dim {x}'),
+    ('exp', '\\exp {x}'), ('gcd', '\\gcd {x}'),
+    ('inf', '\\inf {x}'), ('lim', '\\lim {x}'),
+    ('ln', '\\ln {x}'), ('log', '\\log {x}'),
+    ('max', '\\max {x}'), ('min', '\\min {x}'),
+    ('sec', '\\sec {x}'), ('sin', '\\sin {x}'),
+    ('sinh', '\\sinh {x}'), ('sup', '\\sup {x}'),
+    ('tan', '\\tan {x}'), ('tanh', '\\tanh {x}'),
+]
+
+
+def esc(text: str) -> str:
+    """`&` is not a character an XML fixture can carry raw."""
+    return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
+def test_the_six_TABLES_hold_exactly_these_members():
+    """The census itself. Every other test in this file asks what a
+    construct becomes; this one asks what the module still KNOWS.
+
+    Membership here, and what each member DOES in the parametrized tests
+    below — so a member whose mapping is wrong fails there, and a member
+    that disappears fails here rather than silently taking its case with
+    it."""
+    from docxkit import equations
+
+    assert {ch for ch, _ in GREEK} == set(equations._GREEK)
+    assert {ch for ch, _ in SYMBOLS} == set(equations._SYMBOLS)
+    assert {ch for ch, _ in NARY} == set(equations._NARY)
+    assert {ch for ch, _ in FENCES} | {""} == set(equations._FENCES)
+    assert {ch for ch, _ in ACCENTS} == set(equations._ACCENTS)
+    assert {name for name, _ in FUNCS} == equations._KNOWN_FUNCS
+    assert len(GREEK) + len(SYMBOLS) + len(NARY) + len(FENCES) \
+        + len(ACCENTS) + len(FUNCS) == 182, "182 exercised, 183 defined"
+
+
+@pytest.mark.parametrize("ch,latex", GREEK)
+def test_every_GREEK_letter_reads_as_its_command(ch, latex):
+    assert to_latex(m(r(f"x{ch}y"))) == latex
+
+
+@pytest.mark.parametrize("ch,latex", SYMBOLS)
+def test_every_SYMBOL_reads_as_its_command(ch, latex):
+    assert to_latex(m(r(esc(f"x{ch}y")))) == latex
+
+
+@pytest.mark.parametrize("ch,latex", NARY)
+def test_every_N_ARY_operator_reads_as_its_command(ch, latex):
+    nary = (f'<m:nary><m:naryPr><m:chr m:val="{ch}"/></m:naryPr>'
+            f"<m:sub/><m:sup/><m:e>{r('x')}</m:e></m:nary>")
+    assert to_latex(m(nary)) == latex
+
+
+@pytest.mark.parametrize("ch,latex", FENCES)
+def test_every_FENCE_reads_as_its_command(ch, latex):
+    fence = (f'<m:d><m:dPr><m:begChr m:val="{esc(ch)}"/>'
+             f'<m:endChr m:val=")"/></m:dPr><m:e>{r("x")}</m:e></m:d>')
+    assert to_latex(m(fence)) == latex
+
+
+@pytest.mark.parametrize("ch,latex", ACCENTS)
+def test_every_ACCENT_reads_as_its_command(ch, latex):
+    acc = (f'<m:acc><m:accPr><m:chr m:val="{ch}"/></m:accPr>'
+           f"<m:e>{r('x')}</m:e></m:acc>")
+    assert to_latex(m(acc)) == latex
+
+
+@pytest.mark.parametrize("name,latex", FUNCS)
+def test_every_KNOWN_FUNCTION_reads_as_its_command(name, latex):
+    """And an unknown one as `\\operatorname`, which is the whole point
+    of the set: `\\wobble` is not a command any renderer has."""
+    func = (f"<m:func><m:fName>{r(name)}</m:fName>"
+            f"<m:e>{r('x')}</m:e></m:func>")
+    assert to_latex(m(func)) == latex
+
+
+def test_a_function_the_table_does_NOT_know_is_an_operatorname():
+    func = (f"<m:func><m:fName>{r('wobble')}</m:fName>"
+            f"<m:e>{r('x')}</m:e></m:func>")
+
+    assert to_latex(m(func)) == r"\operatorname{wobble} {x}"
