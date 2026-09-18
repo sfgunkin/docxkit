@@ -14,6 +14,93 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — words inserted at a paragraph's END land inside a trailing tracked revision~~ — FIXED 18.09, `cfd6383`
+<!-- status: fixed -->
+
+Found 2026-09-18 by the `edit.py` survivor round that followed the eight
+fixes of that morning — and found by REFUSING to settle a survivor rather
+than by chasing one.
+
+The row is `insert_in_para`'s `at != cursor` mutated to `at is not cursor`.
+It is not equivalent, and the round declined to write a test pinning the
+current answer, because **the current answer is wrong**.
+
+`_between_runs` returns `runs[-1].end()` for `at == cursor` — the end of the
+last run. When that last run sits inside a `w:ins` or a `w:del`, that
+position is INSIDE the wrapper, so words inserted at the paragraph's end
+become part of somebody else's revision:
+
+* inside `w:del`, the new run is a `<w:t>` where the schema wants
+  `<w:delText>` — and ACCEPTING the deletion takes the new words with it;
+* inside `w:ins`, the words are attributed to that author, and REJECTING
+  the insertion deletes them.
+
+Nothing shows it. The words read in order on the page, the revision
+resolves, and `revision validate` counts exactly what it counted before. It
+is only visible once somebody adjudicates the round, by which time the text
+is gone or attributed to the wrong person.
+
+The mutant lands the words before `</w:p>`, outside both wrappers — the
+RIGHT answer for the wrong reason, which is why the row is killable the
+moment the defect is fixed and why pinning it now would have cemented the
+bug in a test.
+
+Repro: `scratchpad\agents\edit_replace\defect_5.py`.
+
+The fix belongs with `_between_runs`: the end of a paragraph is after the
+last run AND outside any revision wrapper that run sits in, which is the
+same distinction `insert_in_para` already makes at the edge of a hyperlink
+and a bookmark ("at the EDGE of a link or bookmark the content lands
+OUTSIDE it"). A tracked revision is the third member of that family and the
+only one not handled.
+
+**Not fixed in the round, deliberately**, per the standing rule that a
+survivor round reports a defect with a repro and does not touch `src/`. The
+held row is recorded here so the next round does not re-argue it: it is
+neither equivalent nor killable today, and it becomes killable with the fix.
+
+**Fixed in the family it belonged to.** `_revision_spans` now joins
+`protected`, so `_shielded` moves an insertion position out at an EDGE
+exactly as it already did for a hyperlink and a bookmark — and
+`_outside` gives the right edge for each with no special case: a
+DELETION shows nothing, so the paragraph's text ends before it and so do
+the words; an INSERTION shows its own, so they go after it.
+
+`_REVISION_RE` carries `HYPERLINK_ANY_RE`'s ghost guard, and it earns
+its place twice here: `w:ins` and `w:del` are also written self-closing
+inside `w:rPr` and `w:trPr`, and pairing one of those with the next
+close tag downstream would span half a table.
+
+**Seen RED first**, four cases — the end of a paragraph outside a
+trailing insertion and before a trailing deletion, each parametrized
+short and past-256 — then each put through `tools/can_it_fail.py`
+against the fix line itself.
+
+**Two things beyond the entry.**
+
+Inserting strictly INSIDE a revision stays allowed and has no flag: a
+review round's paragraphs are wrapped in `w:ins` whole, and refusing to
+write in one would refuse the round. That `True` was itself an untested
+line, so it is now pinned by a test of its own.
+
+`_field_instruction` collects the reading of a field's instruction that
+the S3 fix had duplicated at its two refusals. The duplication cost four
+mutants their verdict — a line the module writes twice cannot be claimed
+— so the two claimable rows are claimable again rather than being
+written off as cosmetic.
+
+**And a held row is settled**: with the defect fixed, `insert_in_para`'s
+`at != cursor` -> `at is not cursor` is KILLED by the trailing-deletion
+test, exactly as it was argued to be. A kill now, not a claim.
+
+Five of the round's claims were DELETED and re-argued rather than
+reworded: their argument leaned on `insert_in_para` refusing every
+offset above `cursor`, which stopped being true when the bound became
+the paragraph's text. Same mutants, same verdicts, arguments that
+describe today's code.
+
+Fixed by mut-edit-replace.
+
 ### ~~S2 — CI red for two pushes while eleven gates read green: the deps gate was pointed at src alone~~ — FIXED 18.09, `2aad032`
 
 <!-- status: fixed -->

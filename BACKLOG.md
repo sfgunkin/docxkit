@@ -46,6 +46,46 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — batch._LABEL misses a label whose run carries a second property, 35% of the corpus
+
+<!-- status: open -->
+
+Found 2026-09-18 by mut-exhibits, during the `batch.py` census — and
+found by READING the pattern a census case pointed at, not by a mutant.
+
+`batch._LABEL` requires `</w:rPr>` immediately after the Hyperlink
+`rStyle`, so a label whose run carries a second run property is not
+named at all, and `diagnose` falls through to *"a reason preflight does
+not model"*.
+
+A second property is the ordinary case, not the exception:
+
+* `w:noProof` — which Word writes on every cross-reference;
+* `w:b`, `w:color`, `w14:ligatures`, and the rest of a styled label.
+
+**Measured on this machine's corpus: 9,161 of 25,802 Hyperlink `rStyle`
+elements, 35 %.** So better than a third of the labels this reader
+exists to name are invisible to it, and the failure is the quiet kind —
+`diagnose`'s job is to say WHY a batch was refused, and it answers with
+the sentence that means "I have no idea" over a case it was written to
+handle.
+
+Repro: `scratchpad\agents\batch\defect_1.py`.
+
+**Not fixed in the round that found it**, per the round's rule, and the
+fix wants a decision rather than a patch: the pattern should read the
+run's properties as a SET rather than as a fixed sequence, which is the
+same shape as the `w:fldLock`-before-type finding in `_compare_diff`
+and the attribute-order work already done in `citations` and
+`comments`. Worth doing as one pass over every reader that assumes an
+attribute or a child element comes first, rather than four separate
+one-line repairs.
+
+**Why no test caught it.** Every label fixture in the suite carries the
+`rStyle` alone. The census that led here was deleting members of the
+gate's carrier table, which is a different question — this came out of
+reading the pattern beside them.
+
 ### S1 — parse_number reads a DECIMAL comma as a thousands separator, and _render_value writes the result back
 
 <!-- status: open -->
@@ -141,52 +181,6 @@ Not investigated further in the round that found it, because whether that
 author OUGHT to link is a question about `citations` rather than about the
 test that turned it up — and the round declined to freeze the present
 behaviour into a test either way, which was the right call.
-
-### S1 — words inserted at a paragraph's END land inside a trailing tracked revision
-
-<!-- status: open -->
-
-Found 2026-09-18 by the `edit.py` survivor round that followed the eight
-fixes of that morning — and found by REFUSING to settle a survivor rather
-than by chasing one.
-
-The row is `insert_in_para`'s `at != cursor` mutated to `at is not cursor`.
-It is not equivalent, and the round declined to write a test pinning the
-current answer, because **the current answer is wrong**.
-
-`_between_runs` returns `runs[-1].end()` for `at == cursor` — the end of the
-last run. When that last run sits inside a `w:ins` or a `w:del`, that
-position is INSIDE the wrapper, so words inserted at the paragraph's end
-become part of somebody else's revision:
-
-* inside `w:del`, the new run is a `<w:t>` where the schema wants
-  `<w:delText>` — and ACCEPTING the deletion takes the new words with it;
-* inside `w:ins`, the words are attributed to that author, and REJECTING
-  the insertion deletes them.
-
-Nothing shows it. The words read in order on the page, the revision
-resolves, and `revision validate` counts exactly what it counted before. It
-is only visible once somebody adjudicates the round, by which time the text
-is gone or attributed to the wrong person.
-
-The mutant lands the words before `</w:p>`, outside both wrappers — the
-RIGHT answer for the wrong reason, which is why the row is killable the
-moment the defect is fixed and why pinning it now would have cemented the
-bug in a test.
-
-Repro: `scratchpad\agents\edit_replace\defect_5.py`.
-
-The fix belongs with `_between_runs`: the end of a paragraph is after the
-last run AND outside any revision wrapper that run sits in, which is the
-same distinction `insert_in_para` already makes at the edge of a hyperlink
-and a bookmark ("at the EDGE of a link or bookmark the content lands
-OUTSIDE it"). A tracked revision is the third member of that family and the
-only one not handled.
-
-**Not fixed in the round, deliberately**, per the standing rule that a
-survivor round reports a defect with a repro and does not touch `src/`. The
-held row is recorded here so the next round does not re-argue it: it is
-neither equivalent nor killable today, and it becomes killable with the fix.
 
 ### S3 — the lint refusal may be FALSE for three classes, and the check needs Word
 
