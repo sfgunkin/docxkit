@@ -2313,8 +2313,17 @@ def test_a_balanced_field_is_no_finding():
 #: A field marker as other producers write one: a space before the close
 #: (369 in 9 of 2,954 corpus packages), or a locked field (`w:fldLock`, 9
 #: in 2). The patterns read only `<w:fldChar w:fldCharType="…"/>`.
+#:
+#: The third spelling is the same attributes in the other ORDER, which
+#: XML does not distinguish and a reader of the pattern easily does:
+#: `<w:fldChar\b[^>]*\bw:fldCharType=` is written that way on purpose —
+#: the same reading `integrity` gives bookmark ids, after hard-coding
+#: the order there made the layer find no bookmarks at all on a
+#: conforming document. Added by the data census of 2026-09-18: deleting
+#: the `[^>]*` from the counter's pattern changed no test.
 _OTHER_BEGINS = ('<w:fldChar w:fldCharType="begin" />',
-                 '<w:fldChar w:fldCharType="begin" w:fldLock="1"/>')
+                 '<w:fldChar w:fldCharType="begin" w:fldLock="1"/>',
+                 '<w:fldChar w:fldLock="1" w:fldCharType="begin"/>')
 
 
 @pytest.mark.parametrize("begin", _OTHER_BEGINS)
@@ -5493,3 +5502,101 @@ def test_a_drawing_whose_rId_the_rels_do_not_NAME_is_not_a_figure():
         b'r:embed="rId7"', b'r:embed="rId9"')
 
     assert _media_labels(parts) == {}
+
+
+# --- the data census of 2026-09-18 ---------------------------------------
+#
+# cosmic-ray mutates operators, comparisons and numbers, so behaviour
+# that lives in DATA — one member of a tuple, one alternative or one
+# guard of a regex — is invisible to a sweep, and `_compare_diff` reads
+# every part it touches through patterns. Forty such deletions were put
+# through `kill_check` by hand; six changed no test, and these are the
+# four shapes behind five of them. The sixth is argued rather than
+# pinned: the `(?<!/)` guard on the RUN opening of `_FIELD_END_RE` can
+# only decide a match where a self-closing `<w:r/>` is followed by a
+# `w:fldChar` standing outside any run, and a field character is a child
+# of a run.
+
+
+@pytest.mark.parametrize("kind,label,name", [
+    ("anchors", "hyperlink target", "Smith2020txt"),
+    ("cites", "citation bookmark", "cite_Smith2020")])
+def test_what_SURVIVES_is_read_for_BOTH_kinds_when_the_caller_is_silent(
+        kind, label, name):
+    """`compare_paras` without `surviving` falls back to every field name
+    the other side carries, and that set is built over both kinds. A
+    fallback that reads one kind calls a target which merely MOVED out of
+    its block lost — the dangling-link flag this project may never wave
+    away, raised by the comparison itself.
+
+    The surviving copy has to land OUTSIDE the replace block, so the two
+    sit either side of a paragraph both documents share: a name still
+    inside the block is not lost under any reading of the fallback, and
+    a fixture built that way proves nothing about it.
+    """
+    from docxkit._compare_diff import compare_paras
+
+    def holding(text: str):
+        return _para(text, anchors=[name] if kind == "anchors" else [],
+                     cites=[name] if kind == "cites" else [])
+
+    moved = holding("epsilon")
+    left = [_para("alpha"), holding("beta"),
+            _para("delta"), _para("omega")]
+    right = [_para("alpha"), _para("gamma"), _para("delta"), moved,
+             _para("omega")]
+
+    report = _empty_report()
+    compare_paras(left, right, report)
+    assert report["stripped_fields"] == [], "it moved; it is not lost"
+
+    lost = _empty_report()
+    compare_paras(left, [p for p in right if p is not moved], lost)
+    assert [n for e in lost["stripped_fields"] for n in e["lost"]] == [
+        f"lost {label}(s): ['{name}']"], "and a real loss is still named"
+
+
+@pytest.mark.parametrize("marker", ["separate", "end"])
+def test_a_field_LABEL_is_read_whatever_ORDER_its_attributes_are_in(marker):
+    r"""Attribute order is not meaningful in XML, which is why both
+    patterns that find a field-form label read
+    `<w:fldChar\b[^>]*\bw:fldCharType=` rather than the attribute they
+    want first — the reading `integrity` was given after hard-coding the
+    order made it find no bookmarks at all on a conforming document.
+
+    A locked field writes `w:fldLock` first. Wanting the type first, the
+    whole field form stops matching and the link drops off the list: the
+    same silence a ` />` marker caused, in the one spelling the
+    parametrisation above it does not carry.
+    """
+    from docxkit._compare_diff import hyperlink_labels
+    from docxkit.citations import hyperlink_field
+
+    locked = hyperlink_field("Hao2008", "Hao et al. (2008)").replace(
+        f'<w:fldChar w:fldCharType="{marker}"/>',
+        f'<w:fldChar w:fldLock="1" w:fldCharType="{marker}"/>')
+    assert f'w:fldLock="1" w:fldCharType="{marker}"' in locked, "it applied"
+
+    assert hyperlink_labels(f"<w:p>{locked}</w:p>") == {"Hao et al. (2008)": 1}
+
+
+def test_a_literal_HYPERLINK_in_PRESERVED_text_is_still_field_code():
+    r"""The check reads `<w:t[^>]*>` and not `<w:t>`, and the difference
+    is every realistic instance of the defect: a field code that has come
+    apart shows the instruction as it was written, opening and closing on
+    a space — exactly the text node Word marks `xml:space="preserve"`.
+    """
+    preserved = ('<w:p><w:r><w:t xml:space="preserve"> HYPERLINK '
+                 r'\l "Smith2020" \h </w:t></w:r></w:p>')
+    bare = "<w:p><w:r><w:t>HYPERLINK</w:t></w:r></w:p>"
+
+    for xml in (preserved, bare):
+        assert any("literal HYPERLINK field code" in i
+                   for i in _integrity(xml)), xml
+
+    instruction = ('<w:p><w:r><w:instrText xml:space="preserve">'
+                   r' HYPERLINK \l "Smith2020" \h '
+                   "</w:instrText></w:r></w:p>")
+    assert not any("literal HYPERLINK" in i
+                   for i in _integrity(instruction, {"Smith2020"})), \
+        "an instruction inside its field is not field code on the page"
