@@ -281,9 +281,28 @@ HARNESS: dict[str, list[str]] = {
     # module from 36 real survivors to 10, no test written. Same shape
     # as `errors.py`, which read 100% survival for the same reason (see
     # CONTRIBUTING).
+    # The last two joined on 2026-09-18, each for a REGION the first
+    # three never execute: `_toggle_on` (the toggle-property reader) and
+    # the raised-prose part walk. Five mutants were built across the two
+    # and all five SURVIVED the map as it stood; all five die with these
+    # added, and the narrowing says which file does the killing in each
+    # region. So the map was short in the way that matters — not "these
+    # files touch the module" but "nothing else can kill here".
+    #
+    # `tests/test_compare_paragraph.py` was deliberately NOT added,
+    # although it executes MORE of `styles.py` than any other candidate
+    # (+52 lines, against test_compare's +48). It kills nothing in
+    # either region. Coverage without assertions is not a harness, and
+    # this is that sentence demonstrated inside one module: the file
+    # with the biggest coverage number was the one that could not kill.
+    # `tests/test_cli.py` is out for the other reason — it kills region
+    # B, but so does the dedicated file, at a fraction of the cost on
+    # every kill_check and replay.
     "styles.py": ["tests/test_styles.py",
                   "tests/test_refstyle_layout.py",
-                  "tests/test_value_types.py"],
+                  "tests/test_value_types.py",
+                  "tests/test_compare.py",
+                  "tests/test_raised_prose.py"],
     "tracked.py": ["tests/test_tracked_build.py",
                    "tests/test_tracked_gates.py",
                    "tests/test_tracked_edges.py",
