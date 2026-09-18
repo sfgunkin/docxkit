@@ -73,6 +73,14 @@ the 30 the pattern allows, so this is not a pathological input.
 Repro: `scratchpad\agents\edit_replace\defect_6.py` — self-contained,
 no fixture files.
 
+**Measure this BEFORE touching the window**, because the two plausible
+fixes fail in opposite directions: *how often does a real manuscript
+have two labels inside thirty characters at all?* If it is rare,
+narrowing the number is free. If it is common, a smaller window will
+drop range mentions that are correct today — and then the fix has to be
+the LABEL BOUND rather than a smaller number. The corpus answers this
+in minutes and nothing else does.
+
 **The fix the docstring already implies**: refuse a window that
 contains another LABEL form. The function documents itself as *"anchored
 to a nearby plural-capable label"*, which is the rule — the pattern just
