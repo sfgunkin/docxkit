@@ -49,6 +49,20 @@ def test_a_symbol_the_paper_never_typesets_is_not_flagged():
     assert prose_math(xml) == []
 
 
+def test_a_finding_quotes_the_words_BEFORE_the_symbol_as_well():
+    """The context is 36 characters either side, clamped at the piece's
+    start — `max(0, at - 36)`. A symbol ten characters in has those ten
+    in front of it, and a window that began at the symbol instead would
+    hand the reader half a sentence with the subject cut off."""
+    xml = doc(p(math("β"), t(" is the slope.")),
+              p(t("We estimate β by OLS in every specification.")))
+
+    found = [f for f in prose_math(xml) if f.kind == "symbol"]
+
+    assert [f.symbol for f in found] == ["β"]
+    assert found[0].context.startswith("We estimate β")
+
+
 def test_the_same_symbol_is_flagged_once_the_paper_typesets_it():
     xml = doc(p(math("β"), t(" is the slope.")),
               p(t("We estimate β by OLS.")))

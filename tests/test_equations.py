@@ -1048,6 +1048,85 @@ def test_standalone_refuses_a_fragment_with_NO_element():
         standalone(omath(mr("x")) + omath(mr("y")))
 
 
+def test_a_delimiter_with_THREE_arguments_keeps_BOTH_separators():
+    """The rejoin walks every argument after the first, not just the
+    second. `\\left(a\\middle|b\\middle|c\\right)` is the shape, and a
+    guard that asks for exactly two arguments leaves it unrejoined —
+    with the separator still in an attribute, where no token stream can
+    see it and a sign flip inside the fence stays invisible."""
+    three = ('<m:d><m:dPr><m:sepChr m:val="|"/></m:dPr>'
+             f"<m:e>{mr('a')}</m:e><m:e>{mr('b')}</m:e>"
+             f"<m:e>{mr('c')}</m:e></m:d>")
+
+    assert tokens(omath(three)) == "a|b|c"
+
+
+# --- the defensive halves nothing had reached (2026-09-18) ------------
+
+
+def test_a_paragraph_whose_MATHS_is_deleted_is_not_a_display_equation():
+    """The other half of the accepted view. `_accepted_side` takes the
+    deletion out, and what is left carries no `m:oMath` at all — so the
+    paragraph is not a display equation, and reporting it as one names a
+    repair for markup on its way out of the document."""
+    deleted = ('<w:p><w:del w:id="1" w:author="R" '
+               f'w:date="2026-01-01T00:00:00Z">{omath(mr("x"))}'
+               "</w:del></w:p>")
+
+    assert is_display(deleted) is False
+    assert display_equations(document(deleted)) == []
+
+
+def test_an_UNPARSABLE_token_stream_is_handed_back_rather_than_raised():
+    """`tokens` reads a separator by parsing, and a token stream is not
+    worth a hard failure: a fragment that will not parse is returned as
+    it came. The `except` is the whole of that promise."""
+    broken = '<m:d><m:dPr><m:sepChr m:val="|"/></m:dPr><m:e><m:r>'
+
+    assert tokens(broken) == ""
+
+
+def test_a_maths_run_whose_properties_state_NO_face_is_left_alone():
+    """`m:rPr` without an `m:sty` is the ordinary shape — a run carrying
+    an alignment or a break and nothing about its face. The upright test
+    asks the properties for a value that is not there, and gets None."""
+    run_xml = ("<m:r><m:rPr><m:aln/></m:rPr><m:t>x</m:t></m:r>")
+
+    assert to_latex(omath(run_xml)) == "x"
+
+
+def test_the_XSL_is_taken_from_the_CANDIDATES_before_the_glob(
+        tmp_path, monkeypatch):
+    """The candidate list names the paths Office uses; the glob under it
+    is the fallback for an install somewhere else. A candidate that
+    exists is the answer, and the glob is not consulted."""
+    from docxkit import equations
+
+    fake = tmp_path / "MML2OMML.XSL"
+    fake.write_text("<xsl/>", encoding="utf-8")
+    monkeypatch.setattr(equations, "_XSL_CANDIDATES", (str(fake),))
+
+    assert equations.find_mml2omml_xsl() == fake
+
+
+def test_the_GLOB_is_the_last_resort_and_takes_the_FIRST_hit(monkeypatch):
+    """With no candidate matching, the search widens to Office's whole
+    tree. The skip is decided HERE, from this machine's own glob, rather
+    than from what the function answers — a skip taken on the function's
+    refusal would read a broken search as "no Office"."""
+    from pathlib import Path
+
+    from docxkit import equations
+
+    hits = sorted(Path(r"C:\Program Files").glob(
+        "Microsoft Office/**/MML2OMML.XSL"))
+    if not hits:
+        pytest.skip("no Office install for the glob to find")
+    monkeypatch.setattr(equations, "_XSL_CANDIDATES", ())
+
+    assert equations.find_mml2omml_xsl() == hits[0]
+
+
 # --- where the ALIGNMENT is written (2026-09-18) ----------------------
 #
 # `m:oMathParaPr` arrives in three shapes — absent, self-closing, and

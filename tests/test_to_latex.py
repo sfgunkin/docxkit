@@ -218,6 +218,29 @@ def test_an_OVERBRACE_is_told_from_an_underbrace_by_its_character():
     assert to_latex(m(body)) == r"\overbrace{abc}"
 
 
+def test_a_delimiter_with_two_operands_and_NO_separator_stated():
+    """OMML's default separator is the vertical bar, and a document that
+    leaves `m:sepChr` out means that one — `P(A|B)` written without the
+    attribute. Read as "no separator at all", the two operands join on
+    the word None."""
+    body = ("<m:d><m:e>" + r("A") + "</m:e><m:e>" + r("B")
+            + "</m:e></m:d>")
+
+    assert to_latex(m(body)) == r"\left( A \middle| B \right)"
+
+
+def test_an_underbrace_STATED_explicitly_is_the_same_as_the_default():
+    """`chr_ = _mval(...) or "⏟"` supplies the default from a literal in
+    that line, so the default path compares a string with ITSELF. A
+    document that states the character — which is what Word writes once
+    an author touches the brace — hands over a different object with the
+    same value, and only an equality test sees the two alike."""
+    body = ('<m:groupChr><m:groupChrPr><m:chr m:val="⏟"/></m:groupChrPr>'
+            "<m:e>" + r("abc") + "</m:e></m:groupChr>")
+
+    assert to_latex(m(body)) == r"\underbrace{abc}"
+
+
 def test_ANY_OTHER_grouping_character_sits_above_or_below_by_pos():
     r"""A vector's arrow, a tilde, an author's own glyph: not a brace, so
     it becomes `\overset` or `\underset` around the character itself —
