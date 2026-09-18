@@ -46,6 +46,50 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S3 — wrap_visible_span refuses an OMML-preceded span with a helper's ValueError, not its own AnchorError
+
+<!-- status: open -->
+
+Found 2026-09-18 as a by-product of checking a claim in
+`_cite_grammar`, not by a mutant and not by the round that owned the
+module.
+
+`wrap_visible_span`'s contract for a span it cannot honour is an
+`AnchorError` **with the paragraph quoted** — that is what every caller
+is written against and what makes a refusal readable. On one path it
+raises a bare `ValueError` from a helper instead:
+
+    ValueError: split_run: offset -2 is before the run
+
+**The path is reachable from a real document.** `split_run(first.group(0),
+at - fs)` runs before the guard beneath it, and `at - fs` goes negative
+whenever the wrap starts BEFORE the first run `RUN_RE` finds — which
+happens when a paragraph's OMML precedes its prose, because visible
+offsets include equations and `RUN_RE` does not. Measured: `<m:oMath>`
+then `<w:r>` gives visible text `'xySmith 2020'` and a single run span
+of `(2, 12)`, so a wrap at offset 0 or 1 arrives with a negative
+offset. Probe: `scratchpad\agents\cite_grammar\probe_fs.py`.
+
+A citation typed inside an equation is rare and not impossible. What a
+caller sees today is a helper's exception naming an offset, where the
+module's own refusal would name the paragraph — so the first question a
+reader asks ("which paragraph?") is the one the error does not answer.
+
+**Not a wrong result**, which is why this is an S3: nothing is written,
+nothing is corrupted, and the operation refuses. It refuses in the wrong
+words.
+
+The fix is to catch the negative case where the offset is computed and
+raise the module's own `AnchorError` with the paragraph, so the refusal
+reads like every other refusal in this file. Worth doing beside whatever
+next touches that function rather than alone.
+
+**And it was found by checking a CLAIM rather than the code** — the
+claim at L875 said `fs <= at` always, the check measured that it is not,
+and the raise is why the mutants survive anyway. See the entry in
+`docs/mutation-testing.md` on a claim with the right verdict and the
+wrong reason.
+
 ### S2 — an EMPTY OMML delimiter reads as a default bracket, so a piecewise function gains one it never had
 
 <!-- status: open -->

@@ -2372,6 +2372,35 @@ argument excludes before writing it down — a snapshot, an empty
 element, a second copy of something that "can only appear once" — and
 the same three shapes are the ones this package keeps meeting.
 
+**And a claim can have the RIGHT VERDICT and the WRONG REASON**, which
+is worse than being wrong outright, because nothing ever fails.
+
+`_cite_grammar`'s two survivors at L875 were argued equivalent because
+*"`fs` is the start of the run holding `at`, so `fs <= at` always"*. The
+verdict is correct — both survive — and the premise is false. Measured:
+a paragraph whose maths PRECEDES its prose, `<m:oMath>` then `<w:r>`,
+has visible text `'xySmith 2020'` and a single run span of `(2, 12)`, so
+a wrap starting at 0 gives **`fs = 2 > at`**. The module's own comment
+warns of exactly this — offsets include OMML and `RUN_RE` does not.
+
+What actually holds the claim up is one line ABOVE the guard:
+`split_run(first.group(0), at - fs)` raises on a negative offset before
+the guard is reached. So the claim is *"unreachable, because `split_run`
+raises first"*, and the difference is load-bearing: **change
+`split_run` to clamp instead of raising, and the premise becomes the
+thing holding the claim up — and it is false.** The verifier would go
+on reporting SURVIVED throughout, because the verdict never changes.
+
+This is the argument for a claim being READ rather than trusted, and it
+is why the verifier is not enough on its own. `verify_equivalents`
+answers *does this mutant still survive*. Only a person answers *is
+this still the reason*.
+
+It was found by giving the prediction to a second agent to check —
+written down first, measured by another hand — and the check earned its
+keep on the one thing the author could not have seen: not the verdict,
+which was right, but the sentence under it.
+
 Which is also the case for re-reading an argued list. The figure does
 not move when a survivor is argued rather than killed, so a module
 whose remaining survivors are all argued reads as unchanged forever;
