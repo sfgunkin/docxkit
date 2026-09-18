@@ -55,8 +55,8 @@ ROOT = Path(__file__).resolve().parents[1]
 #: a subpackage half keeps its folder. The rule is `harness_map`'s, and
 #: this used to hold a third copy of it (without the fallback the other
 #: two had).
-def session_file(module: str) -> Path:
-    return ROOT / f".mutation-{session_stem(module)}.sqlite"
+def session_file(module: str, beside: Path | None = None) -> Path:
+    return (beside or ROOT) / f".mutation-{session_stem(module)}.sqlite"
 
 
 @cache
@@ -103,9 +103,13 @@ def newer_than(when: float, paths: list[Path]) -> list[Path]:
     return [p for p in paths if last_touched(p) > when]
 
 
-def snapshot_of(module: str) -> Path:
-    """Where the session kept the source and harness it planned against."""
-    return ROOT / f".mutation-{session_stem(module)}.pristine"
+def snapshot_of(module: str, beside: Path | None = None) -> Path:
+    """Where the session kept the source and harness it planned against.
+
+    `beside` is the directory the session file itself sits in, for a
+    reader working from somewhere else — see :func:`state`.
+    """
+    return (beside or ROOT) / f".mutation-{session_stem(module)}.pristine"
 
 
 #: A test file named in a session's recorded command. The command is one
@@ -114,7 +118,8 @@ def snapshot_of(module: str) -> Path:
 _TEST_FILE_RE = re.compile(r"tests/[\w.\-/]+\.py")
 
 
-def planned_tests(module: str) -> list[str] | None:
+def planned_tests(module: str,
+                  beside: Path | None = None) -> list[str] | None:
     """The test files the session for `module` was PLANNED against.
 
     `mutation_session.write_config` writes the whole test command into
@@ -122,7 +127,7 @@ def planned_tests(module: str) -> list[str] | None:
     beside the verdicts it produced. None when no config sits beside the
     session: a run from before it was written, or one driven by hand.
     """
-    config = ROOT / f".mutation-{session_stem(module)}.toml"
+    config = (beside or ROOT) / f".mutation-{session_stem(module)}.toml"
     if not config.is_file():
         return None
     with config.open("rb") as fh:
@@ -131,7 +136,8 @@ def planned_tests(module: str) -> list[str] | None:
     return sorted(set(_TEST_FILE_RE.findall(command.replace("\\", "/"))))
 
 
-def drifted(module: str, tests: list[str]) -> tuple[list[str], list[str]]:
+def drifted(module: str, tests: list[str],
+            beside: Path | None = None) -> tuple[list[str], list[str]]:
     """``(added, dropped)``: how the harness `tests` names TODAY differs
     from the one the session was planned against. Two empty lists when
     they agree, or when there is no config to read.
@@ -159,7 +165,7 @@ def drifted(module: str, tests: list[str]) -> tuple[list[str], list[str]]:
     all of it invisible, and found only because the round happened to
     read the toml (2026-09-18).
     """
-    planned = planned_tests(module)
+    planned = planned_tests(module, beside)
     if planned is None:
         return [], []
     now = {t.replace("\\", "/") for t in tests}
@@ -196,7 +202,8 @@ def lines_of(path: Path) -> bytes:
     return path.read_bytes().replace(b"\r\n", b"\n")
 
 
-def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
+def moved_by_content(module: str, tests: list[str],
+                     beside: Path | None = None) -> list[str] | None:
     """Which watched files the working tree no longer AGREES with.
 
     Bytes, not mtimes — the rule `mutation_session.moved_since` already
@@ -235,7 +242,7 @@ def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
     `stale`. A whole round goes void the moment it is recorded, which
     makes the tool's real signal unreadable exactly when it matters.
     """
-    kept = snapshot_of(module)
+    kept = snapshot_of(module, beside)
     # the MODULE is what the answer is about — a survivor is a line
     # number into it — so its absence is the one that answers nothing
     if not (kept / f"src/docxkit/{module}").is_file():
@@ -250,18 +257,40 @@ def moved_by_content(module: str, tests: list[str]) -> list[str] | None:
     return out
 
 
-def state(module: str, tests: list[str]) -> tuple[str, list[str]]:
+def state(module: str, tests: list[str],
+          db: Path | None = None) -> tuple[str, list[str]]:
     """``("fresh" | "stale" | "never measured", what changed since)``.
 
     "Changed since" includes a file the run did not have: asked about a
     harness other than the one measured — `replay_survivors --tests` —
     the honest answer is that this is not the run's harness, which is
     `stale` naming that file, not a refusal to answer.
+
+    **Pass `db` when the session is not in THIS checkout**, and the
+    banner then works where rounds are actually worked. Left to find the
+    session itself, this looks in the tool's own tree — which is right
+    for a reader in `D:/docxkit` and wrong for every other one. Sweeps
+    run in `docxkit-mut-a/b/d` and rounds in their own worktrees, so the
+    ordinary invocation is an ABSOLUTE session path read from somewhere
+    else, and there the file simply is not found, the answer is "never
+    measured", and `mutation_survivors` prints no STALE banner at all.
+
+    Measured 2026-09-18 on `guard.py`, same session and same module:
+    from `D:/docxkit` it named `test_tracked_guard.py` and
+    `test_cli_guards.py`; from a round worktree, with the session given
+    by absolute path, identical counts and no banner. The warning was
+    off exactly where it is needed, and a round briefed to "read the
+    staleness banner first" would have seen nothing and mined a list
+    whose three survivors were already dead.
+
+    What is compared stays relative to THIS checkout, and deliberately:
+    the question a reader in a worktree is asking is whether the tree
+    they are about to work in still agrees with the run.
     """
-    db = session_file(module)
+    db = db or session_file(module)
     if not db.exists():
         return "never measured", []
-    by_content = moved_by_content(module, tests)
+    by_content = moved_by_content(module, tests, db.parent)
     if by_content is not None:
         return "stale" if by_content else "fresh", by_content
     watched = [ROOT / "src" / "docxkit" / module,

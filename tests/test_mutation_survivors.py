@@ -380,7 +380,8 @@ def test_a_STALE_run_says_so_above_its_survivors(monkeypatch):
     monkeypatch.setattr(harness_map, "harness_for",
                         lambda mod: ["tests/test_thing.py"])
     monkeypatch.setattr(stale_figures, "state",
-                        lambda mod, tests: ("stale", ["tests/test_thing.py"]))
+                        lambda mod, tests, db=None:
+                        ("stale", ["tests/test_thing.py"]))
 
     lines = _tool_module().staleness("src/docxkit/thing.py")
 
@@ -397,7 +398,7 @@ def test_a_FRESH_run_says_nothing(monkeypatch):
 
     monkeypatch.setattr(harness_map, "harness_for", lambda mod: ["t.py"])
     monkeypatch.setattr(stale_figures, "state",
-                        lambda mod, tests: ("fresh", []))
+                        lambda mod, tests, db=None: ("fresh", []))
 
     assert _tool_module().staleness("src/docxkit/thing.py") == []
 
@@ -1131,7 +1132,8 @@ def _drift(monkeypatch, *, planned: list[str] | None, now: list[str]):
     import stale_figures  # pyright: ignore[reportMissingImports]
 
     monkeypatch.setattr(harness_map, "harness_for", lambda mod: now)
-    monkeypatch.setattr(stale_figures, "planned_tests", lambda mod: planned)
+    monkeypatch.setattr(stale_figures, "planned_tests",
+                        lambda mod, beside=None: planned)
     return _tool_module().harness_drift("src/docxkit/thing.py")
 
 

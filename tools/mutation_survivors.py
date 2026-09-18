@@ -277,7 +277,7 @@ def pristine_source(db_path: str, src_path: str) -> tuple[str, str]:
         f"the live file has moved since)")
 
 
-def staleness(src_path: str) -> list[str]:
+def staleness(src_path: str, db_path: str | Path | None = None) -> list[str]:
     """A banner when the run this list comes from is already void.
 
     The rule is old — a figure is void when the source or the harness
@@ -290,6 +290,13 @@ def staleness(src_path: str) -> list[str]:
     Never a refusal. A stale list is still the best guess at where to
     look, and `kill_check` disposes of what has since died — this only
     stops a reader taking the numbers at face value.
+
+    **`db_path` is the session the caller actually opened**, and it is
+    passed on rather than re-derived. Without it `state` looks for the
+    session in the tool's own checkout, so reading a session by absolute
+    path from a round worktree — the ordinary way this is run — found
+    nothing, answered "never measured", and printed no banner over a
+    list whose survivors were already dead (`guard.py`, 2026-09-18).
     """
     try:
         from harness_map import harness_for  # noqa: PLC0415
@@ -298,7 +305,8 @@ def staleness(src_path: str) -> list[str]:
         return []
     module = harness_key(src_path)
     try:
-        how, moved = state(module, harness_for(module))
+        how, moved = state(module, harness_for(module),
+                           Path(db_path) if db_path else None)
     except SystemExit:                       # no harness for this module
         return []
     if how != "stale":
@@ -328,7 +336,8 @@ def harness_key(src_path: str) -> str:
         src_path).name
 
 
-def harness_drift(src_path: str) -> list[str]:
+def harness_drift(src_path: str,
+                  db_path: str | Path | None = None) -> list[str]:
     """A banner when the harness has MOVED since the run was planned.
 
     `staleness` above asks whether the module or its tests have CHANGED.
@@ -350,7 +359,8 @@ def harness_drift(src_path: str) -> list[str]:
         return []
     module = harness_key(src_path)
     try:
-        added, dropped = drifted(module, harness_for(module))
+        added, dropped = drifted(module, harness_for(module),
+                                 Path(db_path).parent if db_path else None)
     except SystemExit:                       # no harness for this module
         return []
     if not added and not dropped:
@@ -697,9 +707,9 @@ def main() -> int:
               f"created. The session for {src_path} is "
               f".mutation-{session_stem(src_path)}.sqlite")
         return 2
-    for banner in staleness(src_path):
+    for banner in staleness(src_path, db_path):
         print(banner)
-    for banner in harness_drift(src_path):
+    for banner in harness_drift(src_path, db_path):
         print(banner)
     src_path, note = pristine_source(db_path, src_path)
     counts = classify(db_path, src_path)

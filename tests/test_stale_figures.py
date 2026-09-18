@@ -642,3 +642,54 @@ def test_a_round_that_only_adds_TESTS_still_voids_the_harness_it_adds_to(
     out = capsys.readouterr().out
     assert harness[0] in out, "it has to name the file that does the voiding"
     assert code == 1
+
+
+def _session_in(where, module, *, module_text, stem):
+    """A session directory somewhere OTHER than this checkout: the file
+    itself, plus the snapshot it planned against."""
+    (where / f".mutation-{stem}.sqlite").write_text("", encoding="utf-8")
+    kept = where / f".mutation-{stem}.pristine" / "src" / "docxkit"
+    kept.mkdir(parents=True)
+    (kept / module).write_text(module_text, encoding="utf-8")
+    return where / f".mutation-{stem}.sqlite"
+
+
+def test_the_session_can_live_in_ANOTHER_tree_and_still_read_stale(tmp_path):
+    """The banner has to work where rounds are actually worked.
+
+    Sweeps run in `docxkit-mut-a/b/d` and rounds in their own worktrees,
+    so the ordinary invocation names an ABSOLUTE session path from
+    somewhere else. Left to find the session itself, `state` looked in
+    the TOOL's checkout, did not find it, answered "never measured", and
+    `mutation_survivors` printed no STALE banner at all — measured on
+    `guard.py` (2026-09-18), where the three survivors on the list were
+    already dead and a round briefed to read the banner first would have
+    seen nothing.
+    """
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    db = _session_in(tmp_path, "guard.py", stem="guard",
+                     module_text="# what the run was planned against")
+
+    how, moved = stale_figures.state("guard.py", [], db)
+
+    assert how == "stale", "the live module does not hold that text"
+    assert moved == ["src/docxkit/guard.py"]
+
+
+def test_without_the_session_path_it_looks_in_the_WRONG_tree(tmp_path,
+                                                             monkeypatch):
+    """The defect itself, held so it cannot come back: a session that
+    exists is reported as never measured whenever the reader is not
+    standing in the tree it lives in."""
+    import stale_figures  # pyright: ignore[reportMissingImports]
+
+    db = _session_in(tmp_path, "guard.py", stem="guard",
+                     module_text="# what the run was planned against")
+    elsewhere = tmp_path / "another-checkout"
+    elsewhere.mkdir()
+    monkeypatch.setattr(stale_figures, "ROOT", elsewhere)
+
+    assert stale_figures.state("guard.py", [])[0] == "never measured"
+    assert stale_figures.state("guard.py", [], db)[0] == "stale", \
+        "handed the session, it must answer about THAT one"
