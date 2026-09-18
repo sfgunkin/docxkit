@@ -70,7 +70,7 @@ mention as linked, because it IS linked — to the wrong thing. The window
 in that sentence is 22 characters of ordinary prose, comfortably inside
 the 30 the pattern allows, so this is not a pathological input.
 
-Repro: `scratchpad\agents\edit_replace\defect_6.py` — self-contained,
+Repro: `docs/repros/continuation_crosses_label.py` — self-contained,
 no fixture files.
 
 **Measure this BEFORE touching the window**, because the two plausible
@@ -122,7 +122,7 @@ happens when a paragraph's OMML precedes its prose, because visible
 offsets include equations and `RUN_RE` does not. Measured: `<m:oMath>`
 then `<w:r>` gives visible text `'xySmith 2020'` and a single run span
 of `(2, 12)`, so a wrap at offset 0 or 1 arrives with a negative
-offset. Probe: `scratchpad\agents\cite_grammar\probe_fs.py`.
+offset. Probe: `docs/repros/wrap_span_omml_before_prose.py`.
 
 A citation typed inside an equation is rare and not impossible. What a
 caller sees today is a helper's exception naming an offset, where the
@@ -179,7 +179,7 @@ asymmetry IS the notation. A piecewise function converted to LaTeX comes
 back with a closing parenthesis its author never wrote, and the same
 `or` pattern on `begChr` does it from the other side.
 
-Repro: `scratchpad\agents\edit_replace\defect_eq1.py`.
+Repro: `docs/repros/omml_empty_delimiter.py`.
 
 **Not fixed in the round that found it**, and the census deliberately
 leaves that member unexercised rather than pinning the wrong answer —
@@ -258,7 +258,7 @@ the field and gets the runs the field lives in. A pass that gives
 closes all three at once — and `remove_outer_field` already shows what
 that reading looks like.
 
-Repro for the audit: `scratchpad\agents\xml_fields\audit_field_spans_callers.py`
+Repro for the audit: `docs/repros/field_spans_callers_audit.py`
 — all seven callers against one shared-run fixture, read-only, no Word.
 
 ### S2 — batch._LABEL misses a label whose run carries a second property, 35% of the corpus
@@ -285,7 +285,7 @@ exists to name are invisible to it, and the failure is the quiet kind —
 the sentence that means "I have no idea" over a case it was written to
 handle.
 
-Repro: `scratchpad\agents\batch\defect_1.py`.
+Repro: `docs/repros/batch_label_styled_run.py`.
 
 **Not fixed in the round that found it**, per the round's rule, and the
 fix wants a decision rather than a patch: the pattern should read the
@@ -334,7 +334,7 @@ too. `tables.update` is the routine those rounds use to rebuild a table from
 a DataFrame, which is exactly the path that reads a cell, decides it has
 changed, and writes a new one.
 
-Repro: `scratchpad\agents\table_core\defect_1.py`.
+Repro: `docs/repros/parse_number_decimal_comma.py`.
 
 **Why no test caught it.** The module's own fixtures are English and hold
 `1,234.5`; the decimal-comma form appears in no fixture in the suite. And
@@ -388,7 +388,7 @@ assumption, least of all one this convenient.
 **The measurement, when Word is free.** `docxkit verify` on a COPY of
 `ROIW_submission_revised.docx` — the submission, and so the strongest case —
 and one Missing Market file. That is Word opening the package and saying
-whether it repaired anything. `scratchpad\agents\audit\measure_save_refusals.py`
+whether it repaired anything. `docs/repros/lint_refusal_routes.py`
 names all 20 candidates.
 
 **Three outcomes, and what each means.** If Word opens both cleanly and

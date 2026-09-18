@@ -135,6 +135,14 @@ pywin32 = ["win32com", "pythoncom"]
 [tool.ruff]
 line-length = 79
 target-version = "py314"
+#: `docs/repros` is EVIDENCE, not maintained code. Each file is the
+#: script that demonstrated an open BACKLOG entry, kept verbatim as the
+#: round that found it wrote it — a bare `except Exception` there is
+#: often the finding, and tidying one to satisfy a rule would edit the
+#: demonstration. They are preserved so an entry's "Repro:" line still
+#: points at something a year from now; they are not imported, not run
+#: by the suite, and not a place to put new code.
+exclude = ["docs/repros"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "C4", "C90", "PL",
