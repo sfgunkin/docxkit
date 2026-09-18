@@ -14,6 +14,53 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — can_it_fail broke the wrong TWIN and reported CANNOT FAIL about a function nobody had broken~~ — FIXED 18.09, `2c831cd`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 by mut-placement, hitting it twice in one afternoon,
+and fixed by mut-guard the same day the tool was written.
+
+`can_it_fail.py` replaced the FIRST occurrence of its anchor. Line-for-
+line TWINS are ordinary in this package — `_set_span` and `_set_tc_w` in
+`_table_layout.py` share three lines verbatim, including `at =
+opening.end() if opening else 0` — so a single-line anchor meant for one
+of them landed in the OTHER:
+
+* the break was applied to a function nobody was asking about;
+* the test under examination stayed green, because nothing it covers had
+  changed;
+* and the tool printed **CANNOT FAIL** — a verdict about a break that
+  never happened.
+
+**Which is the disease this tool exists to diagnose.** `can_it_fail`
+was written that morning to settle whether a test can notice a break at
+all, after five tests in this suite were found green over the very
+defects they named. A false CANNOT FAIL is worse than no tool: it
+condemns a healthy test, and the reader's next move is to rewrite a test
+that was already correct.
+
+It is also the day's other signature — a tool reporting a conclusion
+about something it did not do — and the third instance in `tools/` alone
+(`measure_all` calling a kill a refusal; the sweep log figure read as
+the session's).
+
+**Fixed**: an ambiguous anchor is now a REFUSAL with its own exit code
+and sentence, naming how many copies it found and pointing at the
+comment above as the line that usually differs between twins.
+`--occurrence N` says which copy when a reader means one — 1-based and
+counted over the whole file, the way `kill_check`'s fifth element
+counts, so a case moved between the two tools means what it meant.
+
+Two tests: that the refusal leaves the file alone, and that
+`--occurrence` picks the right copy.
+
+**Worth keeping beside it**: mut-placement reported the symptom and
+concluded the tool had *"behaved exactly as advertised — both of those
+were my ambiguous anchors, not its reader"*. That was generous and
+wrong. A tool handed an ambiguous instruction may refuse or may ask,
+but it may not pick one silently and then report a verdict as though
+the question had been answered.
 ### ~~S1 — words inserted at a paragraph's END land inside a trailing tracked revision~~ — FIXED 18.09, `cfd6383`
 <!-- status: fixed -->
 
