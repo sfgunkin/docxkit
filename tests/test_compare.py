@@ -5402,6 +5402,52 @@ def test_a_fldChar_with_no_field_open_is_passed_over(stray):
     assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
 
 
+@pytest.mark.parametrize("kind", ["abc", "cba", "foo", "unknown"])
+def test_a_fldCharType_OUTSIDE_the_schema_marks_NOTHING(kind):
+    """Four claims of mine were wrong, and this is the document they
+    excluded.
+
+    `FLDCHAR_RE` captures `(\\w+)`, not the three values ST_FldCharType
+    defines, so a marker typed anything at all reaches this walk. I
+    argued that every ordering respelling of `kind == "begin"`, `"end"`
+    and `"separate"` was equivalent because the schema admits three
+    values that sort the way the comparisons need — and named the
+    exclusion in each claim without building it. mut-xml-fields built
+    it in `_xml` and killed the same argument there.
+
+    The walk IGNORING an unknown value is what makes those mutants
+    reachable, not what makes them safe. Each respelling adopts a
+    different stray: `abc` sorts at or below `begin` and OPENS a field,
+    `cba` reads as an `end` and closes one early, `foo` and `unknown`
+    fall either side of `separate` and give a field a cached result it
+    has not got. Four parametrized values, four mutants.
+
+    The fixture is one field with a stray marker in its INSTRUCTION
+    half and prose after it, because that is what tells a wrongly-read
+    separator from a rightly-read one: masked from the stray, the
+    leftover text becomes the token and the page number is blanked.
+
+    The file's own note at the head of this section says it: an
+    argument about the DOCUMENT rather than the code is a guess until
+    someone builds the document it excludes.
+    """
+    from docxkit._compare_read import mask_volatile_fields
+
+    xml = ("<w:p>"
+           '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+           f'<w:r><w:fldChar w:fldCharType="{kind}"/></w:r>'
+           + run("left over")
+           + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           + run("7")
+           + '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+
+    out = mask_volatile_fields(xml)
+
+    assert out == xml.replace("<w:t>7</w:t>", "<w:t>«F:PAGE»</w:t>"), out
+    assert "<w:t>left over</w:t>" in out, "the instruction half is untouched"
+
+
 def _captioned(texts: list[str | None]) -> dict[str, bytes]:
     """A document whose `None` paragraph draws image1.png.
 
