@@ -31,7 +31,9 @@ from conftest import (
     note,
     notes,
     para,
+    row,
     run,
+    table,
     write,
 )
 
@@ -5136,3 +5138,306 @@ def test_baseline_is_TIMED_like_the_other_verbs(project):
     got = timings.read(project.root / timings.FOLDER)
     assert [(r["kind"], r["name"], r["outcome"]) for r in got] == [
         ("baseline", project.name, "ok")]
+
+
+# --- the whole sweep of revision/_losses.py (2026-09-18) -------------------
+#
+# 28 real survivors at 4.8 %, and they sit where the fixtures were
+# thinnest rather than where the code is hardest: the glyph walk had
+# never been given a text box, an XML comment or an equation with text
+# in it; the link pairing had never been given two anchors or a second
+# relabel; the math check had never been given a plain twin that was
+# there all along; and every note fixture was small enough that CPython
+# handed back the same int object twice.
+
+
+def _root(body: str) -> Any:
+    """One parsed `w:document`, for the walkers that take a root."""
+    from lxml import etree
+
+    return etree.fromstring(document(body).encode("utf-8"))
+
+
+def test_a_TEXT_BOXs_prose_is_XML_compared_and_not_WORD_compared():
+    """`main_story=False` is the default because the XML-to-XML gate
+    WANTS that prose; Word's `doc.Paragraphs` does not walk a text box,
+    so the gate comparing against Word's own stream asks for it off. A
+    default of True drops a text box out of the comparison this module's
+    docstring says should hold it, and the gate then passes a manuscript
+    whose boxed prose was deleted.
+
+    The shape is cut down to what the walk sees: Word wraps it in
+    `mc:AlternateContent`, and `_glyph` reaches `w:txbxContent`
+    whichever branch of that it sits in."""
+    boxed = ("<w:p><w:r><w:txbxContent><w:p><w:r><w:t>boxed</w:t></w:r>"
+             "</w:p></w:txbxContent></w:r></w:p>")
+    root = _root(para(run("before")) + boxed + para(run("after")))
+
+    assert revision._glyph(root) == "beforeboxedafter"
+    assert revision._glyph(root, main_story=True) == "beforeafter"
+
+
+def test_a_COMMENT_in_the_markup_is_SKIPPED_and_the_walk_goes_on():
+    """`continue`, not `break`. An XML comment has no string tag, and
+    stopping the walk at one silently truncates the stream at whatever
+    Word left a comment in front of — a gate comparing two streams then
+    reads everything after it as lost."""
+    body = (para(run("one")) + "<!-- a note to the editor -->"
+            + para(run("two")))
+
+    assert revision._glyph(_root(body)) == "onetwo"
+
+
+def test_an_EQUATION_WITH_TEXT_is_not_an_empty_SHELL():
+    """`(t.text or "")`: with `and` there every item of the generator is
+    falsy, so `not any(...)` holds for every equation in the document
+    and a manuscript full of working equations reads as full of blank
+    boxes. That is the refusal a real batch of broken equations earned,
+    pointed at every batch."""
+    with_text = "<w:p><m:oMath><m:r><m:t>x</m:t></m:r></m:oMath></w:p>"
+    hollow = "<w:p><m:oMath><m:r><m:t></m:t></m:r></m:oMath></w:p>"
+
+    assert revision._counts(_root(with_text))["empty_shells"] == 0
+    assert revision._counts(_root(hollow))["empty_shells"] == 1
+
+
+def test_a_relabel_takes_its_new_label_from_its_OWN_anchor():
+    """`a == anchor`: the fresh labels are the ones gained for THIS
+    anchor. Widened to `<=`, the first label of every anchor sorting
+    before it joins the list, and the report names a label belonging to
+    another link — here the one the batch added to `Ref1`, which sorts
+    first and is nothing to do with `Ref2`."""
+    prev = _doc(_link("Ref2", "old label"))
+    working = _doc(_link("Ref1", "aaa other anchor"),
+                   _link("Ref2", "zzz new label"))
+
+    lost, relabelled = _link_changes(working, prev)
+
+    assert lost == []
+    assert [str(r) for r in relabelled] == [
+        "link Ref2: 'old label' -> 'zzz new label'"]
+
+
+def test_an_anchor_relabelled_TWICE_is_two_relabels_and_no_loss():
+    """`-= 1`: each gone label consumes ONE gained label for the same
+    anchor. Consuming two makes the second relabel of a twice-linked
+    anchor read as a lost link — the false refusal the pairing exists to
+    prevent, arriving on the batch that relabelled both mentions."""
+    prev = _doc(_link("Ref1", "old one"), _link("Ref1", "old two"))
+    working = _doc(_link("Ref1", "new"), _link("Ref1", "new"))
+
+    lost, relabelled = _link_changes(working, prev)
+
+    assert lost == []
+    assert len(relabelled) == 2
+
+
+MINUS = "−"        # what Word's Compare flattens to a hyphen
+
+
+def _math(*texts: str) -> dict[str, bytes]:
+    """A package whose equations hold exactly `texts`."""
+    return make_parts("".join(
+        f"<w:p><m:oMath><m:r><m:t>{t}</m:t></m:r></m:oMath></w:p>"
+        for t in texts))
+
+
+def test_a_plain_twin_that_was_THERE_ALL_ALONG_is_not_a_downgrade():
+    """`gained = now - was`: the plain form has to have APPEARED. Here
+    it was in the manuscript already, in the same number, so nothing was
+    flattened into it — the glyph run was deleted, which the content
+    gates above answer for. `+` or `|` count a twin that never moved and
+    report a downgrade on a batch that did not make one."""
+    prev = _math(f"{MINUS}x", "-x")
+    working = _math("-x")
+
+    assert revision._downgraded_math(working, prev) == []
+
+
+def test_an_equation_that_KEPT_its_glyph_is_not_reported_for_a_new_twin():
+    """`was - now`: the run has to have GONE. `+` or `|` make every run
+    the baseline ever held a candidate, so a batch that adds a plain
+    equation beside an untouched glyph one is told it flattened it."""
+    prev = _math(f"{MINUS}x")
+    working = _math(f"{MINUS}x", "-x")
+
+    assert revision._downgraded_math(working, prev) == []
+
+
+def test_every_lost_note_is_NAMED_past_the_small_int_cache():
+    """`len(named) < gone`: with `is not` there, two equal counts that
+    are two objects — which is every int past 256 — add a line saying
+    "0 more, unnamed" to a report that named all of them. A note
+    apparatus of that size is ordinary: LE's runs past two hundred."""
+    texts = [f"note {i}" for i in range(300)]
+    prev = make_parts(para(run("body")), footnotes=notes(
+        "footnotes", *[note(t, nid=i + 2) for i, t in enumerate(texts)]))
+    working = make_parts(para(run("body")),
+                         footnotes=notes("footnotes"))
+
+    out = revision._lost_notes(working, prev)
+
+    assert len(out) == 300
+    assert not any("unnamed" in str(loss) for loss in out)
+
+
+def test_the_notes_it_CANNOT_name_are_counted_by_subtraction():
+    """`gone - len(named)`. Three notes went and only one can be named,
+    because the other two carried text that is still on the page. `>>`
+    prints 1 for that, which is a count of nothing in particular — and
+    the line exists precisely to say how much the named list is
+    missing."""
+    prev = make_parts(para(run("body")), footnotes=notes(
+        "footnotes", note("shared", nid=2), note("shared", nid=3),
+        note("shared", nid=4), note("only this one", nid=5)))
+    working = make_parts(para(run("body")), footnotes=notes(
+        "footnotes", note("shared", nid=2)))
+
+    named, unnamed = revision._lost_notes(working, prev)
+
+    assert str(named) == "footnote 'only this one'"
+    assert "2 more, unnamed — 4 footnotes before, 1 now" in str(unnamed)
+
+
+def test_a_bookmark_the_clean_edit_ADDED_is_not_a_restored_one():
+    """`(baseline & built) - clean`. The symmetric difference also names
+    every bookmark the CLEAN copy added — an edit the author made on
+    purpose, which Compare never restored and which the refusal then
+    tells them to go and undo."""
+    marked = ('<w:bookmarkStart w:id="4" w:name="Lari2023"/>'
+              '<w:bookmarkEnd w:id="4"/>')
+    added = ('<w:bookmarkStart w:id="5" w:name="Ahmed2024"/>'
+             '<w:bookmarkEnd w:id="5"/>')
+    baseline = make_parts(para(marked + run("Lari, A. (2023). Title.")))
+    clean = make_parts(para(added + run("Ahmed, B. (2024). Other.")))
+    built = make_parts(para(marked + run("Lari, A. (2023). Title.")))
+
+    assert revision.restored_bookmarks(baseline, clean, built) == ["Lari2023"]
+
+
+def test_a_note_whose_words_come_back_DIFFERENT_is_reported_at_all():
+    """`now != was`, not `now < was`. The question is whether the note
+    comes back as the baseline had it; a rejection that strips its first
+    word leaves text sorting AFTER the baseline's, where `<` answers no
+    and the build ships a note gate 5 will fail on."""
+    baseline = make_parts(para(run("body")), footnotes=notes(
+        "footnotes", note("alpha omega", nid=2)))
+    rejected = make_parts(para(run("body")), footnotes=notes(
+        "footnotes", note("omega", nid=2)))
+
+    assert revision.emptied_footnotes(rejected, baseline, [2]) == [2]
+
+
+def test_a_ONE_CHARACTER_difference_in_a_LONG_stream_stays_one_character():
+    """`autojunk=False`. difflib treats any element appearing in more
+    than 1 % of a sequence of 200 or more as junk, and a rendered
+    manuscript is tens of thousands of CHARACTERS, where every common
+    letter clears that bar. Measured on this fixture, 539 characters
+    with one changed: `autojunk=True` answers with a 496-character
+    replace run where the difference is a full stop against an
+    exclamation mark — the finding the gate exists for, buried in the
+    paragraph around it."""
+    before = ("the quick brown fox jumps over the lazy dog. " * 12).strip()
+    after = before.replace("lazy dog. the quick", "lazy dog! the quick", 1)
+
+    (line,) = glyph_runs(before, after)
+
+    assert "'.' U+002E -> '!' U+0021" in line
+
+
+# --- the DATA census of the same module ------------------------------------
+#
+# Cosmic-ray cannot take a character out of a translation table, a tag
+# out of a tuple, a key out of a dict or an alternative out of a
+# pattern, and this module's behaviour lives in exactly those. Twenty
+# members taken out one at a time through kill_check: 8 killed, 12
+# unpinned. The four below are the ones a test can hold; the rest are in
+# the round's report, and two of them are members no input can reach.
+
+
+@pytest.mark.parametrize(("char", "plain"), [
+    ("−", "-"),        # MINUS SIGN, Word's own in an equation
+    ("‐", "-"),        # HYPHEN
+    ("‑", "-"),        # NON-BREAKING HYPHEN
+    ("∗", "*"),        # ASTERISK OPERATOR: LI7's prospective-age T*
+    ("′", "'"),        # PRIME: Parental_style's derivatives
+])
+def test_every_FOLD_is_one_character_the_two_spellings_disagree_on(char,
+                                                                   plain):
+    """THE PARAMETRISATION IS THE CONSTANT. `_FOLD` is a translation
+    table, so no mutation operator can take an entry out of it, and the
+    census found three of the six unpinned — a fold silently dropped
+    turns a gate that passes into one that reports a difference on every
+    document carrying that character, with ZERO revisions in the file.
+    Each case here is one entry; an entry added without a case is what
+    the next census finds.
+
+    NFKC is applied first and folds some of these on its own, which is
+    why each is asserted through `_norm` rather than against the table."""
+    assert revision._norm(f"a{char}b") == f"a{plain}b"
+
+
+def test_an_EQUATIONS_text_is_in_the_glyph_stream():
+    """`(W + "t", M + "t")`: the tuple is data, so the sweep cannot take
+    `m:t` out of it — and with it gone every equation in the manuscript
+    contributes nothing to the stream the glyph gate compares. The gate
+    would then pass a batch that rewrote the mathematics, which is the
+    one thing it is pointed at."""
+    body = ("<w:p><w:r><w:t>see </w:t></w:r>"
+            "<m:oMath><m:r><m:t>x+1</m:t></m:r></m:oMath></w:p>")
+
+    assert revision._glyph(_root(body)) == "see x+1"
+
+
+def test_the_accept_all_COUNTS_are_all_five_and_each_counts_its_own():
+    """The five keys are data too, and the census found four of them
+    unpinned: `empty_shells` is read by `ValidateReport`, and the other
+    four are printed for a person to read against the package's own
+    counts (`== accept-all ==` in `cli.cmd_revision_validate`). A
+    renamed or dropped key prints nothing at all there, which reads as a
+    document with none of that thing in it."""
+    body = ("<w:p><m:oMath><m:r><m:t>x</m:t></m:r></m:oMath></w:p>"
+            + table(row("cell"))
+            + para(ins("added"))
+            + para(dele("cut")))
+
+    assert revision._counts(_root(body)) == {
+        "oMath": 1, "tables": 1, "ins": 1, "del": 1, "empty_shells": 0}
+
+
+def test_a_loss_can_be_OKD_by_its_OWN_WORDS_alone():
+    """`loss.what` is the middle of the three spellings `--accept-loss`
+    accepts, and the census found nothing pinning it. It is the one a
+    reader copies: the refusal prints the anchor and the label, not the
+    `link:` prefix in front of them. The other two candidates are the
+    same string as each other, so each covers the other and neither can
+    be pinned alone."""
+    loss = revision.Loss("link", "Ref2 (a citation label)")
+
+    assert revision._names("Ref2 (a citation label)", loss)
+    assert revision._names("link:Ref2 (a citation label)", loss)
+
+
+def test_a_row_level_DELETION_marker_does_not_swallow_the_link_after_it():
+    """`(?<!/)` in `_DELETION_RE`, which the census found unpinned. A
+    row-level revision is a SELF-CLOSING `w:del` inside `w:trPr`, and
+    without the guard the pattern opens a span on it and closes on the
+    next `</w:del>` anywhere in the part — carrying off every link in
+    between. `build` refuses a batch whose deletions hold links, so the
+    cost is a refusal on a hand-back that deleted a table row and
+    touched nothing else."""
+    parts = make_parts(table(row("cell", revision="del"))
+                       + _link("Ref9", "a citation")
+                       + para(dele("a sentence with no link in it")))
+
+    assert revision.links_in_deletions(parts) == []
+
+
+def test_NO_tail_is_printed_when_the_runs_fit_the_limit_EXACTLY():
+    """`len(changed) > limit`: at exactly the limit the report is whole,
+    and `>=` adds "... and 0 more run(s)" — a line telling its reader to
+    go looking for runs that are all already in front of them."""
+    runs = glyph_runs("0x1x2x", "0y1y2y", limit=3)
+
+    assert len(runs) == 3
+    assert not any("more run(s)" in line for line in runs)
