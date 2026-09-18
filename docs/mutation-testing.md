@@ -979,6 +979,26 @@ that wants a verdict per mutant. It does not make the figure quotable —
 only a re-sweep does that — and it does mean the afternoon is not lost
 while the queue reaches one.
 
+**A module change voids a CLAIM in either direction too, and the
+staleness rule was only ever applied to figures.** A claim is a
+measurement like any other: *this mutant, on this line, survives this
+harness*, taken on a day. When the module moves, the claim is not merely
+unanchored — it may be false, and the verifier cannot say which until it
+runs.
+
+Six `_xml.py` claims were carried as "verified, just not merged yet".
+Checked: **four had no anchor** (the `FLDCHAR_RE` carrier fix removed
+the `close >= 0 … else m.end()` construction outright) and **two were
+false** — killed by a test from the same round. *Verified-when-written
+is not verified.*
+
+**And the corroboration offered for them was circular**, which is the
+part worth copying down. The stale `_xml` session still listed that line
+as a survivor, and that was read as agreement. It is not: the session
+and the claims rest on the SAME pre-fix source. Two readings of a line
+that no longer exists will always agree, and neither is evidence about
+today. A void figure cannot corroborate a claim the same commit voided.
+
 **A claim needed a source edit to anchor: also void, and the edit looks
 harmless.** `verify_equivalents.anchored` insists a claim's `was` be
 exactly one line of the module, so a line the module writes TWICE cannot
