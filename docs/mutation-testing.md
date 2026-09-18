@@ -1355,7 +1355,23 @@ useful work on an unrunnable-here cluster is to settle and PIN the half
 that does not need the instrument, name the half that does, and leave
 the second for whoever has the machine.
 
-### The seeded sample was never the same draw twice
+### The round that FIXES a defect is not the round that measures it
+
+`_cite_grammar.py` was re-swept after a careful fix landed — a
+nested-parenthesis defect, three tests each verified RED first, the
+narrower one-line version measured and rejected before the real one was
+written. It came back at **2.3 % (16/706)**, and **13 of the 16 are in
+the function the fix ADDED**.
+
+Nothing was done wrong. The three tests pinned the behaviour the defect
+was about; nothing pinned the rest of the new walk, because a fix is
+aimed at the failure that prompted it. A survivor list is what asks
+about everything else, and new code has never had one.
+
+So: **sweep after a fix that adds a function**, and expect its own new
+code to be the least-tested part of the module. This is the first
+same-day fix this campaign has measured rather than old code, and the
+shape was immediate.
 
 The section above is right about the population and wrong about
 everything else, because the draw itself was not reproducible until
