@@ -14,6 +14,65 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the glyph gate never reads an equation, and no test holds the tag that lets it~~ — FIXED 18.09, `a6e4524`
+
+<!-- status: fixed -->
+
+Found 2026-09-18 by the data census on `revision/_losses.py` — not by a
+mutant, because cosmic-ray plans none on a tuple's members.
+
+**Take `m:t` out of the glyph walk's tag tuple and nothing fails.** With it
+gone, every equation contributes NOTHING to the stream the glyph gate
+compares. Three test files exercise that gate and not one noticed.
+
+What that gate is for is the whole point. `tracked.build` restores the math
+minus U+2212 that Word's Compare flattens to a hyphen, and the author
+accepting the revisions in Word eats it again — so a paper that must hold
+U+2212 in its mathematics depends on the glyph comparison to say when a
+character has moved. With `m:t` unread, the gate passes a batch that
+rewrote the MATHEMATICS, which is the one thing it is pointed at.
+
+Nothing was broken: the tuple is correct today. What was missing is any test
+that holds it correct, so a refactor, a tidy-up or a merge could have taken
+`m:t` out and left eleven gates green over a paper whose equations had been
+silently rewritten.
+
+**Fixed 18.09 in `a6e4524`**, along with the rest of that round's census:
+20 members taken apart one at a time, 8 already pinned, 8 newly pinned,
+4 that no input can reach.
+
+The other seven newly pinned are worth naming, because each is the same
+shape — a guard nothing held:
+
+* three of the six `_FOLD` characters;
+* the `(?<!/)` guard in `_DELETION_RE`, which keeps a row-level `w:del`
+  from swallowing the links after it;
+* four of the five accept-all counts;
+* the bare-words spelling of an `--accept-loss` token.
+
+**And four members no input can reach**, reported rather than tested, two of
+them dead code:
+
+* `"‑": "-"` and `" ": " "` in `_FOLD`. NFKC runs FIRST and turns
+  U+2011 into U+2010 — which the table still folds — and U+00A0 into a
+  space, which `_norm` then strips with the rest of the whitespace.
+  Measured both ways (`scratchpad\agents\losses\probe_fold.py`). Harmless,
+  but the module's comment says every entry is there because a real
+  document produced it, and these two are answered by the step above them.
+  Somebody removing the U+2010 fold would silently take U+2011's cover with
+  it.
+* `_names`' `loss.key` and `f"{loss.kind}:{loss.what}"` are the same string,
+  so each covers the other and neither can be pinned alone — a redundancy in
+  the tuple rather than a hole in the tests.
+
+**The round's 15 kills are the same story one level down**: the glyph walk
+had never been given a text box, an XML comment, or an equation with text in
+it; the link pairing had never seen two anchors or a second relabel; every
+note fixture was small enough for CPython to hand back the same int twice;
+and `glyph_runs` had never been given a stream long enough for difflib's
+autojunk to matter — measured at 539 characters with one changed, where
+`autojunk=True` answers with a 496-character run whose finding is a full
+stop against an exclamation mark.
 ### ~~S1 — the package read Word markup by one spelling, and Word writes several~~ — FIXED 18.09, `4ed7fd6`
 
 <!-- status: fixed -->
