@@ -485,3 +485,47 @@ def test_record_makes_the_WHOLE_path_and_rounds_the_total_to_hundredths(
     assert path is not None and path.parent == folder
     assert json.loads(path.read_text(encoding="utf-8"))["total_seconds"] \
         == 0.24
+
+
+def test_a_run_made_under_LOAD_is_left_out_of_the_comparison():
+    """A median defends against one slow afternoon, not a slow week.
+
+    A mutation campaign keeps two or three sweep streams running for a
+    day, so every gate run of that day is loaded, the whole recent
+    window is loaded, and its median really is higher — for the load,
+    not for the code. On 2026-09-18 the chain reported `pytest 57.3s ->
+    79.4s` run after run over a suite that had grown by 1 %.
+    """
+    quiet = [{"steps": [{"name": "pytest", "seconds": 30.0,
+                         "status": "ok"}]} for _ in range(8)]
+    loaded = [{"extra": {"sweeps": 3},
+               "steps": [{"name": "pytest", "seconds": 80.0,
+                          "status": "ok"}]} for _ in range(4)]
+
+    assert T.regressions(quiet + loaded) == [], \
+        "the loaded runs are the weather, not a regression"
+
+
+def test_a_REAL_regression_among_quiet_runs_is_still_reported():
+    """The other half. A filter that also silenced the genuine case
+    would be worse than the false alarm it removes."""
+    runs = [{"steps": [{"name": "pytest", "seconds": 30.0,
+                        "status": "ok"}]} for _ in range(8)]
+    runs += [{"steps": [{"name": "pytest", "seconds": 80.0,
+                         "status": "ok"}]} for _ in range(4)]
+
+    found = T.regressions(runs)
+
+    assert [name for _d, name, _w, _n, _s in found] == ["pytest"]
+
+
+def test_a_run_that_says_NOTHING_about_load_is_kept():
+    """Every record written before this carries no `extra`, and dropping
+    them would throw away the history the median is computed from."""
+    runs: list[dict[str, object]] = [
+        {"steps": [{"name": "pytest", "seconds": 30.0, "status": "ok"}]}
+        for _ in range(8)]
+    runs += [{"extra": {}, "steps": [{"name": "pytest", "seconds": 80.0,
+                                      "status": "ok"}]} for _ in range(4)]
+
+    assert T.regressions(runs), "an empty extra is not a load record"

@@ -374,9 +374,18 @@ def _record(entries: list[dict[str, object]], outcome: str,
     producers: this chain and any paper that keeps its `batch.run`
     durations. Two shapes would mean two readers, and the analyst on top
     of them would have to know which was which.
+
+    **How loaded the machine was goes in with the numbers**, because
+    without it the regression reader cannot tell a slow suite from a
+    busy afternoon — and during a mutation campaign every afternoon is
+    busy, for days. `mutation_session` writes a `.running` marker per
+    live sweep, so counting them costs a `glob` and answers exactly the
+    question the timings cannot answer for themselves.
     """
+    live = len(list(ROOT.glob(".mutation-*.running")))
     return timings_mod.record("gates", "chain", entries, into,
-                              outcome=outcome)
+                              outcome=outcome,
+                              extra={"sweeps": live} if live else None)
 
 
 def _say_behind(say: Callable[[str], None]) -> None:

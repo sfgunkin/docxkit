@@ -144,7 +144,22 @@ def regressions(
     because two other sessions were busy. A tool that called that a
     regression would be reporting the weather, and a reader told that
     once stops reading the section.
+
+    **And a median defends against one slow afternoon, not against a
+    slow WEEK.** A mutation campaign keeps two or three sweep streams
+    running for a day at a time, so every gate run of that day is made
+    on a loaded machine, the whole recent window is loaded, and its
+    median really is higher — for the load, not for the code. On
+    2026-09-18 the chain reported `pytest 57.3s -> 79.4s (+22.1s)` on
+    run after run, over a suite that had grown by 1 %. The weather
+    again, arriving slowly enough to look like climate.
+
+    So a run that RECORDS having been made under load is left out of the
+    comparison. A run that says nothing — every record written before
+    this — stays in, because dropping those would throw away the history
+    the median is computed from.
     """
+    runs = [r for r in runs if not (r.get("extra") or {}).get("sweeps")]
     found = []
     for name, seconds in by_step(runs).items():
         if len(seconds) < 6:            # too few to call a median a fact
