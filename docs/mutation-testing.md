@@ -2711,6 +2711,52 @@ all. Choosing the bytes offline and hard-coding them, with the ordering
 asserted, is what makes the question askable — a docx fixture would have
 made it unanswerable without ever saying so.
 
+### A survivor on DEAD CODE: three kinds, and one test tells them apart
+
+Some survivors are neither killable nor equivalent: no test can kill a
+mutant on a line no input reaches, and it is not equivalent either,
+because the line's behaviour really does change. The honest resolution
+is usually deletion — but not always, and the question is never "is it
+reached today".
+
+**The test is: what happens when somebody changes the thing above it?**
+
+* **Dead by ACCIDENT** — nothing changes, it stays dead, and it goes.
+  `Cascade._chain_el` was a whole method, superseded by `_para_sources`
+  before it was ever called and then forgotten; `equations.py`'s two
+  rewriters returned a count `latex_to_omml` discarded. Five and eight
+  unanswerable survivors respectively, removed honestly rather than
+  argued away.
+* **Dead by ARGUMENT, for a caller** — it comes back to life doing the
+  right thing, so it stays and gets a claim. `_divide_pinned`'s
+  `[r if sum(room) else 1 …]` fallback is unreachable only because of a
+  guard four lines above; `_cite_grammar`'s right-hand edge guard
+  cannot act only because `split_run` returns `''` there — and it HAS
+  returned a shell before, which is the defect its own comment
+  describes.
+* **Dead by the TYPE SYSTEM's argument** — removing it breaks the
+  build, so it was never optional. `_carry_spacing`'s `if parent is
+  None: continue` cannot fire, because `root.iter()` runs on the parsed
+  document root; `getparent()` is typed `_Element | None` and the
+  `replace` beneath does not type-check without it.
+
+**The third announces itself in ten seconds**: take the line out and see
+whether pyright objects rather than a test. The other two need reading,
+and the cheap instrument for the first is
+
+    git log -S"<the returned name>" -- <the file>
+
+which answers *has anything EVER read this* rather than *does anything
+read it now*. One commit back means born unread; several mean a reader
+existed and went, which is a different conversation. `equations.py`'s
+counters gave exactly one commit — the one that added both functions,
+with the calls on bare lines from the first day.
+
+**And a deletion is the one verdict that cannot be walked back by
+reading the commit again**, so it is worth verifying independently even
+when the report is convincing. A claim can be re-read later; a deleted
+line has to be reconstructed.
+
 ### A scratch script that mutates a file must restore it with GIT
 
 `Path.write_text` writes CRLF on Windows, so a census script that reads
