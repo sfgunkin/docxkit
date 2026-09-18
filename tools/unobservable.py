@@ -15,14 +15,26 @@ fixed by a caller or a callee rather than by the input.
         line later by `close < 0` anyway
 
 Each cost an hour of reasoning that the session files already held, and
-each has the same signature in them: every mutant on the line survived
-and none was killed. This reads every stored session and ranks those
-clusters.
+each has the same signature in them: every mutant on that SUB-EXPRESSION
+survived and none was killed. This reads every stored session and ranks
+those clusters.
 
 A CLUSTER IS A CANDIDATE, NOT A VERDICT. The line may equally be one
 nothing tests. What tells the two apart is reading the callee — see
 `docs/mutation-testing.md`, "probe the callee before reasoning about the
 caller's guard" — and the report says so where a hurried reader meets it.
+
+THREE SPECIES COME OUT OF ONE SIGNATURE, and the report separates them
+because they ask for different work:
+
+* on a line the harness never executes — a test that reaches it, or a
+  deletion. Read off the run's own coverage file, and the reason the
+  label exists: the first whole run's top candidates were eleven
+  mutants turning `para_xml[:lo] + para_xml[hi:]` into `-`, `*` and `/`
+  between two STRINGS, which raises the moment the line runs;
+* inside a MESSAGE — untested wording, the cosmetic answer, and five of
+  those took the top of the first ranking and buried everything else;
+* the rest — read the callee. This is the one the tool is named for.
 
 A session's line numbers are ITS snapshot's, not today's, so every
 cluster is reported with the session's staleness beside it. A cluster
@@ -36,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import sqlite3
 import sys
 from collections import defaultdict
@@ -59,7 +72,12 @@ from mutation_survivors import (
     pristine_source,
     within,
 )
-from stale_figures import ROOT, main_checkout, session_file, state
+from stale_figures import (
+    ROOT,
+    main_checkout,
+    session_file,
+    state,
+)
 
 #: Sessions live beside the MAIN checkout, not beside whatever worktree a
 #: round is being worked in — the same reason `--running` had to be
@@ -98,11 +116,13 @@ class Cluster:
     mutants: list[str]
     staleness: str
     in_message: bool = False
+    uncovered: bool = False
 
     def show(self) -> str:
         rest = (f", {self.killed_here} killed elsewhere on the line"
                 if self.killed_here else "")
-        where = "in a MESSAGE, " if self.in_message else ""
+        where = ("NOT COVERED, " if self.uncovered else
+                 "in a MESSAGE, " if self.in_message else "")
         head = (f"{self.survived:3d}x  {self.module}:{self.line}:{self.col}"
                 f"  in {self.owner}   [{where}{self.staleness}{rest}]")
         body = [f"        {self.text.strip()[:70]}"]
@@ -133,6 +153,28 @@ def message_spans(tree: ast.Module) -> list[tuple[int, int, int, int]]:
                         node.end_lineno or node.lineno,
                         node.end_col_offset or node.col_offset))
     return out
+
+
+def covered_lines(db: Path) -> set[int] | None:
+    """Which lines the harness EXECUTED, from the run's own coverage.
+
+    None when the session kept no coverage file, in which case nothing
+    below claims anything about coverage.
+
+    This is the third species and the one that changes what a reader
+    should do. A cluster on a line nothing executes is not a line that
+    cannot act: it is a line nothing runs, and the answer is a test that
+    reaches it or a deletion — not a reading of the callee. Measured on
+    the first whole run: `equations.py:1089`'s eleven mutants turn
+    `para_xml[:lo] + para_xml[hi:]` into `-`, `*` and `/` between two
+    STRINGS, which raises the moment the line executes. Eleven survivors
+    is not subtlety; it is a line that never ran.
+    """
+    beside = db.with_suffix("").with_suffix(".coverage.json")
+    if not beside.is_file():
+        return None
+    with beside.open(encoding="utf-8") as fh:
+        return {int(line) for line in json.load(fh)}
 
 
 #: What a session says about one row, once the discounts are applied.
@@ -179,6 +221,7 @@ def clusters_in(module: str, least: int, dropped: Dropped, *,
     nocov = excluded_spans(text, tree, excluded_patterns(ROOT))
     defs = definitions(tree)
     messages = message_spans(tree)
+    covered = covered_lines(db)
     claims = claimed_equivalents(src)
     by_operator = claimed_by_operator(src)
 
@@ -224,7 +267,8 @@ def clusters_in(module: str, least: int, dropped: Dropped, *,
             survived=len(found), killed_here=killed_row.get(row, 0),
             text=lines[row - 1] if row <= len(lines) else "",
             mutants=[m or f"({op})" for m, op in found],
-            staleness=verdict, in_message=within(messages, row, col)))
+            staleness=verdict, in_message=within(messages, row, col),
+            uncovered=covered is not None and row not in covered))
     return out
 
 
@@ -245,12 +289,23 @@ def report(modules: list[str], least: int, keep_claimed: bool = False) -> int:
           "and a line\nnothing tests look the same from here. What tells "
           "them apart is reading the\nCALLEE — the value the line depends "
           "on may be fixed before the input arrives.\n")
-    # in-message clusters last: they are the cosmetic question, and on a
-    # first whole run they took the top five places and buried the rest
-    for cluster in sorted(found, key=lambda c: (c.in_message, -c.survived,
-                                                c.module, c.line)):
+    # Three species, and only the first is what this tool is named for.
+    # A cluster on a line nothing RUNS wants a test or a deletion; one
+    # inside a message wants somebody to decide whether the wording is
+    # worth asserting; the rest want the callee read. Sorted so the
+    # third comes first — on the first whole run the other two took the
+    # top of the ranking and buried it.
+    for cluster in sorted(found, key=lambda c: (c.uncovered, c.in_message,
+                                                -c.survived, c.module,
+                                                c.line)):
         print(cluster.show())
         print()
+    kinds = (sum(1 for c in found if not c.uncovered and not c.in_message),
+             sum(1 for c in found if c.in_message and not c.uncovered),
+             sum(1 for c in found if c.uncovered))
+    print(f"{kinds[0]} to READ THE CALLEE for, {kinds[1]} inside a message "
+          f"(untested wording), {kinds[2]} on a line the harness never "
+          f"executes (a test or a deletion, not a reading)")
     print(dropped.show())
     stale = [c for c in found if c.staleness != "fresh"]
     if stale:

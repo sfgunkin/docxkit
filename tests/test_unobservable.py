@@ -13,6 +13,7 @@ is, and nothing subtracted in silence.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -39,8 +40,12 @@ def guard(items, end, le):
 
 
 def _session(tmp_path: Path, rows: list[tuple[int, int, str, str, str]],
-             module: str = "thing.py") -> Path:
-    """A synthetic run: `(row, col, operator, outcome, mutant line)`."""
+             module: str = "thing.py",
+             covered: list[int] | None = None) -> Path:
+    """A synthetic run: `(row, col, operator, outcome, mutant line)`.
+
+    `covered` writes the coverage file a real run keeps beside itself,
+    listing the lines the harness executed."""
     src = tmp_path / "src" / "docxkit"
     src.mkdir(parents=True, exist_ok=True)
     (src / module).write_text(MODULE, encoding="utf-8")
@@ -58,6 +63,10 @@ def _session(tmp_path: Path, rows: list[tuple[int, int, str, str, str]],
                     (f"j{n}", outcome, diff))
     con.commit()
     con.close()
+    if covered is not None:
+        (tmp_path / f".mutation-{module.removesuffix('.py')}.coverage.json"
+         ).write_text(json.dumps({str(n): [] for n in covered}),
+                      encoding="utf-8")
     return db
 
 
@@ -142,6 +151,44 @@ def test_what_is_discounted_is_COUNTED(world, capsys):
     said = capsys.readouterr().out
     assert "discounted:" in said
     assert "1 line(s) had a kill as well" in said
+
+
+def test_a_cluster_on_a_line_NOTHING_RUNS_is_named_as_that(world, capsys):
+    """The third species, and the one that changes what a reader does.
+
+    Found by reading the first candidates the tool ranked highest:
+    `equations.py:1089`'s eleven mutants turn `para_xml[:lo] +
+    para_xml[hi:]` into `-`, `*` and `/` between two STRINGS, which
+    raises the moment the line executes. Eleven survivors there is not
+    subtlety, it is a line nothing ran — and the answer is a test that
+    reaches it or a deletion, not a reading of the callee.
+
+    The run's own coverage file says which, and every one of the three
+    known unobservable clusters is on a COVERED line.
+    """
+    _session(world, [
+        (5, 20, "A", "SURVIVED", "    if end > le and not after:"),
+        (5, 20, "B", "SURVIVED", "    if end == le and not after:"),
+    ], covered=[4, 6, 7])
+
+    unobservable.report(["thing.py"], 2)
+
+    said = capsys.readouterr().out
+    assert "NOT COVERED" in said
+    assert "1 on a line the harness never executes" in said
+
+
+def test_with_NO_coverage_file_the_tool_claims_nothing_about_it(world):
+    """A session that kept none is not a session that says the line was
+    never run."""
+    _session(world, [
+        (5, 20, "A", "SURVIVED", "    if end > le and not after:"),
+        (5, 20, "B", "SURVIVED", "    if end == le and not after:"),
+    ])
+
+    (found,) = unobservable.clusters_in("thing.py", 2, unobservable.Dropped())
+
+    assert not found.uncovered
 
 
 def test_the_report_says_a_cluster_is_a_CANDIDATE(world, capsys):
