@@ -1071,6 +1071,43 @@ commit had silently settled. Run it — and expect the answer to be
 "nothing" whenever the tests that landed and the survivors that remain
 are about different parts of the module.
 
+### A fourth kind, from REBASING: a claim that was expired comes back
+
+The three above are a claim that no longer describes the module. This
+one is a claim that no longer EXISTS, and returns anyway.
+
+`fix/regex-registry` was 31 commits carried through a day in which
+master moved 31 times, four of them deleting claims their own fix had
+expired. Rebasing it onto the base it was given, `9bf6843`, put five
+`_compare_read.py` claims back into `tools/equivalents.toml` — the ones
+about `elif kind == "separate" and depth == 1:` and its neighbours.
+`ccc3478` had expired them that afternoon, when `_field_marks` replaced
+`_own_separator` and a field stopped being masked from its own runs; at
+`9bf6843` they were still live. So the rebased tree carried the BASE's
+file with the branch's own deletions applied to it and nothing else. No
+conflict, no warning: a rebase resolves the file, not the arguments in
+it.
+
+What that leaves is exactly what `verify_equivalents` exists to refuse —
+an argument about code that is gone — wearing the face of a claim
+somebody made deliberately, because the `why` is still well argued about
+the shape the module used to have. The next sweep would have read it as
+settled and taken those mutants out of both halves of the figure.
+
+Rebasing again onto the newer tip dropped them, since the expiring
+commit was in the base by then. That is the accident undoing itself,
+not a rule to lean on: had the branch landed from the first base, the
+five would have landed with it.
+
+**So: after rebasing a branch that touches `equivalents.toml`, diff the
+claims against master's rather than trusting the rebase.** One claim per
+line makes it a set difference over the `was`/`line` pairs — what a
+branch may legitimately hold is its own deletions and its own additions,
+and anything else is the older base leaking through. Here that said 0
+extra and 7 deleted, which is what the branch had argued for; without
+it, "the rebase had no conflicts" would have been the only evidence, and
+it is evidence about text.
+
 ### A log line is not a figure — the claims move too
 
 `stale_figures.py` watches the source and the harness. Nothing watches
