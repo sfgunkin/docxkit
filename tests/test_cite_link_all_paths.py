@@ -488,6 +488,40 @@ def test_a_NEW_work_in_a_prefix_scheme_paper_gets_the_SUFFIX_twin():
     assert ("Ravallion2016txt", "Ravallion, M. (2016)") in _links(parts)
 
 
+def test_an_INSTITUTIONAL_author_cited_with_its_own_acronym_is_wired():
+    """BACKLOG S2, 2026-09-18: the entry got its bookmark and the
+    mention stayed plain text.
+
+    The author is an organisation that names itself with an acronym —
+    the form `_entry_keys` already licenses, so "(UNICEF 2022)" linked
+    and the acronym is not what was wrong. What failed is the mention
+    that repeats the name as the entry spells it, parenthesis and all:
+    that is a citation group holding a nested one, which the scanner
+    refused to read (`test_a_work_BESIDE_a_nested_aside_is_still_cited`
+    is the same defect at the grammar). Half the apparatus was built and
+    the report said nothing, because the half that works is the half
+    that leaves evidence.
+
+    Asserted as the PAIR, both ends: the entry's bookmark alone is what
+    the defect already produced.
+    """
+    org = ("State Committee of the Republic of Uzbekistan on Statistics "
+           "and United Nations Children's Fund (UNICEF)")
+    parts = make_parts(
+        para(run(f"The survey ({org} 2022) covers households."))
+        + para(run("References"))
+        + para(run(f"{org}. (2022). MICS 2021-2022. Tashkent.")))
+
+    report = link_all(parts)
+
+    (name,) = [n for n in BOOKMARK_NAME_RE.findall(
+        parts["word/document.xml"].decode("utf-8")) if not n.endswith("txt")]
+    assert report.linked == [f"{name} @ ¶1"], report.format()
+    anchors = dict(_links(parts))
+    assert anchors[name].endswith("2022"), anchors
+    assert anchors[f"{name}txt"].startswith("State Committee"), anchors
+
+
 def test_the_HALF_LINKED_line_is_printed_only_when_something_WAS_repaired():
     """`if self.repaired`, in both directions: a clean round must not
     print the heading of a list with nothing after it, and a round that

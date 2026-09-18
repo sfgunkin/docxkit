@@ -64,6 +64,32 @@ def test_a_narrative_inside_a_parenthetical_is_reported_once():
     assert len(find_citations(text)) == 1
 
 
+def test_a_work_BESIDE_a_nested_aside_is_still_cited():
+    """The group holds a parenthesis, and the work beside it went
+    missing: `_PAREN_RE` matched a group with nothing nested in it, so
+    the OUTER group of "(Ravallion 2011; see also Deaton (2013))" was
+    never scanned and only Deaton — found by the narrative pattern, which
+    reads the whole line — was reported. Nothing said so: the pass
+    reports what it found, and a citation it never saw is not a finding.
+
+    Both works, and in document order, because the miss is the first
+    one: a test asserting only that Ravallion is present would pass over
+    a scan that reported him twice."""
+    assert _found("(Ravallion 2011; see also Deaton (2013))") == [
+        ("Ravallion", "2011", False),
+        ("Deaton", "2013", True)]
+
+
+def test_a_citation_only_the_INNER_group_closes_is_still_found():
+    """The hazard of scanning the outer group: "(see (Smith 2020))" is
+    a citation that only the inner group ends. A year must CLOSE its
+    segment — the group's end, a semicolon or a comma — and in the outer
+    text a bracket follows this one, so widening the scan and stopping
+    there would trade one silent miss for another. Both levels are
+    walked, and this is the case that says the inner one still is."""
+    assert _found("(see (Smith 2020))") == [("Smith", "2020", False)]
+
+
 def test_a_semicolon_list_yields_each_work():
     """'(Bernheim and Rangel 2009; Chetty 2015)' — a whole-group pattern
     found neither, and the LE audit read both entries as uncited."""

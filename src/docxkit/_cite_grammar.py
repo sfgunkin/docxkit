@@ -96,6 +96,17 @@ _YEARS = rf"{_YEAR}(?:\s*,\s*{_YEAR})*"
 # CLOSES it (the group's end, a semicolon, or a comma) — "in Almaty
 # 2005 the" does not cite.
 _PAREN_RE = re.compile(r"\(([^()]*)\)")
+# A group may HOLD one, and the works beside the nested one are then
+# invisible to a pattern that refuses a parenthesis: "(Ravallion 2011;
+# see also Deaton (2013))" lost Ravallion entirely, and an institutional
+# author carrying its own acronym — "(Children's Fund (UNICEF) 2022)" —
+# was not a citation at all, so `link_all` minted the entry's bookmark
+# and wired no link (BACKLOG S2, 2026-09-18). One level, because that is
+# what the forms are: a nested group is an aside or an acronym, never
+# another citation list. `_scannable` below walks the group AND the
+# groups inside it, so a citation that only the INNER one closes —
+# "(see (Smith 2020))" — is still found.
+_GROUP_RE = re.compile(r"\(((?:[^()]|\([^()]*\))*)\)")
 _SEGMENT_RE = re.compile(rf"({_AUTHORS})\s+({_YEARS})(?=\s*(?:[;,]|$))")
 # The narrative parens may carry a locator: "Maestas et al. (2023, p. 45)".
 _NARRATIVE_RE = re.compile(
@@ -514,6 +525,22 @@ def _patterns_for(names: tuple[str, ...]) -> tuple[re.Pattern[str],
                        r"(?:,\s+pp?\.[^)]*)?\)"))
 
 
+def _scannable(group: re.Match[str]) -> list[tuple[int, str]]:
+    """A group's own text, and each group nested inside it, with offsets.
+
+    Both, because either can close a citation and only one of them can
+    close any given one. "(Ravallion 2011; see also Deaton (2013))" cites
+    Ravallion in the OUTER text — the segment's year is closed by the
+    semicolon — while "(see (Smith 2020))" cites Smith in the INNER one,
+    where the year is closed by the group's end; in the outer text a
+    bracket follows it and nothing does.
+    """
+    inside = group.group(1)
+    return [(group.start(1), inside),
+            *((group.start(1) + m.start(1), m.group(1))
+              for m in _PAREN_RE.finditer(inside))]
+
+
 def find_citations(text: str,
                    names: Sequence[str] | tuple[str, ...] = ()) -> list[
                        Citation]:
@@ -526,8 +553,9 @@ def find_citations(text: str,
     two citations of Sen whose spans tile the group. A narrative
     citation inside a parenthetical aside — "(see Maestas et al.
     (2023))" — is reported once, as the narrative form; the two loops
-    cannot double-report, because a segment's text can hold no
-    parenthesis and a narrative match must hold its "(year)".
+    cannot double-report, because a segment ends `authors year` with
+    nothing between the two and a narrative match must hold its
+    "(year)", so the year that closes one cannot close the other.
 
     `names` is what the REFERENCE LIST says the surnames are, and
     passing it is how a caller stops this from guessing at the ones the
@@ -541,12 +569,13 @@ def find_citations(text: str,
         return []
     segment_re, narrative_re = _patterns_for(tuple(names))
     found: list[Citation] = []
-    for pm in _PAREN_RE.finditer(text):
-        base = pm.start(1)
-        for m in segment_re.finditer(pm.group(1)):
-            found += _per_year(m.group(1), m.group(2),
-                               at=base + m.start(), years_at=base + m.start(2),
-                               end=base + m.end(), narrative=False)
+    for pm in _GROUP_RE.finditer(text):
+        for base, inside in _scannable(pm):
+            for m in segment_re.finditer(inside):
+                found += _per_year(m.group(1), m.group(2),
+                                   at=base + m.start(),
+                                   years_at=base + m.start(2),
+                                   end=base + m.end(), narrative=False)
     for m in narrative_re.finditer(text):
         found += _per_year(m.group(1), m.group(2), at=m.start(),
                            years_at=m.start(2), end=m.end(), narrative=True)
