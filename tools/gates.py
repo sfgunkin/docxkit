@@ -184,14 +184,22 @@ GATES: list[Gate] = [
     # eleven breakage kinds that break a CALL fail it — the twelfth,
     # a constant's value, is reported. See the tool for the measurement.
     ("api", [sys.executable, "tools/api_check.py"], False),
-    # Does the SHIPPED package import anything it does not declare? The
-    # one question `pyproject.toml` has been wrong about three times —
-    # latex2mathml, pymupdf and pandas — and every time it was a clean
-    # checkout that found out, days later. It cannot be noticed locally
-    # by running the code, because the package is installed HERE; that
-    # is the whole reason this needs a tool. Scoped and configured in
-    # `[tool.deptry]`, where the reasoning is.
-    ("deps", [sys.executable, "-m", "deptry", "src"], False),
+    # Does anything in this repository import what it does not declare?
+    # The one question `pyproject.toml` has been wrong about four times
+    # — latex2mathml, pymupdf, pandas and cosmic-ray — and every time it
+    # was a clean checkout that found out, days later. It cannot be
+    # noticed locally by running the code, because everything is
+    # installed HERE; that is the whole reason this needs a tool.
+    #
+    # `tools` joined `src` on 2026-09-18, after the fourth one arrived
+    # THERE and this gate reported success over it: `render_survivors.py`
+    # imports cosmic-ray, which is in no extra and on no CI runner, and
+    # the push that merged it took mypy and pytest down together. A gate
+    # scoped to the shipped package answers for the shipped package; the
+    # tools are how the shipped package is measured, and a tool that
+    # cannot be imported is a gate that cannot run. Scoped and
+    # configured in `[tool.deptry]`, where the reasoning is.
+    ("deps", [sys.executable, "-m", "deptry", "src", "tools"], False),
     # The corpus. It SKIPS without `DOCXKIT_CORPUS` (exit 3, printed as
     # `skip`), which is why it can sit in the chain at all — CI has no
     # manuscripts and never will. Named here even when it cannot run,

@@ -43,6 +43,14 @@ pdf = ["pymupdf>=1.24"]
 # same way — and, like latex2mathml, it was undeclared until a clean
 # environment asked for it.
 pandas = ["pandas>=2.0"]
+# The mutation campaign's engine, and the fourth undeclared import this
+# file has carried. It is installed only on the machine that runs the
+# sweeps — CI does not want it and does not need it — but
+# `tools/render_survivors.py` imports `mutate_code` and `get_operator`
+# in earnest, so it is a dependency of something whatever the install
+# story is. Declaring it as an extra says WHERE it belongs instead of
+# leaving it to whoever next reads a red CI log (2026-09-18).
+mutation = ["cosmic-ray>=8.7"]
 # Everything the documented gates need. hypothesis is not optional:
 # tests/test_properties.py and test_tables_api.py import it at module
 # level, so a clone without it does not lose the property suite quietly
@@ -97,8 +105,20 @@ docxkit = ["py.typed"]
 # reports them as DEP003 rather than DEP001 because the package IS
 # installed on the machine running it — which is exactly why those three
 # shipped undeclared and only a clean checkout ever noticed.
+# `tools/` came back INTO scope on 2026-09-18, and the reasoning above
+# was measured again rather than trusted. The 41 issues it cites are now
+# 22, and `known_first_party = ["docxkit"]` answers 20 of them — the
+# package imported by its own tools, which is not a dependency question.
+# What is left is two, and they were the live defect: `cosmic_ray`
+# imported by `render_survivors.py` and declared nowhere, which took CI
+# down on mypy AND pytest the day that tool landed while this gate said
+# `Success! No dependency issues found.` over the same tree.
+#
+# `tests/` stays out. It imports the tools by bare name after a
+# `sys.path.insert` and nothing there ships.
 [tool.deptry]
-extend_exclude = ["tools", "tests"]
+extend_exclude = ["tests"]
+known_first_party = ["docxkit"]
 ignore = ["DEP002"]
 
 # `pywin32` is the DISTRIBUTION; what `word.py` imports is `win32com`
@@ -351,7 +371,20 @@ disallow_untyped_defs = true
 # contributor who does not want a 20 MB wheel to run the tests. An
 # optional extra is absent SOMEWHERE by definition, and both checkers
 # have to be told so.
-module = ["win32com.*", "pythoncom", "latex2mathml.*", "pymupdf.*"]
+#
+# `cosmic_ray.*` joined on 2026-09-18, and it is the same lesson a third
+# time. `tools/render_survivors.py` imports `mutate_code` and
+# `get_operator` to re-apply a recorded mutation, and carried an inline
+# `type: ignore[import-untyped]` arguing that this was NOT an optional
+# extra and so did not belong here. It is: cosmic-ray is in no extra at
+# all, it is installed only on the machine that runs the sweeps, and CI
+# went red on the push that merged the tool — mypy on
+# `[import-not-found]` plus `[unused-ignore]` for the very comment that
+# said it was not needed, and pytest on `ModuleNotFoundError`. A
+# dev-only dependency that no install declares is absent MORE often than
+# an extra, not less.
+module = ["win32com.*", "pythoncom", "latex2mathml.*", "pymupdf.*",
+          "cosmic_ray.*"]
 ignore_missing_imports = true
 
 [tool.pyright]

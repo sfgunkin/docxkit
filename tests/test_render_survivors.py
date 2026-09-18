@@ -19,7 +19,18 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 import docxkit
+
+# The tool is `mutate_code` and `get_operator` and little else, so it
+# cannot be imported without them. cosmic-ray is in no extra — it lives
+# on the machine that runs the sweeps — and CI went red on
+# `ModuleNotFoundError` the day this file landed. A skip is honest here:
+# the tool only ever runs where a SESSION exists, and a session only
+# exists where cosmic-ray planned it.
+pytest.importorskip("cosmic_ray",
+                    reason="cosmic-ray is a sweep-machine dependency")
 
 TOOLS = Path(docxkit.__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS))

@@ -60,14 +60,20 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# cosmic-ray ships no type information and is a dev-only dependency, so
-# both checkers are told once, here, rather than in pyproject's override
-# list — which answers for the OPTIONAL EXTRAS a contributor may not
-# have installed, and this is not one of those.
-from cosmic_ray.mutating import (  # type: ignore[import-untyped]
+# cosmic-ray ships no type information AND is in no extra: it is
+# installed on the machine that runs the sweeps and nowhere else, which
+# makes it absent more often than an optional extra, not less. Both
+# checkers are told so in pyproject's override list, beside pymupdf and
+# latex2mathml — an inline `type: ignore[import-untyped]` here said the
+# opposite and took CI down with it (2026-09-18).
+#
+# Left at module level rather than deferred into the functions: this
+# tool does nothing at all without cosmic-ray, and a lazy import would
+# buy an `--help` that works on a machine where no command does.
+from cosmic_ray.mutating import (
     mutate_code,  # pyright: ignore[reportMissingImports]
 )
-from cosmic_ray.plugins import (  # type: ignore[import-untyped]
+from cosmic_ray.plugins import (
     get_operator,  # pyright: ignore[reportMissingImports]
 )
 from harness_map import harness_for  # pyright: ignore[reportMissingImports]
