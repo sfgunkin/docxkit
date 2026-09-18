@@ -32,7 +32,13 @@ import pytest
 from conftest import NS, field
 
 from docxkit._xml import (
+    _PRINTED_RE,
+    _SHOWS_SOMETHING_RE,
+    BOOKMARK_ID_RE,
+    GLYPH_MAP,
+    MATH_OBJECTS,
     PARA_RE,
+    PRINTED_CHILDREN,
     ZIP_STAMP,
     append_before_close,
     dead_links,
@@ -40,6 +46,7 @@ from docxkit._xml import (
     internal_links,
     live_properties,
     matching_close,
+    normalize_glyphs,
     own_properties,
     printed_text,
     run_holds_content,
@@ -1560,6 +1567,117 @@ def test_run_holds_content_asks_PAST_the_runs_own_properties(run_xml, holds):
     element whose name merely starts with `w:r` closes with that tag.
     """
     assert run_holds_content(run_xml) is holds
+
+
+# ------------------------------------------ the data census of 2026-09-18 --
+#
+# No mutation operator reaches a tuple's members or a regex's
+# alternatives, so a carrier can be deleted from one of this module's
+# TABLES with every test still green. Censused member by member, 74
+# drops over ten tables: 15 were held by this module's own five files,
+# 32 only by a distant module's tests, and 27 by nothing in the suite.
+#
+# Each table below is therefore held TWICE, which is the shape
+# `docs/mutation-testing.md` asks for: against a list WRITTEN OUT here,
+# which is the half that catches a member removed, and a case per
+# member, which is the half that catches one added with nothing to
+# exercise it. A test that draws its cases from the table alone does
+# neither — it loses a case with the member and passes.
+
+MATH_OBJECT_NAMES = frozenset({
+    "acc", "bar", "box", "borderBox", "d", "eqArr", "f", "func",
+    "groupChr", "limLow", "limUpp", "m", "nary", "phant", "r", "rad",
+    "sPre", "sSub", "sSubSup", "sSup",
+})
+
+GLYPHS = {
+    "−": "-", "∗": "*", "’": "'", "‘": "'",
+    "“": '"', "”": '"', "–": "-", "—": "-",
+    " ": " ",
+}
+
+PRINTED = {"noBreakHyphen": "‑", "softHyphen": "­", "tab": "\t",
+           "br": "\n", "cr": "\n"}
+
+SHOWS_SOMETHING = ("delText", "drawing", "pict", "object",
+                   "footnoteReference", "endnoteReference")
+
+
+def test_MATH_OBJECTS_names_every_element_that_renders_a_BOX():
+    """Seventeen of these twenty could be taken out with the whole suite
+    green — only `box`, `f` and `r` are pinned, and those by tests in
+    other modules. A name missing here is an emptied box `lint` stops
+    reporting and `revisions` stops pruning when a deletion empties it,
+    both silently. The per-member cases belong with those two readers;
+    this is the half that catches the table LOSING one."""
+    assert MATH_OBJECTS == MATH_OBJECT_NAMES
+
+
+def test_GLYPH_MAP_is_the_substitutions_WORD_applies_on_save():
+    """Four of the nine were unpinned by anything: the asterisk
+    operator, the left single quote, the em dash and the no-break
+    space. A glyph missing here is one `compare` calls an author edit
+    and a build writes back in Word's spelling."""
+    assert GLYPH_MAP == GLYPHS
+
+
+@pytest.mark.parametrize("glyph", sorted(GLYPHS))
+def test_every_glyph_in_the_table_is_normalized(glyph):
+    assert normalize_glyphs(f"a{glyph}b") == f"a{GLYPHS[glyph]}b"
+
+
+def test_the_printed_children_TABLE_and_its_PATTERN_name_the_same_elements():
+    """Two hand-kept copies of one list, and `printed_text` needs both —
+    `_PRINTED_RE` to MATCH the element, `PRINTED_CHILDREN` to say what
+    it prints — so a name in one and not the other renders as nothing
+    at all. `cr` was in neither's cover: dropping it from the pattern is
+    caught elsewhere, dropping it from the mapping was caught nowhere,
+    because the only test that reached it passes a `printing` mapping of
+    its own and never exercises the default."""
+    assert PRINTED_CHILDREN == PRINTED
+    alternatives = _PRINTED_RE.pattern.rsplit("<w:(", 1)[1].split(")", 1)[0]
+    assert set(alternatives.split("|")) == set(PRINTED), \
+        "the pattern and the table have drifted apart"
+
+
+@pytest.mark.parametrize("name", sorted(PRINTED))
+def test_every_printed_child_reaches_printed_text(name):
+    xml = f"<w:p><w:r><w:t>a</w:t><w:{name}/><w:t>b</w:t></w:r></w:p>"
+
+    assert printed_text(xml) == f"a{PRINTED[name]}b"
+
+
+def test_SHOWS_SOMETHING_names_every_child_that_puts_something_on_the_page():
+    """`pict`, `object` and `endnoteReference` were held by nothing. A
+    name missing here is a link whose only content is that element
+    reading as EMPTY — `dead_links` reports damage where there is
+    none, which is the costly direction for a gate nobody can check by
+    eye."""
+    alternatives = _SHOWS_SOMETHING_RE.pattern.split("(?:", 1)[1].split(")")[0]
+    assert tuple(alternatives.split("|")) == SHOWS_SOMETHING
+
+
+@pytest.mark.parametrize("child", SHOWS_SOMETHING)
+def test_a_link_holding_only_that_child_is_not_a_DEAD_link(child):
+    """One case per member, each a hyperlink whose label is that element
+    and nothing else."""
+    inner = (f'<w:r><w:{child} w:id="3"/></w:r>' if "Reference" in child
+             else f"<w:r><w:{child}/></w:r>")
+    xml = f'<w:p><w:hyperlink w:anchor="Table1">{inner}</w:hyperlink></w:p>'
+
+    assert dead_links(xml) == [], f"a link showing a w:{child} is not empty"
+
+
+def test_BOOKMARK_ID_RE_reads_an_id_off_EITHER_end_of_the_pair():
+    """Both alternatives were unpinned: `(?:Start|End)` could lose
+    either half with the suite green. `_cite_repair.next_bookmark_id`
+    asks this for the highest id in the document, and half a pair is
+    where the highest one sits when an edit cut the other half — mint
+    over it and two bookmarks share an id."""
+    both = ('<w:p><w:bookmarkStart w:id="7" w:name="Table1"/>'
+            '<w:bookmarkEnd w:id="9"/></w:p>')
+
+    assert BOOKMARK_ID_RE.findall(both) == ["7", "9"]
 
 
 def test_a_PAIRED_property_does_not_move_where_a_NEW_one_lands():
