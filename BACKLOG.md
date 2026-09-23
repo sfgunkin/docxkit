@@ -46,6 +46,57 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S3 — the reject gate prunes ONE side, so a document with a continuationNotice can never pass it
+
+<!-- status: open -->
+
+`tracked.build` refuses every batch built from a manuscript whose
+`footnotes.xml` / `endnotes.xml` carry a `continuationNotice` holding a
+paragraph, however correct the batch is. The refusal names two paragraphs and
+prints `baseline '' / batch ''` for both, which reads as a bug in the batch and
+sends you looking in the body.
+
+**Measurement** (Misconceptions_2026.docx, 2026-09-23). The baseline put through
+the gate's own simulation loses a paragraph in each notes part *before any batch
+exists*:
+
+```python
+from docxkit import read_parts
+from docxkit._tracked_gates import _simulate, _reject, _paras, _root
+base = read_parts("Misconceptions_2026.docx")
+sim = _simulate(base, _reject)
+_paras(_root(base, "word/footnotes.xml"))   # 22 paragraphs
+_paras(_root(sim,  "word/footnotes.xml"))   # 21
+_paras(_root(base, "word/endnotes.xml"))    # 3 -> 2
+```
+
+**Diagnosis.** `untracked()` compares `_simulate(parts, _reject)` against the
+RAW `baseline`. `_simulate` drops empty note definitions (the orphan-shell
+prune that `report.orphan_notes` relies on), and `separator`,
+`continuationSeparator` and `continuationNotice` are empty by design and
+referenced by nothing, so the pruning removes the notice from the simulated side
+only. The two sides are then misaligned by one and SequenceMatcher reports the
+shift at the first paragraph that moved — an empty one, hence `'' vs ''`.
+
+**Both gates, not one.** `unaccepted()` has the same shape — `_simulate(parts,
+_accept)` against the raw `revised_parts` — so turning `reject_check` off just
+moves the refusal to the accept side, with a message that blames Word for
+rewriting content. Measured in the same session: `reject_check=False` alone
+still refused, naming `footnotes ¶1` and `endnotes ¶3` again.
+
+**Fix.** Never prune a note whose `w:type` is one of the three special kinds —
+they have no reference by definition. Exempting them in `_simulate`'s prune
+fixes both gates at once; comparing simulated-against-simulated in `untracked()`
+and `unaccepted()` would also work. A test needs only a fixture whose
+`continuationNotice` holds one empty paragraph.
+
+**Workaround in use** (Misconceptions `revision/do/W2_tracked_build.py`):
+build with `reject_check=False, accept_check=False`, then run both gates by hand
+with the same simulation applied to both sides — `_simulate(batch, _reject)` vs
+`_simulate(baseline, _reject)`, and `_simulate(batch, _accept)` vs
+`_simulate(clean, _accept)` — refusing on any difference. That keeps what the
+gates mean instead of switching them off.
+
 ### S2 — a Table's continuation claims a FIGURE's number, so the reader clicks a figure and lands on a table
 
 <!-- status: open -->
