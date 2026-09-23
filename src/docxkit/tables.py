@@ -36,6 +36,7 @@ from ._table_core import _table_spans as _table_spans
 from ._table_core import by_caption as by_caption
 from ._table_core import cells_of as cells_of
 from ._table_core import clone_row as clone_row
+from ._table_core import decimal_mark as decimal_mark
 from ._table_core import find as find
 from ._table_core import parse_number as parse_number
 from ._table_core import read_all as read_all
@@ -91,6 +92,7 @@ __all__ = [
     "bottom_border",
     "by_caption",
     "clone_row",
+    "decimal_mark",
     "drop_blank_rows",
     "find",
     "fit_columns",

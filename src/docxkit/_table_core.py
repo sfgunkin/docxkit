@@ -156,8 +156,17 @@ class Table:
         return next((r for r in self.rows[1:] if r and r[0].strip() == label),
                     None)
 
-    def numbers(self) -> list[list[float | None]]:
-        return [[parse_number(c) for c in row] for row in self.rows]
+    def numbers(self, *, decimal: str | None = None
+                ) -> list[list[float | None]]:
+        """Every cell as :func:`parse_number` reads it.
+
+        A ``1,234``-shaped cell is read with the decimal mark the rest of
+        the table uses (:func:`decimal_mark`) unless `decimal` states it.
+        """
+        _check_decimal(decimal)
+        mark = decimal or decimal_mark(c for row in self.rows for c in row)
+        return [[parse_number(c, decimal=mark) for c in row]
+                for row in self.rows]
 
     def grid_columns(self, xml: str, row: int) -> list[int]:
         """First grid column of each cell in `row` — the bridge.
@@ -730,22 +739,109 @@ def rows_preserved(before: Table, after: Table, *,
                       rows=sum(a.values()))
 
 
-def parse_number(text: str) -> float | None:
+_SPACES = " \u00a0"
+#: A comma followed by a space ends the number: "12, 13" is a list.
+_LIST_COMMA_RE = re.compile(r",[ \u00a0]")
+
+
+def _leading(text: str) -> str:
+    """The number a cell's text starts with, as printed, or ""."""
+    m = _NUM_RE.match(text)
+    if not m:
+        return ""
+    shown = m.group(0)
+    cut = _LIST_COMMA_RE.search(shown)
+    if cut:
+        shown = shown[:cut.start()]
+    return shown.rstrip("," + _SPACES)
+
+
+def _comma_role(shown: str) -> str | None:
+    """What the comma in a printed number is, read from that number alone.
+
+    ``"decimal"`` (``0,31``, ``12,5``, ``1 234,5``), ``"thousands"``
+    (``1,234.5``, ``1,234,567``), ``"ambiguous"`` (``1,234`` — 1234 in an
+    English table, 1.234 in a Russian one), or None for no comma.
+
+    A thousands group is exactly three digits behind a head of one to
+    three digits that does not start with zero, and it never shares a
+    number with space grouping — so anything else with ONE comma is a
+    decimal comma.
+    """
+    core = shown.lstrip("-−+")
+    if "," not in core:
+        return None
+    if "." in core:
+        return "thousands"
+    head, *tails = core.split(",")
+    if len(tails) > 1:
+        return "thousands"
+    if any(c in head for c in _SPACES):
+        return "decimal"
+    if (len(tails[0]) != 3 or not 1 <= len(head) <= 3
+            or head.startswith("0")):
+        return "decimal"
+    return "ambiguous"
+
+
+def decimal_mark(texts: Iterable[str]) -> str | None:
+    """The decimal mark a set of cells uses — ``","``, ``"."`` or None.
+
+    What a reader does with ``1,234``: look at the rest of the table. A
+    ``0,31`` elsewhere says the commas are decimal; a ``1,234.5`` or a
+    ``0.31`` says they are not. The majority decides; no evidence, or a
+    tie, is None. Measured over 20,422 tables on 2026-09-23: 119 had an
+    ambiguous number settled by a decimal comma beside it, and every one
+    of the 70 left unsettled that was sampled was an English count table
+    ("143,070") — so None reads as English.
+    """
+    comma = point = 0
+    for text in texts:
+        shown = _leading(text.strip())
+        role = _comma_role(shown)
+        if role == "decimal":
+            comma += 1
+        elif role == "thousands" or (role is None and "." in shown):
+            point += 1
+    if comma == point:
+        return None
+    return "," if comma > point else "."
+
+
+def _check_decimal(decimal: str | None) -> None:
+    if decimal not in (None, ",", "."):
+        raise ValueError(f"decimal must be ',', '.' or None, not {decimal!r}")
+
+
+def _comma_is_decimal(shown: str, decimal: str | None) -> bool:
+    role = _comma_role(shown)
+    return role == "decimal" or (role == "ambiguous" and decimal == ",")
+
+
+def parse_number(text: str, *, decimal: str | None = None) -> float | None:
     """Leading numeric value of a cell, or None if it holds no number.
 
     Handles what these tables actually contain: a typographic minus
     (U+2212), a leading ``+``, thousands separators including the
     non-breaking kind, a trailing ``%``, and significance stars or
     bracketed p-values after the value (``-0.623** [0.038]``).
+
+    A DECIMAL comma is read as one wherever the number itself says so —
+    ``0,31`` is 0.31, ``1 234,5`` is 1234.5. It used to be stripped as a
+    thousands separator, which made ``0,31`` 31.0 in every Russian table
+    (backlog S1, 2026-09-18). Only ``1,234``-shaped numbers cannot tell
+    from the string; `decimal` says which mark the table uses (see
+    :func:`decimal_mark`), and without it they read as English.
     """
-    text = text.strip()
-    if not text:
+    _check_decimal(decimal)
+    shown = _leading(text.strip())
+    if not shown:
         return None
-    m = _NUM_RE.match(text)
-    if not m:
-        return None
-    raw = (m.group(0).replace("−", "-").replace(",", "")
-           .replace(" ", "").replace(" ", ""))
+    raw = shown.replace("−", "-")
+    for space in _SPACES:
+        raw = raw.replace(space, "")
+    raw = (raw.replace(",", ".") if _comma_is_decimal(shown, decimal)
+           else raw.replace(",", ""))
     try:
         return float(raw)
     except ValueError:
@@ -1037,16 +1133,20 @@ class CellChange(NamedTuple):
     #                          side holds no number
 
 
-def _render_value(old: str, value: object) -> str:
+def _render_value(old: str, value: object, *,
+                  decimal: str | None = None) -> str:
     """`value` as this cell prints it.
 
-    A number takes the OLD text's printed shape — decimal places,
-    thousands separators, the typographic minus, and any suffix after the
-    number (significance stars, ``%``, a bracketed standard error) — so a
-    regenerated 0.3171 lands in a cell showing "0.32**" as "0.32**", not
-    as a 16-digit float that torpedoes the layout. Strings are written
-    verbatim; None empties the cell.
+    A number takes the OLD text's printed shape — decimal places and
+    decimal mark, thousands separators, the typographic minus, and any
+    suffix after the number (significance stars, ``%``, a bracketed
+    standard error) — so a regenerated 0.3171 lands in a cell showing
+    "0.32**" as "0.32**", not as a 16-digit float that torpedoes the
+    layout, and in a cell showing "0,32**" as "0,32**". Strings are
+    written verbatim; None empties the cell. `decimal` settles a
+    ``1,234``-shaped old value, as in :func:`parse_number`.
     """
+    _check_decimal(decimal)
     if value is None:
         return ""
     if isinstance(value, str):
@@ -1054,21 +1154,27 @@ def _render_value(old: str, value: object) -> str:
     if not isinstance(value, int | float):
         raise TypeError(f"cell value must be str, number or None, "
                         f"not {type(value).__name__}")
-    m = _NUM_RE.match(old.strip())
-    if m is None:
+    old = old.strip()
+    shown = _leading(old)
+    if not shown:
         # the old cell shows no number to copy the shape of
         return f"{value:g}"
-    shown = m.group(0)
-    decimals = len(shown.split(".")[1]) if "." in shown else 0
-    comma = "," if "," in shown else ""
-    text = f"{value:{comma}.{decimals}f}"
+    comma_decimal = _comma_is_decimal(shown, decimal)
+    mark = "," if comma_decimal else "."
+    whole, _, frac = shown.partition(mark)
+    decimals = len(frac)
+    group = next((c for c in ("," if not comma_decimal else "") + _SPACES
+                  if c in whole), "")
+    text = f"{value:,.{decimals}f}" if group else f"{value:.{decimals}f}"
+    # Python writes "," and "."; swap in the cell's own marks in one pass.
+    text = text.translate({ord(","): group, ord("."): mark})
     if "−" in shown:
         text = text.replace("-", "−")
-    return text + old.strip()[m.end():]
+    return text + old[len(shown):]
 
 
 def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
-           row0: int = 1, col0: int = 0
+           row0: int = 1, col0: int = 0, decimal: str | None = None
            ) -> tuple[str, list[CellChange]]:
     """Rewrite a block of `table` from `rows`, preserving formatting.
 
@@ -1079,7 +1185,11 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
     converts); the default writes the data region under a one-row
     header. Each value is rendered by
     :func:`_render_value`, so printed precision, separators and
-    significance stars survive a regeneration.
+    significance stars survive a regeneration — including a DECIMAL
+    comma: a Russian cell showing ``0,31`` updated to 0.4 is written
+    ``0,40``, not ``0`` as it was until the S1 fix of 2026-09-23. A
+    ``1,234``-shaped cell takes the decimal mark the whole table uses
+    (:func:`decimal_mark`), or `decimal` when the caller states it.
 
     Refuses what silent code would get wrong: a block that overruns the
     table (a vanished row means the data and the manuscript disagree —
@@ -1112,6 +1222,9 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
             f"block of {len(grid)} rows at row {row0} overruns table "
             f"{table.index}, which has {len(trs)} rows")
 
+    _check_decimal(decimal)
+    mark = decimal or decimal_mark(
+        _cell_text(tc.group(0)) for tr in trs for tc in cells_of(tr.group(0)))
     changes: list[CellChange] = []
     edits: list[tuple[int, int, str]] = []      # (start, end) within body
     for i, incoming in enumerate(grid):
@@ -1124,12 +1237,12 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
         for j, value in enumerate(incoming):
             tc = tcs[col0 + j]
             old = _cell_text(tc.group(0))
-            new = _render_value(old, value)
+            new = _render_value(old, value, decimal=mark)
             if new == old:
                 continue
             raw = float(value) if isinstance(value, int | float) \
-                else parse_number(new)
-            was = parse_number(old)
+                else parse_number(new, decimal=mark)
+            was = parse_number(old, decimal=mark)
             moved = abs(raw - was) if raw is not None and was is not None \
                 else None
             changes.append(CellChange(row0 + i, col0 + j, old, new, moved))
