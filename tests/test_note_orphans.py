@@ -131,6 +131,49 @@ def test_word_s_own_separator_notes_are_not_orphans():
     assert b'w:id="0"' in parts["word/footnotes.xml"]
 
 
+#: Word's third special note, written when a document sets a continuation
+#: notice. It takes the next id — 1 — so only its TYPE says what it is,
+#: and it holds one empty paragraph by design.
+NOTICE = ('<w:{kind} w:id="1" w:type="continuationNotice">'
+          "<w:p><w:r><w:continuationNotice/></w:r></w:p></w:{kind}>")
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_a_CONTINUATION_NOTICE_is_known_by_its_type_not_its_id(kind):
+    """Misconceptions, 2026-09-23: id 1, typed `continuationNotice`, read
+    as a real, empty, unreferenced note — so `prune_orphans` cut it."""
+    parts = _paper(para(run("A claim.")), NOTICE.format(kind=kind),
+                   kind=f"{kind}s")
+
+    assert fn.orphans(parts) == []
+    assert fn.prune_orphans(parts) == []
+    assert b"continuationNotice" in parts[f"word/{kind}s.xml"]
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_BOTH_gates_pass_an_unchanged_document_with_a_continuation_notice(
+        kind):
+    """The refusal it caused: each gate simulated ONE side, the prune
+    took the notice from that side only, and the two were misaligned by
+    a paragraph — quoted as `'' vs ''`. A document compared with itself
+    must pass both."""
+    doc = _paper(para(run("A claim.")) + REF,
+                 NOTICE.format(kind=kind),
+                 _note(NOTE_MARK + run(" Its words."), kind=kind),
+                 kind=f"{kind}s")
+
+    assert untracked(doc, doc) == []
+    assert unaccepted(doc, doc) == []
+
+
+def test_a_new_footnote_does_not_take_the_notice_s_id():
+    """`add` allocates past every id, special ones included — excluding
+    the notice from `find_all` must not hand its id out again."""
+    parts = _paper(para(run("A claim here.")), NOTICE.format(kind="footnote"))
+
+    assert fn.add(parts, after="claim", text="New.") == "2"
+
+
 def test_a_reference_in_a_HEADER_keeps_its_definition():
     """The reason this reads every part rather than the body. A running
     head can carry a note reference, and a definition pruned because

@@ -80,6 +80,19 @@ _NOTE_RE = {"footnote": _FOOTNOTE_RE, "endnote": _ENDNOTE_RE}
 _REFERENCE_RE = re.compile(r'(w:footnoteReference\b[^>]*?w:id=")(-?\d+)(")')
 # Word's own separator/continuation notes, present in every document
 _RESERVED_IDS = {"0", "-1"}
+# ...but the id is Word's habit and the TYPE is the definition. A document
+# with a `continuationNotice` gives it the next id, 1, and read by id alone
+# it was a real, empty, unreferenced note: `prune_orphans` cut it from the
+# simulated side of both tracked-build gates and every batch on that
+# manuscript was refused, quoting `'' vs ''` (Misconceptions, 2026-09-23).
+_RESERVED_TYPE_RE = re.compile(
+    r'\bw:type="(?:separator|continuationSeparator|continuationNotice)"')
+
+
+def _reserved(note_id: str, element: str) -> bool:
+    """Is this one of Word's separator notes? By its id OR its type."""
+    return (note_id in _RESERVED_IDS
+            or bool(_RESERVED_TYPE_RE.search(element[:element.index(">")])))
 
 
 class Footnote:
@@ -108,7 +121,7 @@ def find_all(footnotes_xml: str, *, include_reserved: bool = False,
     """
     out = []
     for m in _NOTE_RE[kind].finditer(footnotes_xml):
-        if not include_reserved and m.group(1) in _RESERVED_IDS:
+        if not include_reserved and _reserved(m.group(1), m.group(0)):
             continue
         out.append(Footnote(m.group(1), m.group(0), m.start(), m.end()))
     return out
@@ -253,8 +266,10 @@ def orphans(parts: dict[str, bytes], *,
     can carry one, and a definition pruned because the body had gone
     quiet about it would take a note the page still shows.
 
-    Ids 0 and -1 are Word's separator and continuation notes. Nothing
-    ever references those and they are not orphans.
+    Word's separator and continuation notes — ids 0 and -1, or any id
+    typed ``separator``, ``continuationSeparator`` or
+    ``continuationNotice`` — are referenced by nothing, by design, and
+    are not orphans.
     """
     out: list[Orphan] = []
     for k in ((kind,) if kind else ("footnote", "endnote")):
