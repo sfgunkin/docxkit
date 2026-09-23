@@ -156,10 +156,18 @@ def continuation_re(label: str, number: str) -> re.Pattern[str]:
 
     Anchored to a nearby plural-capable label so "age 3 to 5" cannot
     match; the window between the label's own number and the target is
-    kept short and clause-bound for the same reason.
+    kept short and clause-bound for the same reason — and LABEL-bound: no
+    label word may stand inside it. "Tables 1 and 2 with Figures 1 and 3"
+    has 22 characters of ordinary prose between "Tables 1" and the "3",
+    well inside 30, and without the bound a Table 3 caption claimed the
+    FIGURE list's 3 — linked, so every audit read it as linked (backlog
+    S2, 2026-09-18). The 3 belongs to whichever label stands nearest.
     """
+    # no trailing `\b`: the Russian forms are truncated stems
+    others = "|".join(sorted({*LABEL_FORMS.values(), label_form(label)}))
+    window = rf"(?:(?!\b(?:{others}))[^.;:()]){{0,30}}?"
     return re.compile(
-        rf"\b{label_form(label)}\s+[\wА-я.]+[^.;:()]{{0,30}}?"
+        rf"\b{label_form(label)}\s+[\wА-я.]+{window}"
         rf"(?:\band\b|\bto\b|[–—,-])\s*({re.escape(number)}){NUMBER_END}",
         re.IGNORECASE)
 

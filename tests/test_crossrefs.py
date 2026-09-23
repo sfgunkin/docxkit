@@ -834,6 +834,42 @@ def test_link_more_links_range_and_list_continuations():
     assert p.count('w:anchor="Table5"') == 2   # both bare "5"s
 
 
+def test_a_continuation_does_not_reach_across_ANOTHER_label():
+    """Backlog S2, 2026-09-18: the window was clause-bound and not
+    label-bound, so the 3 of "Figures 1 and 3" — 22 characters past
+    "Tables 1" — was linked to Table 3. Over the corpus the bound
+    removed 9 matches of 914, every one of them this shape
+    ("Figures 8–9" claimed by Table 9), and added none."""
+    xml = doc(
+        para(run("Compare Tables 1 and 2 with Figures 1 and 3, and see "
+                 "Figures 2 here.")),
+        para(run("Table 3. Employment by sector.")),
+        para(run("Figure 3. Trends in employment.")),
+        para(run("Figure 5. Wages.")),
+        para(run("Table 5. Hours.")),
+    )
+
+    xml, counts = crossrefs.link_more(xml)
+
+    p = paragraph_holding(xml, "Compare")
+    assert 'w:anchor="Table3"' not in p, counts
+    assert 'w:anchor="Figure3"' in p                 # the 3 is the figure's
+
+
+@pytest.mark.parametrize(("prose", "anchor"), [
+    ("Tables 1 and 5 report it.", "Table5"),
+    ("Figures 2 to 5 report it.", "Figure5"),
+    ("Tables 1, 2 and 5 then Figures 1 and 5 report it.", "Table5"),
+])
+def test_a_continuation_WITHIN_its_own_series_still_links(prose, anchor):
+    xml = doc(para(run(prose)), para(run("Table 5. Hours.")),
+              para(run("Figure 5. Wages.")))
+
+    xml, _ = crossrefs.link_more(xml)
+
+    assert f'w:anchor="{anchor}"' in paragraph_holding(xml, "report it")
+
+
 def test_link_more_does_not_link_prose_ranges():
     # "age 3 to 5" is not a table list; words between the label's number
     # and the candidate break the continuation.
