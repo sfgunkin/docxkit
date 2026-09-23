@@ -7,11 +7,9 @@ src/ that reads `field_spans`.
     python audit_field_spans_callers.py
 """
 import sys
+from pathlib import Path
 
-W = (r"C:\Users\Ezhik\AppData\Local\Temp\claude\C--Windows-System32"
-     r"\498555e3-9088-4382-822f-51d2ea2bd5b7\scratchpad"
-     r"\docxkit-fix-fieldspans")
-sys.path.insert(0, W + r"\src")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from docxkit import body, edit  # noqa: E402
 from docxkit._cite_repair import (  # noqa: E402

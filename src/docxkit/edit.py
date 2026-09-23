@@ -20,6 +20,7 @@ from ._xml import (
     INSTR_RE,
     RUN_OPEN_RE,
     RUN_RE,
+    T_RE,
     T_RUN_RE,
     XML_WS,
     editable_text,
@@ -854,6 +855,22 @@ class _Label(NamedTuple):
     field: tuple[int, int] | None
 
 
+def _field_showing(run: re.Match[str], marked: list[tuple[int, int]]
+                   ) -> tuple[int, int] | None:
+    """The outermost field whose markers hold what `run` SHOWS, or None.
+
+    Asked of the run's text, not its start: a run that opens before a
+    ``begin`` marker, or holds words after an ``end``, is prose sharing
+    a run with the field, not the field's result. A run with no ``w:t``
+    is judged by where it opens.
+    """
+    at = [run.start() + t.start() for t in T_RE.finditer(run.group(0))]
+    for pos in at or [run.start()]:
+        if (fld := span_holding(pos, marked)) is not None:
+            return fld
+    return None
+
+
 def _label_spans_in(para_xml: str, runs: list[re.Match[str]],
                     spans: list[tuple[int, int]],
                     ) -> list[_Label]:
@@ -876,9 +893,14 @@ def _label_spans_in(para_xml: str, runs: list[re.Match[str]],
     """
     elements = [(m.start(), m.end())
                 for m in HYPERLINK_ANY_RE.finditer(para_xml)]
-    # outermost first: `field_spans` sorts by (start, -end), so the first
-    # holding span of a nested pair is the parent
-    fields = [(lo, hi) for lo, hi, _ in field_spans(para_xml)]
+    # The fields by their MARKERS, outermost first — sorted by (start,
+    # -end), so the first holding span of a nested pair is the parent. By
+    # the markers because the run a `begin` or an `end` sits in can carry
+    # prose, and read by run boundaries that prose became part of the
+    # label: `replace_in_para` then refused to edit words beside the
+    # field as "in the result of a field" (backlog S3, 2026-09-18).
+    marked = sorted(((f.start, f.end) for f in fields(para_xml)
+                     if f.end >= 0), key=lambda sp: (sp[0], -sp[1]))
     out: list[_Label] = []
     last_key: object = None
     for idx, (run, (start, stop)) in enumerate(zip(runs, spans, strict=True)):
@@ -888,7 +910,7 @@ def _label_spans_in(para_xml: str, runs: list[re.Match[str]],
         fld: tuple[int, int] | None = None
         if (element := span_holding(run.start(), elements)) is not None:
             key = ("element", element)
-        elif (fld := span_holding(run.start(), fields)) is not None:
+        elif (fld := _field_showing(run, marked)) is not None:
             key = ("field", fld)
         elif _HYPERLINK_RUN in run.group(0):
             key = ("styled",)

@@ -18,10 +18,12 @@ from ._xml import (
     BOOKMARK_START_ID_RE,
     HYPERLINK_ANY_RE,
     PARA_RE,
+    Field,
     _shows_nothing,
     field_spans,
     fields,
     internal_links,
+    isolate_field,
     own_properties,
     run_open_before,
     run_spans,
@@ -115,17 +117,28 @@ def wrap_link_in_bookmark(xml: str, anchor: str, name: str, bid: int,
     # not matching it is the right answer and the refusal below says so.
     el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*(?<!/)>'
                     r".*?</w:hyperlink>", re.DOTALL)
-    spans = [(m.start(), m.end()) for m in el.finditer(xml)]
-    spans += [(s, e) for s, e, body in field_spans(xml)
-              if f'"{anchor}"' in body]
-    if not spans:
+    # (where, element span or None, field or None) — a field is judged
+    # by its MARKERS, and cut at them below: its runs can carry prose.
+    found: list[tuple[int, tuple[int, int] | None, Field | None]] = [
+        (m.start(), (m.start(), m.end()), None) for m in el.finditer(xml)]
+    found += [(f.start, None, f) for f in fields(xml)
+              if f.end >= 0 and f'"{anchor}"' in xml[f.start:f.end]]
+    if not found:
         raise AnchorError(f"wrap_link_in_bookmark: no link to {anchor}")
-    if len(spans) > 1 and which == "only":
+    if len(found) > 1 and which == "only":
         raise AnchorError(
-            f"wrap_link_in_bookmark: {anchor} matched {len(spans)} links "
+            f"wrap_link_in_bookmark: {anchor} matched {len(found)} links "
             f"— pass which='first' for the house convention (the bookmark "
             f"goes on the first mention), or name a narrower anchor")
-    s, e = min(spans)
+    _, span, field = min(found, key=lambda hit: hit[0])
+    if field is not None:
+        # A bookmark cannot stand inside a run, so a marker sharing its
+        # run with prose is split out first — or the bookmark wrapped the
+        # whole sentence round the link (backlog S3 D2, 2026-09-18).
+        xml, s, e = isolate_field(xml, field)
+    else:
+        assert span is not None
+        s, e = span
     return xml[:s] + start + xml[s:e] + end + xml[e:]
 
 
@@ -237,19 +250,27 @@ def respan_link(xml: str, anchor: str, want: str) -> str:
 
     el = re.compile(rf'<w:hyperlink\b[^>]*w:anchor="{anchor}"[^>]*(?<!/)>'
                     r".*?</w:hyperlink>", re.DOTALL)
-    hits = [(pm.start(), pm.end(), m.start(), m.end(), "element")
-            for pm in PARA_RE.finditer(xml)
-            for m in el.finditer(pm.group(0))]
-    hits += [(pm.start(), pm.end(), fs, fe, "field")
+    hits: list[tuple[int, int, int, int, Field | None]] = [
+        (pm.start(), pm.end(), m.start(), m.end(), None)
+        for pm in PARA_RE.finditer(xml)
+        for m in el.finditer(pm.group(0))]
+    hits += [(pm.start(), pm.end(), f.start, f.end, f)
              for pm in PARA_RE.finditer(xml)
-             for fs, fe, body in field_spans(pm.group(0))
-             if f'"{anchor}"' in body]
+             for f in fields(pm.group(0))
+             if f.end >= 0 and f'"{anchor}"' in pm.group(0)[f.start:f.end]]
     if len(hits) != 1:
         raise AnchorError(
             f"respan_link: {anchor} matched {len(hits)} link(s), need "
             f"exactly 1")
-    p0, p1, s, e, form = hits[0]
+    p0, p1, s, e, field = hits[0]
+    form = "element" if field is None else "field"
     para = original = xml[p0:p1]
+    if field is not None:
+        # The field's OWN runs: a marker sharing a run with prose is split
+        # out first. Rebuilt from its run span, that prose was dropped —
+        # and the guards below then refused a repair this can make
+        # (backlog S3 D3, 2026-09-18).
+        para, s, e = isolate_field(para, field)
     text = visible_text(para)
     at = len(visible_text(para[:s]))
     label = visible_text(para[s:e])

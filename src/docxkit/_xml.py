@@ -56,6 +56,7 @@ __all__ = [
     "fields",
     "in_span",
     "internal_links",
+    "isolate_field",
     "live_properties",
     "matching_close",
     "normalize_glyphs",
@@ -953,6 +954,53 @@ def field_spans(xml: str) -> list[tuple[int, int, str]]:
         out.append((r_start, r_end, xml[r_start:r_end]))
     out.sort(key=lambda span: (span[0], -span[1]))
     return out
+
+
+def _run_shell(xml: str, run_start: int) -> str:
+    """The open tag and own ``w:rPr`` of the run opening at `run_start`."""
+    close = xml.index("</w:r>", run_start) + len("</w:r>")
+    run = xml[run_start:close]
+    own = own_properties(run, "rPr")
+    open_tag = RUN_OPEN_RE.match(run)
+    assert open_tag is not None
+    return run[:own[1] if own is not None else open_tag.end()]
+
+
+def isolate_field(xml: str, field: Field) -> tuple[str, int, int]:
+    """`xml` with `field` standing in runs of its OWN, and those runs' span.
+
+    :func:`field_spans` answers with RUN boundaries, and Word writes a
+    field's ``begin`` into the run that already holds the words before it
+    as often as not, and its ``end`` into the run carrying the words
+    after. A caller that wants the FIELD — to put a bookmark round it, or
+    to rebuild it as an element — got the prose too: `<key>txt` wrapped
+    the whole sentence, and `respan_link` refused a repair it could make
+    (backlog S3, 2026-09-18, D2 and D3).
+
+    So the run holding each marker is SPLIT at the marker when anything a
+    reader sees shares it — both halves keep the run's own ``w:rPr``, as
+    :func:`split_run` does — and left alone when the marker was all it
+    held. Nothing visible moves; the returned ``(start, end)`` is then a
+    run-bounded span holding the field and nothing else. `field` must be
+    one of ``fields(xml)`` with an ``end`` marker.
+    """
+    if field.end < 0:
+        raise ValueError("isolate_field: the field has no end marker")
+    close = "</w:r>"
+    # The END first: splitting there does not move the begin's offsets.
+    end = xml.index(close, field.end) + len(close)
+    shell = _run_shell(xml, run_open_before(xml, field.end))
+    if run_holds_content(shell + xml[field.end:end]):
+        xml = xml[:field.end] + close + shell + xml[field.end:]
+        end = field.end + len(close)
+
+    begin_run = run_open_before(xml, field.start)
+    if not run_holds_content(xml[begin_run:field.start] + close):
+        return xml, begin_run, end
+    shell = _run_shell(xml, begin_run)
+    xml = xml[:field.start] + close + shell + xml[field.start:]
+    shift = len(close) + len(shell)
+    return xml, field.start + len(close), end + shift
 
 
 #: The stand-in for a bookmark Word minted itself, where two versions of
