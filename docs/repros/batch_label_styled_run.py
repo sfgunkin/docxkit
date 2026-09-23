@@ -27,8 +27,7 @@ shape `_compare_diff._FIELD_END_RE` already uses for the same reason).
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]
-                       / "docxkit-fix-batch" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from docxkit import batch  # noqa: E402
 

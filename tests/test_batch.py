@@ -271,6 +271,41 @@ def test_diagnose_names_a_label_whose_style_is_closed_WITH_A_SPACE():
     assert "hyperlink label 'Table 3'" in said, said
 
 
+@pytest.mark.parametrize("more", [
+    "<w:noProof/>",                                  # every cross-reference
+    "<w:b/><w:bCs/>",
+    '<w:color w:val="0563C1"/><w:u w:val="single"/>',
+    '<w14:ligatures w14:val="standardContextual"/>',
+])
+def test_diagnose_names_a_label_whose_run_carries_MORE_properties(more):
+    """Backlog S2, 2026-09-18: the pattern demanded `</w:rPr>` straight
+    after the style, so a label wearing anything else — 35% of the
+    corpus's Hyperlink runs — fell through to "a reason preflight does
+    not model"."""
+    styled = LINK_LABEL.replace('"Hyperlink"/>', f'"Hyperlink"/>{more}')
+    assert styled != LINK_LABEL
+    xml = document(para(f"{styled}<w:r><w:t> shows where older "
+                        "workers are.</w:t></w:r>", pid="A1"))
+
+    said = batch.diagnose(xml, "shows where", "Table 3")
+
+    assert "hyperlink label 'Table 3'" in said, said
+
+
+def test_a_label_read_stops_at_its_OWN_run():
+    """Reading past the style must not run on into the next run: a
+    Hyperlink-styled run with no text followed by a plain run is not a
+    label for the plain run's words."""
+    empty_link = ('<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+                  "<w:tab/></w:r>")
+    xml = document(para(f"{empty_link}<w:r><w:t>Table 3 shows where "
+                        "older workers are.</w:t></w:r>", pid="A1"))
+
+    said = batch.diagnose(xml, "shows where", "Table 3")
+
+    assert "hyperlink label" not in said, said
+
+
 def test_diagnose_names_the_EQUATION_a_match_spans():
     """The other cause that reads as an anchor typo: the words are on
     the page, and half of them are inside `m:oMath`, which this module

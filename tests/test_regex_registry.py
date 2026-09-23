@@ -1069,6 +1069,11 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
     ("batch.py", r"<w:tr\b"): (
         "name reader: `invariants` counts rows before and after an edit; "
         "an empty row is one row on both sides, and nothing is paired"),
+    ("batch.py", r'<w:rStyle w:val="Hyperlink"\s*/>(?:[^<]|<(?!/w:rPr>))*'
+                 r"</w:rPr><w:t[^>]*>([^<]*)</w:t>"): (
+        "label reader: `diagnose` names the text of a Hyperlink-styled "
+        "run, reading the rest of that run's OWN rPr up to its close; an "
+        "empty `<w:rPr/>` holds no style, so it is no label to name"),
     ("body.py", r"<w:p(?=[\s/>])"): (
         "name reader: `cell` asks whether its content STARTS as a "
         "paragraph, and an empty `<w:p/>` is one to pass through as is"),
@@ -1839,8 +1844,8 @@ PREFIX_READS: dict[tuple[str, str], str] = {
     ("_xml.py", r"<w:tabs\b[^>]*(?<!/)>.*?</w:tabs>|<w:t[^>]*>([^<]*)</w:t>"
                 r"|<w:(noBreakHyphen|softHyphen|tab|br|cr)\b[^>]*/?>"):
         _TEXT_THEN_CLOSE,
-    ("batch.py", r'<w:rStyle w:val="Hyperlink"\s*/></w:rPr><w:t[^>]*>'
-                 r"([^<]*)</w:t>"): _TEXT_THEN_CLOSE,
+    ("batch.py", r'<w:rStyle w:val="Hyperlink"\s*/>(?:[^<]|<(?!/w:rPr>))*'
+                 r"</w:rPr><w:t[^>]*>([^<]*)</w:t>"): _TEXT_THEN_CLOSE,
     ("batch.py", r"<w:t[^>]*>([^<]*)</w:t>"): _TEXT_THEN_CLOSE,
     ("hygiene.py", r"(<m:t[^>]*>)([^<]*)(</m:t>)"):
         _TEXT_THEN_CLOSE + " (`m:type` holds no text either)",

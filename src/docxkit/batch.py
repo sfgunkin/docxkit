@@ -94,8 +94,16 @@ __all__ = [
 _PARA = re.compile(PARA_RE.pattern + r"|<w:p\b[^>]*/>", re.DOTALL)
 # `\s*/>`: a Hyperlink style closed ` />` (739 in 20 of 2,954 corpus
 # packages) is a label too, and unread the refusal named no cause.
+# And the style need not be the run's LAST property: Word writes it first
+# and then whatever else the run wears — `w:noProof` on every
+# cross-reference, `w:b`, `w:color`, `w14:ligatures`. Demanding `</w:rPr>`
+# straight after it left 9,161 of 25,802 corpus labels (35%) unread
+# (backlog S2, 2026-09-18). The run's other properties are read up to its
+# OWN `</w:rPr>` and no further — the `_compare_diff._FIELD_END_RE` shape —
+# so the match cannot run on into the next run.
 _LABEL = re.compile(
-    r'<w:rStyle w:val="Hyperlink"\s*/></w:rPr><w:t[^>]*>([^<]*)</w:t>')
+    r'<w:rStyle w:val="Hyperlink"\s*/>(?:[^<]|<(?!/w:rPr>))*</w:rPr>'
+    r"<w:t[^>]*>([^<]*)</w:t>")
 _TRACKED = re.compile(r"<w:(ins|del)\b")
 
 
