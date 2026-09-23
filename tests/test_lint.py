@@ -216,10 +216,14 @@ def test_run_level_child_directly_in_a_block_container():
 
 
 def test_empty_revision_that_is_not_a_marker():
+    """An ADVISORY since 2026-09-24: Word opens it and writes it back on
+    its own save (ROIW_submission_revised.docx, 12 of them), so it is
+    reported and never refused."""
     empty_ins = ('<w:p><w:ins w:id="9" w:author="A" w:date="d">'
                  "</w:ins></w:p>")
     body = para(run("a")) + empty_ins
-    assert any("empty w:ins" in p for p in lint_parts(_parts(body)))
+    assert any("empty w:ins" in p for p in audit_parts(_parts(body)))
+    assert not any("empty w:ins" in p for p in lint_parts(_parts(body)))
 
 
 def test_paragraph_mark_revision_is_a_legitimate_marker():
@@ -310,11 +314,14 @@ def test_rprchange_must_be_last():
 
 
 def test_empty_omath_shell():
-    """An equation with no text renders as garbage, or vanishes."""
+    """An equation with no text has lost its maths — worth reporting.
+    Word opens it and writes it back (Missing Market 01272020.docx), so
+    it is an advisory, not a refusal (2026-09-24)."""
     body = ('<w:p><m:oMath xmlns:m="http://schemas.openxmlformats.org/'
             'officeDocument/2006/math"><m:r><m:t></m:t></m:r></m:oMath>'
             "</w:p>")
-    assert any("empty m:oMath shell" in p for p in lint_parts(_parts(body)))
+    assert any("empty m:oMath shell" in p for p in audit_parts(_parts(body)))
+    assert lint_parts(_parts(body)) == []
 
 
 def test_duplicate_revision_ids_across_the_package():
@@ -562,7 +569,7 @@ def test_a_revision_after_a_MARKER_is_still_examined():
     empty = '<w:p><w:ins w:id="10" w:author="A" w:date="d"></w:ins></w:p>'
 
     assert any("empty w:ins" in p
-               for p in lint_parts(_parts(marker + empty)))
+               for p in audit_parts(_parts(marker + empty)))
 
 
 def test_a_revision_after_an_rPrChange_is_still_examined():
@@ -573,7 +580,8 @@ def test_a_revision_after_an_rPrChange_is_still_examined():
               "</w:r></w:p>")
     empty = '<w:p><w:del w:id="10" w:author="A" w:date="d"></w:del></w:p>'
 
-    assert any("empty w:del" in p for p in lint_parts(_parts(change + empty)))
+    assert any("empty w:del" in p
+               for p in audit_parts(_parts(change + empty)))
 
 
 def test_an_equation_after_an_EMPTY_one_is_still_examined():
@@ -587,7 +595,7 @@ def test_an_equation_after_an_EMPTY_one_is_still_examined():
 
     problems = lint_parts(_parts(body))
 
-    assert "1 empty m:oMath shell(s)" in problems
+    assert "1 empty m:oMath shell(s)" in audit_parts(_parts(body))
     assert any("1 empty math object(s)" in p for p in problems), problems
 
 
@@ -595,7 +603,7 @@ def test_the_empty_shell_count_is_a_COUNT():
     m = 'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
     one = f"<w:p><m:oMath {m}><m:r><m:t></m:t></m:r></m:oMath></w:p>"
 
-    assert "2 empty m:oMath shell(s)" in lint_parts(_parts(one + one))
+    assert "2 empty m:oMath shell(s)" in audit_parts(_parts(one + one))
 
 
 def test_a_revision_with_NO_id_sorts_LAST_among_the_duplicates():

@@ -2406,15 +2406,16 @@ def test_a_refused_WRITE_prints_what_it_refused_over(capsys, tmp_path):
 def _already_broken(tmp_path, text: str = "prose"):
     """A manuscript that ALREADY carries a lint finding, before any edit.
 
-    An empty `w:ins` that is not a paragraph-mark marker: lint check 2,
-    and one of the classes 20 of 400 real manuscripts on this machine
-    carry — with the empty `m:oMath` shells, the classes no docxkit verb
+    A `w:del` holding live `w:t`: lint check 3, a class no docxkit verb
     repairs. The finding is in the file on disk, so nothing a command
-    does to `parts` can be blamed for it.
+    does to `parts` can be blamed for it. (It was an empty `w:ins` until
+    2026-09-24, when that class — and the empty `m:oMath` — moved to the
+    advisory audit: Word opens both and writes them back itself.)
     """
-    empty_ins = ('<w:p><w:ins w:id="9" w:author="A. Editor" '
-                 'w:date="2026-09-01T00:00:00Z"></w:ins></w:p>')
-    write(tmp_path / "paper.docx", make_parts(para(run(text)) + empty_ins))
+    live_del = ('<w:p><w:del w:id="9" w:author="A. Editor" '
+                'w:date="2026-09-01T00:00:00Z"><w:r><w:t>gone</w:t></w:r>'
+                "</w:del></w:p>")
+    write(tmp_path / "paper.docx", make_parts(para(run(text)) + live_del))
     return tmp_path / "paper.docx"
 
 
@@ -2440,11 +2441,38 @@ def test_a_PRE_EXISTING_finding_is_named_as_one_and_the_repair_with_it(
     assert _save(target, parts, "test") is False
 
     out = capsys.readouterr().out
-    assert "empty w:ins" in out
+    assert "w:del contains w:t" in out
     assert "already" in out, "it was not this edit that put it there"
     assert "Word" in out, "the repair, since docxkit has no verb for it"
     assert "--allow-existing-lint" in out, "and the route through"
     assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("shell", [
+    '<w:p><w:ins w:id="9" w:author="A" w:date="d"></w:ins></w:p>',
+    '<w:p><w:del w:id="9" w:author="A" w:date="d"></w:del></w:p>',
+    ('<w:p><m:oMath xmlns:m="http://schemas.openxmlformats.org/'
+     'officeDocument/2006/math"><m:r><m:t></m:t></m:r></m:oMath></w:p>'),
+])
+def test_a_file_carrying_only_EMPTY_SHELLS_is_written_without_a_flag(
+        capsys, tmp_path, shell):
+    """Backlog S3, 2026-09-18, closed 2026-09-24. Every write refused on
+    these with "the package would not open cleanly in Word" — 20 of 400
+    real manuscripts, a submission among them. Word opened copies of two
+    of them and wrote every shell back on its own save, so the claim was
+    false; the shells are advisories now and the write goes through."""
+    from docxkit import package
+    from docxkit.cli import _save
+
+    write(tmp_path / "paper.docx", make_parts(para(run("prose")) + shell))
+    target = tmp_path / "paper.docx"
+    parts = package.read_parts(target)
+    parts["word/document.xml"] = parts["word/document.xml"].replace(
+        b"prose", b"prose, relinked")
+
+    assert _save(target, parts, "test") is True
+    assert "REFUSED" not in capsys.readouterr().out
+    assert b"relinked" in package.read_parts(target)["word/document.xml"]
 
 
 def test_allow_existing_lint_WRITES_and_still_refuses_a_NEW_finding(

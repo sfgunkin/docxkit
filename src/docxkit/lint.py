@@ -117,21 +117,23 @@ def _run_level_in_block(root: _Element) -> list[str]:
 
 def _revision_findings(
         root: _Element, revision_ids: dict[str | None, int],
-) -> tuple[list[str], list[str], list[str]]:
-    """Checks 2, 3 and 4, and the revision-id tally check 8 reads.
+) -> tuple[list[str], list[str]]:
+    """Checks 3 and 4, and the revision-id tally check 8 reads.
 
     ONE multi-tag C-filtered walk, which is the whole point of taking
     them together: what made the original slow was a full un-filtered
-    ``root.iter()`` for the ids plus a pass per check. Returns the three
-    check's findings separately because they are not emitted together —
-    check 2 goes out before check 3b's walk and checks 3 and 4 after it,
-    and that order is the report a reader has been reading for a year.
+    ``root.iter()`` for the ids plus a pass per check. Returns the two
+    checks' findings separately because they are not emitted together —
+    check 3b's walk goes out between them, and that order is the report
+    a reader has been reading for a year.
 
     ``revision_ids`` is accumulated ACROSS roots, so it is passed in and
     mutated rather than returned: check 8 asks whether an id repeats
     anywhere in the package, and a per-part tally cannot answer that.
+
+    Check 2, the EMPTY revision, is an advisory now — see
+    :func:`_empty_shells`.
     """
-    c2: list[str] = []
     c3: list[str] = []
     c4: list[str] = []
     for element in root.iter(W + "ins", W + "del", W + "rPrChange",
@@ -145,9 +147,6 @@ def _revision_findings(
         parent_tag = parent.tag if parent is not None else None
         if parent_tag in _MARKER_PARENTS:
             continue                           # a marker, not a range
-        # 2. An empty w:ins / w:del that is not a marker.
-        if len(element) == 0:
-            c2.append(f"empty w:{_local(tag)} (not a marker)")
         # 3. Deleted text must be w:delText; a w:t inside w:del
         #    renders as live text that cannot be rejected.
         if tag == W + "del" and \
@@ -158,7 +157,41 @@ def _revision_findings(
             if child.tag in _BLOCK_CHILDREN:
                 c4.append(f"block w:{_local(child.tag)} inside "
                           f"run-level w:{_local(tag)}")
-    return c2, c3, c4
+    return c3, c4
+
+
+def _empty_shells(roots: tuple[_Element | None, ...]) -> list[str]:
+    """Advisory — an empty ``w:ins`` / ``w:del`` that is not a marker,
+    and an ``m:oMath`` with no glyph at all.
+
+    These were `lint` checks 2 and 7, and every write refused on them
+    with "the package would not open cleanly in Word" — on 20 of 400
+    real manuscripts (5 %), live papers among them. Measured 2026-09-24
+    in a private Word on copies of `ROIW_submission_revised.docx` (12
+    empty ``w:ins``, 6 empty ``w:del``) and `Missing Market
+    01272020.docx` (one empty equation): Word opened both without a
+    word, and its own SaveAs wrote every shell back. Word writes them;
+    the refusal was not true of the file. A shell is still worth a look
+    — an equation that lost its glyphs lost the maths — so it is
+    reported here, never refused (backlog S3, 2026-09-18). An empty
+    object INSIDE a surviving equation, a blank box on the page, is a
+    different finding and stays in `lint`.
+    """
+    problems: list[str] = []
+    for root in roots:
+        if root is None:
+            continue
+        for element in root.iter(W + "ins", W + "del"):
+            parent = element.getparent()
+            if (parent is None or parent.tag not in _MARKER_PARENTS) \
+                    and len(element) == 0:
+                problems.append(f"empty w:{_local(element.tag)} "
+                                f"(not a marker)")
+        empty = sum(1 for om in root.iter(M + "oMath")
+                    if not _math_has_glyph(om))
+        if empty:
+            problems.append(f"{empty} empty m:oMath shell(s)")
+    return problems
 
 
 def _edge_whitespace(root: _Element) -> list[str]:
@@ -208,27 +241,24 @@ def _child_order(root: _Element) -> list[str]:
 
 
 def _empty_math(root: _Element) -> list[str]:
-    """Check 7 — an empty oMath shell renders as garbage, or loses the math.
+    """Check 7 — an empty object inside a surviving equation.
 
-    Two counts, because asking only whether a WHOLE equation has gone
-    textless misses the commoner and more visible case: a surviving
-    equation carrying an emptied fraction, which Word draws as an empty
-    box beside the real content. On the DSI paper the split was 53
-    wholly-empty against 121 empty children, so the whole-equation test
-    passed the large majority of the damage — and that document shipped.
+    Asking only whether a WHOLE equation has gone textless misses the
+    commoner and more visible case: a surviving equation carrying an
+    emptied fraction, which Word draws as an empty box beside the real
+    content. On the DSI paper the split was 53 wholly-empty against 121
+    empty children. The wholly-empty shell is an advisory now
+    (:func:`_empty_shells`); this, the box on the page, is not.
     """
     problems = []
-    empty = orphaned = 0
+    orphaned = 0
     for om in root.iter(M + "oMath"):
         if not _math_has_glyph(om):
-            empty += 1
-            continue
+            continue                   # a whole shell: the advisory's
         orphaned += sum(
             1 for el in om.iter()
             if el is not om and _local(el.tag) in MATH_OBJECTS
             and not _math_has_glyph(el))
-    if empty:
-        problems.append(f"{empty} empty m:oMath shell(s)")
     if orphaned:
         problems.append(
             f"{orphaned} empty math object(s) inside a surviving "
@@ -285,8 +315,9 @@ def lint(*roots: _Element | None) -> list[str]:
 
     The checks are the functions above, one per numbered rule, and this
     is the order they are emitted in — which is the report itself, not
-    an implementation detail: check 2 lands before check 3b and checks 3
-    and 4 after it. Splitting them out is what took this function off
+    an implementation detail: check 3 lands before check 3b and check 4
+    after it (check 2 and the whole-shell half of 7 are advisories now,
+    in :func:`audit`). Splitting them out is what took this function off
     `test_complexity_debt`'s list; the walk count is unchanged.
     """
     problems: list[str] = []
@@ -295,10 +326,9 @@ def lint(*roots: _Element | None) -> list[str]:
     for root in roots:
         if root is None:
             continue
-        c2, c3, c4 = _revision_findings(root, revision_ids)
+        c3, c4 = _revision_findings(root, revision_ids)
         problems += (_run_level_in_block(root)      # 1
                      + _stray_para_props(root)      # 1b
-                     + c2                           # 2
                      + c3 + _edge_whitespace(root) + c4   # 3, 3b, 4
                      + _child_order(root)           # 5, 6
                      + _empty_math(root)            # 7
@@ -330,7 +360,8 @@ def audit(*roots: _Element | None) -> list[str]:
     output: a gate nobody can satisfy, on a condition the toolkit
     offered no way to clear.
     """
-    return _repeated_bookmarks(roots) + _unbalanced_fields(roots)
+    return (_repeated_bookmarks(roots) + _unbalanced_fields(roots)
+            + _empty_shells(roots))
 
 
 def audit_parts(parts: dict[str, bytes]) -> list[str]:

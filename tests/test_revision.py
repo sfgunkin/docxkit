@@ -2989,12 +2989,16 @@ def test_the_main_story_walk_does_not_stop_at_a_text_box(tmp_path,
     assert revision.validate(path).accept_paths_agree is True
 
 
-def test_lint_catches_a_shell_that_already_exists(tmp_path):
-    """The cheap gate gets there first, and aborts before Word."""
+def test_a_shell_that_already_exists_still_fails_validate(tmp_path):
+    """Not at lint any more: Word opens an empty equation and writes it
+    back on its own save (Missing Market, 2026-09-24), so lint no longer
+    calls the package unopenable. The accepted view's shell count is
+    what fails it now — the maths is still lost, and validate says so."""
     body = f'<w:p><m:oMath {NS_M}><m:r><m:t></m:t></m:r></m:oMath></w:p>'
     report = revision.validate(write(tmp_path / "shell.docx",
                                      make_parts(body)), use_word=False)
-    assert any("oMath" in problem for problem in report.lint)
+    assert report.lint == []
+    assert report.empty_shells == 1
     assert not report.ok
 
 
