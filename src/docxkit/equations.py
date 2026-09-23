@@ -806,6 +806,13 @@ def _mval(el: _Element, path: str) -> str | None:
     return None if hit is None else hit.get(f"{{{M_NS}}}val")
 
 
+def _mval_or(el: _Element, path: str, default: str) -> str:
+    """:func:`_mval`, with `default` for an ABSENT value only — an
+    explicitly empty ``m:val=""`` is a value, and it comes back ``""``."""
+    val = _mval(el, path)
+    return default if val is None else val
+
+
 class _Walker:
     def __init__(self) -> None:
         self.gaps: list[str] = []
@@ -914,13 +921,20 @@ class _Walker:
     def e_d(self, el: _Element) -> str:
         # an unmapped fence renders as itself: possibly odd TeX, but
         # visibly odd, where a silent "(" would claim a bracket the
-        # equation never had
-        raw_beg = _mval(el, "dPr/begChr") or "("
-        raw_end = _mval(el, "dPr/endChr") or ")"
+        # equation never had.
+        #
+        # The defaults apply to an ABSENT character only. An EMPTY one
+        # is how OMML says "no delimiter on this side" — Word's cases
+        # brace is begChr "{" with endChr "" — and read through `or` it
+        # took the default and a piecewise function came back as
+        # `\left\{ x \right)` (backlog S2, 2026-09-18).
+        raw_beg = _mval_or(el, "dPr/begChr", "(")
+        raw_end = _mval_or(el, "dPr/endChr", ")")
         beg = _FENCES.get(raw_beg, raw_beg)
         end = _FENCES.get(raw_end, raw_end)
-        sep = _mval(el, "dPr/sepChr") or "|"
-        inner = rf" \middle{sep} ".join(
+        sep = _mval_or(el, "dPr/sepChr", "|")
+        joint = rf" \middle{_FENCES.get(sep, sep)} " if sep else " "
+        inner = joint.join(
             self.children(e) for e in el.findall(f"{{{M_NS}}}e")) \
             if len(el.findall(f"{{{M_NS}}}e")) > 1 \
             else self.bare(el, "e")

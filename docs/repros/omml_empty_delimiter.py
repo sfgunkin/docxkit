@@ -20,9 +20,11 @@ Run from the worktree:  python <this file>
 """
 import sys
 
-WT = (r"C:\Users\Ezhik\AppData\Local\Temp\claude\C--Windows-System32"
-      r"\498555e3-9088-4382-822f-51d2ea2bd5b7\scratchpad\docxkit-edit-replace")
-sys.path.insert(0, WT + r"\src")
+from pathlib import Path
+
+# the repo's own source, not a session's worktree: this file used to
+# point at a scratchpad that is gone
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from docxkit.equations import _FENCES, to_latex  # noqa: E402
 

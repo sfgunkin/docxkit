@@ -100,6 +100,35 @@ def test_delimiters_default_and_custom():
     assert to_latex(m(brack)) == r"\left[ x \right]"
 
 
+def _fence(beg: str | None, end: str | None, sep: str | None = None,
+           args: int = 1) -> str:
+    pr = "".join(f'<m:{k} m:val="{v}"/>' for k, v in
+                 (("begChr", beg), ("sepChr", sep), ("endChr", end))
+                 if v is not None)
+    return (f"<m:d><m:dPr>{pr}</m:dPr>"
+            + "".join("<m:e>" + r(x) + "</m:e>" for x in "xyz"[:args])
+            + "</m:d>")
+
+
+@pytest.mark.parametrize(("beg", "end", "want"), [
+    ("{", "", r"\left\{ x \right."),      # the cases brace Word writes
+    ("", "}", r"\left. x \right\}"),
+    ("", "", r"\left. x \right."),
+    ("[", None, r"\left[ x \right)"),     # ABSENT still takes the default
+    (None, "]", r"\left( x \right]"),
+])
+def test_an_EMPTY_delimiter_is_no_bracket_not_the_default_one(beg, end, want):
+    """Backlog S2, 2026-09-18: `_mval(...) or ")"` read an explicitly
+    empty `m:val` as absent, so a piecewise function came back with a
+    closing parenthesis its author never wrote."""
+    assert to_latex(m(_fence(beg, end))) == want
+
+
+def test_an_EMPTY_separator_joins_the_arguments_with_no_bar():
+    assert to_latex(m(_fence("(", ")", sep="", args=3))) == (
+        r"\left( x y z \right)")
+
+
 def test_conditional_expectation_reads_correctly():
     body = ('<m:d><m:dPr><m:sepChr m:val="|"/></m:dPr>'
             "<m:e>" + r("y") + "</m:e><m:e>" + r("x") + "</m:e></m:d>")
