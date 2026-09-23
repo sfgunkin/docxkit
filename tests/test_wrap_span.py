@@ -198,6 +198,34 @@ def test_the_span_is_measured_in_visible_text_including_the_maths():
     assert _linked(out) == "Smith 2020"
 
 
+_MATH_FIRST = ("<w:p><m:oMath><m:r><m:t>xyz</m:t></m:r></m:oMath>"
+               '<w:r><w:t xml:space="preserve">Smith 2020 said</w:t></w:r>'
+               "<m:oMath><m:r><m:t>abcde</m:t></m:r></m:oMath>"
+               '<w:r><w:t xml:space="preserve"> so.</w:t></w:r></w:p>')
+
+
+@pytest.mark.parametrize(("at", "end"), [
+    (0, 7),                    # inside the leading equation
+    (2, 9),
+    (18, 25),                  # inside the middle one
+])
+def test_a_span_STARTING_inside_an_equation_is_refused_in_its_own_words(
+        at, end):
+    """Backlog S3, 2026-09-18: a start inside OMML reached `split_run` as
+    a negative offset and came back as `ValueError: split_run: offset -3
+    is before the run` — no paragraph, not the module's error."""
+    with pytest.raises(AnchorError, match="starts inside an equation") as e:
+        wrap_visible_span(_MATH_FIRST, at, end, "A")
+
+    assert "xyzSmith" in str(e.value)          # the paragraph is quoted
+
+
+def test_a_span_BETWEEN_two_equations_still_wraps():
+    out = wrap_visible_span(_MATH_FIRST, 3, 13, "A")
+
+    assert _linked(out) == "Smith 2020"
+
+
 def test_a_span_on_a_run_edge_past_256_leaves_no_EMPTY_run():
     """`at <= fs` is what keeps the run before the span whole and puts no
     empty run in front of the link. Past offset 256 two equal offsets are
@@ -317,11 +345,10 @@ def test_a_span_ending_INSIDE_the_maths_past_its_last_run():
     of `Rowe 1987xy` ends two characters past the last `w:r` it covers,
     and `split_run` is asked for a cut past the run's length.
 
-    That RETURNS. The mirror case — maths BEFORE the prose, so the span
-    starts before its first covered run — raises `ValueError: offset -2
-    is before the run` instead. Two sides of one function, one of them
-    reachable and one refused, and neither the guards nor their comments
-    say which is which."""
+    That RETURNS, and the link stops at the prose. The mirror case —
+    maths BEFORE the prose, so the span starts before its first covered
+    run — is refused with the module's own AnchorError (it was a
+    helper's `ValueError` until 2026-09-23; see the test above)."""
     math = "<m:oMath><m:r><m:t>xy</m:t></m:r></m:oMath>"
     para = ('<w:p><w:r><w:t xml:space="preserve">see </w:t></w:r>'
             '<w:r><w:t xml:space="preserve">Rowe 1987</w:t></w:r>'

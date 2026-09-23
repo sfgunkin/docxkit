@@ -844,6 +844,18 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
         raise AnchorError(f"wrap_visible_span: span {at}..{end} is empty")
     (fs, _fe), first = covered[0]
     (ls, le), last = covered[-1]
+    # A START no `w:r` holds is a start inside an EQUATION: the offsets
+    # count OMML and the runs do not. Refused here, in this function's own
+    # words — it used to reach `split_run` as a negative offset and come
+    # back as a helper's `ValueError` naming no paragraph (backlog S3,
+    # 2026-09-18). The END has no mirror of this on purpose: `split_run`
+    # takes a cut past a run's length and the link stops at the prose,
+    # which `test_a_span_ending_INSIDE_the_maths_past_its_last_run` pins.
+    if at < fs:
+        raise AnchorError(
+            f"wrap_visible_span: span [{at}, {end}) starts inside an "
+            f"equation, which a hyperlink cannot split "
+            f"({visible_text(para_xml)[:40]!r})")
 
     # CUT the runs rather than rebuilding each fragment from the whole
     # one. `set_run_text` keeps a run's structure, which is right for a
