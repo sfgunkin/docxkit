@@ -22,8 +22,12 @@ from typing import Any, Literal, NamedTuple, overload
 
 from ._xml import (
     PARA_RE,
+    RUN_RE,
     element_spans,
+    live_properties,
     normalize_glyphs,
+    own_properties,
+    set_run_property,
     set_run_text,
     visible_text,
 )
@@ -880,16 +884,31 @@ def _row_at(table: Table, count: int, index: int, verb: str) -> int:
     return at
 
 
-def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
+def set_cell(xml: str, table: Table, row: int, col: int, text: str, *,
+             flatten: bool = False) -> str:
     """Rewrite one cell's text, preserving its formatting.
 
     `col` is a CELL index, matching ``table.rows[row][col]`` — not a grid
     column. In a row with a merged cell the two differ; see
     :meth:`Table.grid_columns`.
 
-    The cell keeps its own run properties: only the first ``w:t`` in the
-    cell takes the new text and any others are blanked, so fonts,
-    borders and shading survive.
+    The cell keeps its own run properties: the new text goes into the
+    first ``w:t`` and any others are blanked, so fonts, borders and
+    shading survive — EXCEPT in the two shapes where that loses what a
+    results table is made of (BACKLOG S2, Misconceptions W7, 770 cells):
+
+    * a cell with a SUPERSCRIPT run, written ``"0.017***"``: the number
+      goes into the plain run and the stars into the superscript one, as
+      :func:`set_result` does. Blanking the superscript run and putting
+      the stars in the number printed them full size, and Word wrapped
+      "0.017**" / "*" in every coefficient column of Table 4;
+    * a cell of TWO text paragraphs — a coefficient over its standard
+      error: refused, because one string cannot say what goes on which
+      line, and blanking the second pulled the SE onto the coefficient's
+      line and left an empty one. Use :func:`set_result`, or pass
+      ``flatten=True`` for the old one-line behaviour.
+
+    No gate saw either: the cell TEXT reads back exactly as written.
     """
     table = _fresh(xml, table, "set_cell")
     body = xml[table.start:table.end]
@@ -901,7 +920,142 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str) -> str:
         raise AnchorError(f"row {row} has {len(tcs)} cells, "
                           f"cannot set column {col}")
     tc = tcs[col]
-    new_tc = set_run_text(tc.group(0), text)
+    cell = tc.group(0)
+    lines = [m for m in PARA_RE.finditer(cell) if visible_text(m.group(0))]
+    stars = _STARS_RE.fullmatch(text)
+    if len(lines) > 1 and not flatten:
+        raise AnchorError(
+            f"row {row} col {col} holds {len(lines)} lines of text "
+            f"({' / '.join(visible_text(m.group(0))[:20] for m in lines)!r}); "
+            f"one string cannot say what goes on which — use "
+            f"tables.set_result(..., se=...), or flatten=True")
+    if stars and lines and _superscript_runs(lines[0].group(0)):
+        first = lines[0]
+        new_tc = (cell[:first.start()]
+                  + _fill_result(first.group(0), stars.group(1),
+                                 stars.group(2))
+                  + cell[first.end():])
+    else:
+        new_tc = set_run_text(cell, text)
+    new_tr = tr.group(0)[:tc.start()] + new_tc + tr.group(0)[tc.end():]
+    new_body = body[:tr.start()] + new_tr + body[tr.end():]
+    return xml[:table.start] + new_body + xml[table.end:]
+
+
+#: A result: the number, and the significance stars after it.
+_STARS_RE = re.compile(rf"({_NUM_RE.pattern})(\*{{0,3}})")
+_SUPERSCRIPT = '<w:vertAlign w:val="superscript"/>'
+
+
+def _is_superscript(run_xml: str) -> bool:
+    own = own_properties(run_xml, "rPr")
+    return own is not None and 'w:val="superscript"' in live_properties(
+        own[2]) and "<w:vertAlign" in live_properties(own[2])
+
+
+#: A text node's opening tag; `\b` so `<w:tab/>` is not one.
+_T_OPEN_RE = re.compile(r"<w:t\b")
+
+
+def _text_runs(para_xml: str) -> list[re.Match[str]]:
+    return [m for m in RUN_RE.finditer(para_xml)
+            if _T_OPEN_RE.search(m.group(0))]
+
+
+def _superscript_runs(para_xml: str) -> list[re.Match[str]]:
+    return [m for m in _text_runs(para_xml) if _is_superscript(m.group(0))]
+
+
+def _fill_result(para_xml: str, number: str, stars: str) -> str:
+    """`number` into the first plain run, `stars` into the first
+    superscript run — cloned from the number run when the cell had none —
+    and every other text run blanked."""
+    runs = _text_runs(para_xml)
+    plain = next((m for m in runs if not _is_superscript(m.group(0))), None)
+    if plain is None:
+        raise AnchorError("the cell's line has no plain run for the number")
+    sup = next((m for m in runs if _is_superscript(m.group(0))), None)
+    out, last = [], 0
+    for m in runs:
+        run = m.group(0)
+        if m is plain:
+            new = set_run_text(run, number)
+            if sup is None and stars:
+                new += set_run_text(
+                    set_run_property(run, "vertAlign", _SUPERSCRIPT), stars)
+        elif m is sup:
+            new = set_run_text(run, stars)
+        else:
+            new = set_run_text(run, "")
+        out += [para_xml[last:m.start()], new]
+        last = m.end()
+    return "".join(out) + para_xml[last:]
+
+
+def _fill_se(para_xml: str, se: str) -> str:
+    """The standard error into its line: "(", se, ")" across three runs
+    — the house shape, with the SE italic in the middle one — or "(se)"
+    into the first and the rest blanked."""
+    runs = _text_runs(para_xml)
+    parts = ["(", se, ")"] if len(runs) == 3 else [f"({se})"]
+    out, last = [], 0
+    for i, m in enumerate(runs):
+        text = parts[i] if i < len(parts) else ""
+        out += [para_xml[last:m.start()], set_run_text(m.group(0), text)]
+        last = m.end()
+    return "".join(out) + para_xml[last:]
+
+
+def set_result(xml: str, table: Table, row: int, col: int, number: str, *,
+               stars: str = "", se: str | None = None) -> str:
+    """Write an estimate into a results cell: number, stars, standard error.
+
+    The number goes into the first line's plain run and the stars into
+    its superscript run (cloned from the number's when the cell had no
+    stars), so they print raised whatever the cell held before. With
+    `se`, the second line gets it — "(", se, ")" across three runs, or
+    "(se)" in one — and a cell with ONE line gains a second, in the first
+    line's paragraph and run properties. Without `se`, a second line is
+    left as it was.
+
+    Upstreamed from Misconceptions' `write_cell` (W7, 2026-09-24), which
+    `set_cell` could not replace: it wrote Tables 4-6, B1 and B2 with the
+    stars full size and the SE line emptied.
+    """
+    if stars.strip("*"):
+        raise ValueError(f"set_result: stars are asterisks, not {stars!r}")
+    table = _fresh(xml, table, "set_result")
+    body = xml[table.start:table.end]
+    trs = list(rows_of(body))
+    row = _row_at(table, len(trs), row, "set")
+    tr = trs[row]
+    tcs = list(cells_of(tr.group(0)))
+    if col >= len(tcs):
+        raise AnchorError(f"row {row} has {len(tcs)} cells, "
+                          f"cannot set column {col}")
+    tc = tcs[col]
+    cell = tc.group(0)
+    lines = list(PARA_RE.finditer(cell))
+    if not lines or not _text_runs(lines[0].group(0)):
+        raise AnchorError(f"row {row} col {col} has no run to write into")
+    first = lines[0]
+    new_first = _fill_result(first.group(0), number, stars)
+    if se is None:
+        new_tc = cell[:first.start()] + new_first + cell[first.end():]
+    elif len(lines) > 1 and _text_runs(lines[1].group(0)):
+        second = lines[1]
+        new_tc = (cell[:first.start()] + new_first
+                  + cell[first.end():second.start()]
+                  + _fill_se(second.group(0), se) + cell[second.end():])
+    else:
+        plain = next(m for m in _text_runs(first.group(0))
+                     if not _is_superscript(m.group(0)))
+        ppr = own_properties(first.group(0), "pPr")
+        props = first.group(0)[ppr[0]:ppr[1]] if ppr else ""
+        line = (f"<w:p>{props}{set_run_text(plain.group(0), f'({se})')}"
+                "</w:p>")
+        new_tc = (cell[:first.start()] + new_first + line
+                  + cell[first.end():])
     new_tr = tr.group(0)[:tc.start()] + new_tc + tr.group(0)[tc.end():]
     new_body = body[:tr.start()] + new_tr + body[tr.end():]
     return xml[:table.start] + new_body + xml[table.end:]

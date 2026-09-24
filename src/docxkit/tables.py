@@ -45,6 +45,7 @@ from ._table_core import row_signature as row_signature
 from ._table_core import rows_of as rows_of
 from ._table_core import rows_preserved as rows_preserved
 from ._table_core import set_cell as set_cell
+from ._table_core import set_result as set_result
 from ._table_core import set_row as set_row
 from ._table_core import tables_after as tables_after
 from ._table_core import to_frame as to_frame
@@ -108,6 +109,7 @@ __all__ = [
     "rows_preserved",
     "set_cell",
     "set_decimals",
+    "set_result",
     "set_row",
     "superscript_stars",
     "tables_after",

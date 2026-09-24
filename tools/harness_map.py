@@ -355,6 +355,7 @@ HARNESS: dict[str, list[str]] = {
     # CONTRIBUTING records for `comments` and `_table_layout`, walked
     # into again with a map that was supposed to prevent it.
     "_table_core.py": ["tests/test_tables_api.py",
+                       "tests/test_tables_results.py",
                        "tests/test_tables.py",
                        "tests/test_tables_update.py",
                        "tests/test_tables_house.py",
@@ -466,6 +467,7 @@ HARNESS: dict[str, list[str]] = {
     "renumber.py": ["tests/test_renumber.py", "tests/test_footnote_ids.py",
                     "tests/test_footnote_audit.py"],
     "tables.py": ["tests/test_tables_api.py", "tests/test_tables.py",
+                  "tests/test_tables_results.py",
                   "tests/test_tables_update.py", "tests/test_tables_nested.py",
                   "tests/test_booktabs_plan.py"],
     "testing.py": ["tests/test_testing_helpers.py"],
@@ -529,7 +531,8 @@ EXCLUDED: dict[str, tuple[str, ...]] = {
     # three of the five turned out to exercise it after all — see the
     # note above EXCLUDED for the one-liner.
     "_table_layout.py": ("tests/test_tables.py",
-                         "tests/test_tables_update.py"),
+                         "tests/test_tables_update.py",
+                         "tests/test_tables_results.py"),
     "tables.py": ("tests/test_tables_fit.py",
                   "tests/test_tables_fit_edges.py",
                   "tests/test_tables_house.py",
