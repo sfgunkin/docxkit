@@ -843,30 +843,6 @@ by the OMML builder), which the rest of the document does not.
 Found by counting tokens by hand after the report said ten formulas had
 appeared; `--expect-clean` would have failed on a document that matched.
 
-### S2 — `tables.set_cell` flattens a result cell's superscript-star and second-paragraph runs
-<!-- status: open -->
-
-`set_cell` puts the whole new text in the cell's FIRST `w:t` and blanks
-the rest. On a results table that is the wrong half to keep: the house
-cell is `[number][stars, vertAlign=superscript]`, and in a two-line cell
-(coefficient over SE) `[number][stars]` ¶ `[(][SE, italic][)]`. Writing
-"0.017\*\*\*" gives full-size stars in the number run, an empty superscript
-run, and — for a two-line cell — the SE pulled up onto the coefficient's
-line with the second paragraph left empty.
-
-Measured on Misconceptions W7 (2026-09-24), rewriting Tables 4, 5, 6, B1,
-B2 (770 cells): rendered through Word, Table 4 wrapped "0.017\*\*" / "\*" in
-every coefficient column; Table 6 lost its SE line. No gate saw it — the
-cell TEXT is right, so `rows[r][c]` reads back exactly what was written.
-`superscript_stars` afterwards repairs the single-paragraph case only (it
-skips any cell that is not exactly number+stars).
-
-**Fix:** a result-aware write — number into the first non-superscript run,
-stars into the superscript run (cloned when absent), and a `(b, stars, se)`
-form that fills a second paragraph's runs. The paper's `write_cell` in
-`revision/do/W7_mi_tables.py` does this by regex; delete it when this
-closes.
-
 ---
 
 ## Where the fixed entries are

@@ -14,6 +14,43 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `tables.set_cell` flattens a result cell's superscript-star and second-paragraph runs~~ — FIXED 24.09, `c79bea3`
+
+<!-- status: fixed -->
+
+`set_cell` puts the whole new text in the cell's FIRST `w:t` and blanks
+the rest. On a results table that is the wrong half to keep: the house
+cell is `[number][stars, vertAlign=superscript]`, and in a two-line cell
+(coefficient over SE) `[number][stars]` ¶ `[(][SE, italic][)]`. Writing
+"0.017\*\*\*" gives full-size stars in the number run, an empty superscript
+run, and — for a two-line cell — the SE pulled up onto the coefficient's
+line with the second paragraph left empty.
+
+Measured on Misconceptions W7 (2026-09-24), rewriting Tables 4, 5, 6, B1,
+B2 (770 cells): rendered through Word, Table 4 wrapped "0.017\*\*" / "\*" in
+every coefficient column; Table 6 lost its SE line. No gate saw it — the
+cell TEXT is right, so `rows[r][c]` reads back exactly what was written.
+`superscript_stars` afterwards repairs the single-paragraph case only (it
+skips any cell that is not exactly number+stars).
+
+**Fix:** a result-aware write — number into the first non-superscript run,
+stars into the superscript run (cloned when absent), and a `(b, stars, se)`
+form that fills a second paragraph's runs. The paper's `write_cell` in
+`revision/do/W7_mi_tables.py` does this by regex; delete it when this
+closes.
+
+**Fixed in `c79bea3`.** `set_cell` routes number+stars into the plain and
+superscript runs and refuses a two-line cell (`flatten=True` restores
+the old behaviour); `tables.set_result(..., number, stars=, se=)` writes
+all three, cloning a star run or growing the SE line when the cell has
+none. On a copy of Misconceptions' clean_edited9, Table 6's house-shaped
+cell rewritten with it renders the stars at 6.5 pt superscript and the
+SE italic on its own line.
+
+**Paper-side, not done here:** `write_cell` / `fill_number` / `fill_para`
+in `revision/do/W7_mi_tables.py` do this by regex and can be replaced by
+`tables.set_result` — the paper's file, left for its session.
+
 ### ~~S3 — the structure gate refuses bookmarks the CLEAN copy added, so a link repair cannot be built tracked~~ — FIXED 24.09, `506a89c`
 
 <!-- status: fixed -->
