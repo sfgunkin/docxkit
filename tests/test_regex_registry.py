@@ -1066,6 +1066,19 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
     ("batch.py", r"<w:(ins|del)\b"): (
         "name reader: `run` refuses to stack a batch on pending revisions, "
         "and a paragraph mark's empty insertion is one still pending"),
+    ("paragraph.py",
+     r"<w:(?:ins|del|moveFrom|moveTo|pPrChange|rPrChange)\b"): (
+        "name reader: `split`, `merge` and `drop` refuse a paragraph that "
+        "carries ANY revision, and a paragraph mark's empty `<w:ins/>` is "
+        "one; nothing is paired"),
+    ("paragraph.py",
+     r"<w:(tc|footnote|endnote|comment|txbxContent|hdr|ftr)\b[^>]*>"
+     r"(?:\s*<w:tcPr\b[^>]*/>|\s*<w:tcPr\b[^>]*(?<!/)>.*?</w:tcPr>)?"
+     r"\s*\Z"): (
+        "end-anchored: `drop` asks whether the paragraph is the FIRST "
+        "thing in its container, so `\\Z` refuses any probe with markup "
+        "after the tag; both `w:tcPr` spellings, empty and full, are "
+        "exercised in test_paragraph"),
     ("batch.py", r"<w:tr\b"): (
         "name reader: `invariants` counts rows before and after an edit; "
         "an empty row is one row on both sides, and nothing is paired"),

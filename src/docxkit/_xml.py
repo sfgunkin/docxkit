@@ -34,6 +34,7 @@ __all__ = [
     "INSTR_REF_RE",
     "MATH_OBJECTS",
     "NOTE_DEF_RE",
+    "PARA_OPEN_RE",
     "PARA_RE",
     "PRINTED_CHILDREN",
     "RPR_ORDER",
@@ -1384,7 +1385,9 @@ PPR_ORDER = (
 )
 _PPR_RANK = {name: i for i, name in enumerate(PPR_ORDER)}
 _CHILD_OPEN_RE = re.compile(r"<w:(\w+)\b[^>]*?(/?)>")
-_PARA_OPEN_RE = re.compile(r"<w:p\b[^>]*?(/?)>")
+#: A paragraph's opening tag, capturing the slash of a self-closing
+#: `<w:p/>` so a caller can tell an empty paragraph from one that opens.
+PARA_OPEN_RE = re.compile(r"<w:p\b[^>]*?(/?)>")
 
 
 def _own_children(inner: str) -> Iterator[tuple[str, int, int]]:
@@ -1407,7 +1410,7 @@ def _own_children(inner: str) -> Iterator[tuple[str, int, int]]:
 
 def _para_with_properties(para_xml: str, element: str) -> str:
     """`para_xml` given a `w:pPr` holding `element`, or left alone."""
-    m = _PARA_OPEN_RE.match(para_xml)
+    m = PARA_OPEN_RE.match(para_xml)
     if not element or m is None:            # nothing to add, or not a `w:p`
         return para_xml
     if m.group(1) == "/":                   # `<w:p/>`: expand it

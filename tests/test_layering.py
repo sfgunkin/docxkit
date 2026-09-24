@@ -40,7 +40,8 @@ LAYERS: tuple[tuple[str, ...], ...] = (
     ("tables", "crossrefs", "equations", "footnotes", "figures", "ingest",
      "placement"),
     ("citations", "exhibits", "sections"),
-    ("comments", "body", "guard", "hygiene", "authors", "batch"),
+    ("comments", "body", "paragraph", "guard", "hygiene", "authors",
+     "batch"),
     ("edit", "find", "revisions", "styles", "package", "lint", "word"),
     ("_xml", "errors", "console", "timings"),
 )

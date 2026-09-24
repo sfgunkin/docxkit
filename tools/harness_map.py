@@ -444,6 +444,10 @@ HARNESS: dict[str, list[str]] = {
     "package.py": ["tests/test_package.py", "tests/test_parts_gaps.py",
                    "tests/test_pathological.py"],
     "pages.py": ["tests/test_pages.py", "tests/test_locate.py"],
+    # the numbering property: a module that changes HOW MANY paragraphs
+    # there are is the one most able to break what ¶N points at
+    "paragraph.py": ["tests/test_paragraph.py",
+                     "tests/test_paragraph_numbering.py"],
     "placement.py": ["tests/test_placement.py"],
     "repack.py": ["tests/test_repack.py"],
     "sections.py": ["tests/test_sections.py", "tests/test_sections_edges.py"],
