@@ -3674,7 +3674,23 @@ def test_the_structure_gate_names_a_BOOKMARK_the_reject_dropped(tmp_path):
 
     assert report.reject_detail["paragraphs"] is True
     assert report.reject_detail["glyphs"] is True
-    assert report.structure_diff == ["bookmarkStart: 1 -> 0"]
+    assert report.structure_diff == ["bookmarkStart: lost 'Moran1950'"]
+
+
+def test_validate_ALLOWS_a_bookmark_the_clean_copy_added(tmp_path):
+    """BACKLOG S3, the validate half. A batch that links a citation adds
+    a bookmark no rejection can remove — Compare carries it — and its
+    accepted view says the clean copy added it. That is not a loss."""
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("As Moran (1950) showed."))))
+    linked = write(tmp_path / "batch.docx", make_parts(
+        para('<w:bookmarkStart w:id="9" w:name="Moran1950txt"/>',
+             run("As Moran (1950) showed."), '<w:bookmarkEnd w:id="9"/>')))
+
+    report = revision.validate(linked, baseline_path, use_word=False)
+
+    assert report.reject_detail["structure"] is True
+    assert report.structure_diff == []
 
 
 def test_the_structure_gate_is_blind_to_which_FORM_a_link_takes(tmp_path):

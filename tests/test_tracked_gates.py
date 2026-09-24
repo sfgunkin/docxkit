@@ -14,6 +14,7 @@ definition, imported, rather than a second copy that drifts.
 from __future__ import annotations
 
 import itertools
+import zipfile
 from pathlib import Path
 from typing import ClassVar
 
@@ -607,6 +608,92 @@ def test_build_REFUSES_a_redline_that_carries_a_table_twice(monkeypatch,
         "</w:body>", _table_xml() + _table_xml() + "</w:body>")
     with pytest.raises(PackageError, match="STRUCTURE"):
         _build(monkeypatch, doubled, sources)
+
+
+# --- bookmarks are judged by NAME (BACKLOG S3, 2026-09-24) --------------
+#
+# A bookmark is not revisable: Compare carries the clean copy's bookmark
+# ADDITIONS into both views and its DELETIONS into neither. Counted, that
+# refused every batch that linked a citation (Misconceptions: rejected
+# 121 -> 165, the 44 being exactly what `link_all` added) and every batch
+# that deleted a reference entry (accepted +2, `McNemar1947` and its txt).
+
+
+def _marked(*names: str) -> str:
+    """The clean document, its sentence wrapped in these bookmarks."""
+    starts = "".join(f'<w:bookmarkStart w:id="{i}" w:name="{n}"/>'
+                     for i, n in enumerate(names, 1))
+    ends = "".join(f'<w:bookmarkEnd w:id="{i}"/>'
+                   for i in range(1, len(names) + 1))
+    return clean_document().replace("<w:r>", starts + "<w:r>", 1) \
+        .replace("</w:p>", ends + "</w:p>", 1)
+
+
+def _pair(tmp_path, original: str, revised: str):
+    for name, xml in (("original.docx", original), ("revised.docx", revised)):
+        with zipfile.ZipFile(tmp_path / name, "w") as z:
+            z.writestr("word/document.xml", xml)
+    return (tmp_path / "original.docx", tmp_path / "revised.docx",
+            tmp_path / "redline.docx")
+
+
+def test_a_bookmark_the_CLEAN_COPY_ADDED_survives_reject_and_is_allowed(
+        monkeypatch, tmp_path):
+    """The link repair: the clean copy gains `Smith2020` and its `txt`,
+    Compare carries both into the redline, and rejecting cannot remove
+    them. That is not a loss and not a duplicate."""
+    added = _marked("Smith2020", "Smith2020txt")
+    sources = _pair(tmp_path, clean_document(), added)
+
+    report, _ = _build(monkeypatch, added, sources)
+
+    assert report.structure_diff == []
+
+
+def test_a_bookmark_the_clean_copy_DELETED_survives_accept_and_is_allowed(
+        monkeypatch, tmp_path):
+    """The mirror: the clean copy drops a deleted entry's bookmarks and
+    Compare keeps them, so the accepted view has two the clean copy does
+    not — exactly two the original had."""
+    had = _marked("McNemar1947", "McNemar1947txt")
+    sources = _pair(tmp_path, had, clean_document())
+
+    report, _ = _build(monkeypatch, had, sources)
+
+    assert report.structure_diff == []
+
+
+def test_a_bookmark_NEITHER_document_has_is_still_refused(monkeypatch,
+                                                          tmp_path):
+    sources = _pair(tmp_path, clean_document(), clean_document())
+
+    with pytest.raises(PackageError, match="gained 'Stray2001'"):
+        _build(monkeypatch, _marked("Stray2001"), sources)
+
+
+def test_a_bookmark_LOST_on_either_side_is_still_refused(monkeypatch,
+                                                        tmp_path):
+    """The DSI class: both documents keep `Moran1950`, the redline drops
+    it — rejecting cannot give it back, and neither can accepting."""
+    kept = _marked("Moran1950")
+    sources = _pair(tmp_path, kept, kept)
+
+    report, _ = _build(monkeypatch, clean_document(), sources,
+                       reject_check=False, accept_check=False)
+
+    assert report.structure_diff == [
+        "rejected: bookmarkStart: lost 'Moran1950'",
+        "accepted: bookmarkStart: lost 'Moran1950'"]
+
+
+def test_Words_own_bookmarks_are_judged_by_COUNT(monkeypatch, tmp_path):
+    """`_Ref`/`_Hlk` names are re-minted on every save: the same bookmark
+    under a new name is not a loss and a gain."""
+    sources = _pair(tmp_path, _marked("_Ref111"), _marked("_Ref111"))
+
+    report, _ = _build(monkeypatch, _marked("_Ref222"), sources)
+
+    assert report.structure_diff == []
 
 
 def test_the_structure_refusal_can_be_turned_off_like_the_other_one(

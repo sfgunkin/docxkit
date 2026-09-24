@@ -64,6 +64,7 @@ from ._tracked_gates import _root as _root
 from ._tracked_gates import _simulate as _simulate
 from ._tracked_gates import accepted_losses as accepted_losses
 from ._tracked_gates import accepted_math as accepted_math
+from ._tracked_gates import bookmark_changes as bookmark_changes
 from ._tracked_gates import compare_collateral as compare_collateral
 from ._tracked_gates import package_counts as package_counts
 from ._tracked_gates import revisions_by_part as revisions_by_part
@@ -115,6 +116,7 @@ __all__ = [
     "Untracked",
     "accepted_losses",
     "accepted_math",
+    "bookmark_changes",
     "build",
     "compare_collateral",
     "package_counts",
@@ -704,13 +706,22 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # the shape it cannot: an unmarked copy is not a revision, so it
         # is refused rather than resolved.
         accepted_view = _simulate(parts, _accept)
+        rejected_view = _simulate(parts, _reject)
+        # Bookmarks by NAME, each view against the one it reproduces:
+        # Compare carries the clean copy's bookmark additions into both
+        # views and its deletions into neither (`bookmark_changes`).
+        skip = ("bookmarkStart",)
         report.structure_diff = (
             [f"rejected: {d}" for d in structure_diff(
                 structure_counts(base_parts),
-                structure_counts(_simulate(parts, _reject)))]
+                structure_counts(rejected_view), skip=skip)]
+            + [f"rejected: {d}" for d in bookmark_changes(
+                base_parts, rejected_view, revised_parts)]
             + [f"accepted: {d}" for d in structure_diff(
                 structure_counts(revised_parts),
-                structure_counts(accepted_view))])
+                structure_counts(accepted_view), skip=skip)]
+            + [f"accepted: {d}" for d in bookmark_changes(
+                revised_parts, accepted_view, base_parts)])
         # The carriers those counts do not hold: a hyperlink is not in
         # STRUCTURE_TAGS, because Word legitimately re-represents a
         # field-form link as an element and counting the tag would

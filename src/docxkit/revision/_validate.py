@@ -32,6 +32,7 @@ from ..tracked import (
     _paras,
     _root,
     _simulate,
+    bookmark_changes,
     structure_counts,
     structure_diff,
     untracked,
@@ -433,14 +434,20 @@ def validate(path: str | Path, baseline: str | Path | None = None,
         body_now, body_was = _glyph(_root(rejected)), _glyph(_root(base))
         notes_now = _glyph(_root(rejected, FOOTNOTES))
         notes_was = _glyph(_root(base, FOOTNOTES))
-        struct_was = structure_counts(base)
-        struct_now = structure_counts(rejected)
+        # Bookmarks by NAME: the batch's accepted view adds to the
+        # baseline exactly what the clean copy added, and Compare carries
+        # those additions into the rejected view too (`bookmark_changes`).
+        struct_moved = (
+            structure_diff(structure_counts(base),
+                           structure_counts(rejected),
+                           skip=("bookmarkStart",))
+            + bookmark_changes(base, rejected, accepted))
         detail = {
             "paragraphs": _paras(_root(rejected)) == _paras(_root(base)),
             "glyphs": body_now == body_was,
             "footnotes": notes_now == notes_was,
             "links": was == now,
-            "structure": struct_was == struct_now,
+            "structure": not struct_moved,
         }
         report.reject_detail = detail
         report.reject_matches_baseline = all(detail.values())
@@ -470,8 +477,7 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             report.lost_links = [
                 f"-> {a} ({label[:40]!r})"
                 for a, label in sorted((was - now).elements())]
-            report.structure_diff = structure_diff(
-                struct_was, struct_now)
+            report.structure_diff = struct_moved
 
     if word_accept_glyph is not None:
         report.accept_paths_agree = (

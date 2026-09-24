@@ -15,6 +15,7 @@ one copy is here, and `revision._validate` imports it too.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -525,7 +526,64 @@ def structure_counts(parts: Parts) -> dict[str, int]:
             for tag in STRUCTURE_TAGS}
 
 
-def structure_diff(was: dict[str, int], now: dict[str, int]) -> list[str]:
-    """``"tbl: 27 -> 28"`` for every count that moved, in tag order."""
+def structure_diff(was: dict[str, int], now: dict[str, int], *,
+                   skip: tuple[str, ...] = ()) -> list[str]:
+    """``"tbl: 27 -> 28"`` for every count that moved, in tag order.
+
+    `skip` leaves tags out — the gates pass ``("bookmarkStart",)`` and
+    judge bookmarks by name instead, in :func:`bookmark_changes`.
+    """
     return [f"{tag}: {was.get(tag, 0)} -> {now.get(tag, 0)}"
-            for tag in STRUCTURE_TAGS if was.get(tag, 0) != now.get(tag, 0)]
+            for tag in STRUCTURE_TAGS
+            if tag not in skip and was.get(tag, 0) != now.get(tag, 0)]
+
+
+def _bookmark_names(parts: Parts) -> Counter[str]:
+    return Counter(name for _part, xml in text_parts(parts)
+                   for name in BOOKMARK_NAME_RE.findall(xml))
+
+
+def bookmark_changes(base: Parts, view: Parts, carried: Parts) -> list[str]:
+    """What `view` does to `base`'s bookmarks that `carried` does not explain.
+
+    A bookmark is not revisable. Compare carries the clean copy's bookmark
+    ADDITIONS into both views and its DELETIONS into neither, so counting
+    them refused every batch that linked a citation: Misconceptions
+    (2026-09-24) rejected to 165 bookmarks against the original's 121, the
+    44 extra being exactly the ones the clean copy added (`link_all` makes
+    two per work) — and a batch that deleted a reference entry accepted to
+    two MORE than the clean copy, `McNemar1947` and its `txt`. With
+    `reject_check` the only switch, the text gate went off with it.
+
+    So by NAME, and each view against the document it must reproduce:
+
+    * the REJECTED view against the original, where anything gained must
+      be an addition of the clean copy — ``carried`` is the clean copy (or
+      the accepted view, which adds the same names to the original);
+    * the ACCEPTED view against the clean copy, where anything gained must
+      be a deletion — ``carried`` is the original.
+
+    Anything LOST is refused on either side: that is the DSI class, three
+    citation bookmarks a move dropped on reject. Word's own `_Ref`/`_Toc`
+    /`_Hlk` names are re-minted on every save (:func:`_xml.word_minted`),
+    so they are judged by COUNT, with the same allowance.
+    """
+    was, now, other = (_bookmark_names(p) for p in (base, view, carried))
+    out: list[str] = []
+    named = [n for n in (was | now | other) if not word_minted(n)]
+    lost = sorted(n for n in named if now[n] < was[n])
+    gained = sorted(n for n in named
+                    if now[n] > was[n] + max(0, other[n] - was[n]))
+    if lost:
+        out.append(f"bookmarkStart: lost {', '.join(map(repr, lost))}")
+    if gained:
+        out.append(f"bookmarkStart: gained {', '.join(map(repr, gained))}, "
+                   f"which the other document does not explain")
+
+    def minted(names: Counter[str]) -> int:
+        return sum(k for n, k in names.items() if word_minted(n))
+
+    b, v, c = minted(was), minted(now), minted(other)
+    if not b <= v <= b + max(0, c - b):
+        out.append(f"bookmarkStart (Word's own _ names): {b} -> {v}")
+    return out
