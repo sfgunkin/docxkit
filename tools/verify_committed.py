@@ -56,6 +56,23 @@ def export(ref: str, dest: Path) -> None:
         tf.extractall(dest, filter="data")
 
 
+def committed_modules(package: Path) -> list[str]:
+    """Dotted names under `package`, at every depth: ``find``,
+    ``revision._promote``. A subpackage's `__init__` is named by the
+    subpackage itself; the top-level `__init__` is the import every
+    other name already implies."""
+    names = []
+    for p in sorted(package.rglob("*.py")):
+        if "__pycache__" in p.parts:
+            continue
+        parts = p.relative_to(package).with_suffix("").parts
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        if parts:
+            names.append(".".join(parts))
+    return names
+
+
 def _run(argv: list[str], cwd: Path, env: dict[str, str]
          ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, cwd=cwd, env=env, text=True,
@@ -74,8 +91,15 @@ def check(ref: str = "HEAD") -> list[str]:
 
         # Import first: a module that cannot be imported makes the CLI
         # check report the same fault in a longer traceback.
-        names = sorted(p.stem for p in (tree / "src" / "docxkit").glob("*.py")
-                       if p.stem != "__init__")
+        # EVERY depth: a flat glob named 50 of 66 modules and none of
+        # `revision/`'s halves, so a half its facade does not import was
+        # never imported at all.
+        # Not "is `revision.` among them": this runs backwards over the
+        # history too, and before 2026-08-30 there was no subpackage.
+        names = committed_modules(tree / "src" / "docxkit")
+        if not names:
+            problems.append(f"{ref}: the walk found no module — it is not "
+                            f"reading the package")
         script = "import importlib\n" + "".join(
             f"importlib.import_module('docxkit.{n}')\n" for n in names)
         got = _run([sys.executable, "-c", script], tree, env)

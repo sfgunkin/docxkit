@@ -644,19 +644,6 @@ def test_lint_reports_a_duplicated_property_child():
     assert problems and "two w:tcBorders" in problems[0]
 
 
-def test_no_source_file_carries_a_control_character():
-    """The bash-heredoc trap, which has now mangled a pattern four times
-    in one session: `\b` in a non-raw context becomes U+0008 and the
-    regex silently matches nothing. Cheap to make impossible to ship."""
-    from pathlib import Path
-
-    import docxkit
-    for path in Path(docxkit.__file__).parent.glob("*.py"):
-        blob = path.read_bytes()
-        for ch in (b"\x08", b"\x00", b"\x01", b"\x0c"):
-            assert ch not in blob, f"{path.name} carries {ch!r}"
-
-
 # ------------------------------------------- CT_TcPr is a SEQUENCE --------
 
 

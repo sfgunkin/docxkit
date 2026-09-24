@@ -135,6 +135,29 @@ gone. Those three would each have caught this alone.
 Left open as a note because the rule is not implemented anywhere — it is a
 thing to ask when writing the next gate, not a check that exists.
 
+**Built 2026-09-24, and it found the case it was written for.** Four walks
+were still flat: the duplicate-pattern gate in `test_xml_primitives`, the
+ledger's no-reader promise in `test_revision_ledger` (which read `revision/`
+alone, so `cli` could have imported the ledger unseen), a control-character
+test in `test_tables_fit_edges` that `test_control_characters` already
+covered over the whole tree (deleted), and `tools/verify_committed.py`,
+which imported 50 of 66 modules. Widened onto `source_files()`, the first
+of them went red at once: `revision._losses` and `styles` each compiled the
+tracked-deletion pattern `<w:del\b[^>]*(?<!/)>.*?</w:del>` — the exact
+drift that gate exists to refuse, sitting where it could not look. It is
+`_xml.DEL_RE` now.
+
+The rule itself is `test_no_gate_enumerates_the_package_FLAT` in
+`test_source_walk.py`: every `<x>.glob("*.py")` and `iter_modules(...)`
+CALL in `src/`, `tests/` and `tools/` — read off the AST, so the eight
+comments quoting the trap are not findings — must sit in `FLAT_OK` with the
+reason its folder is flat, or be rewritten on the shared walk. Five are
+allowed (`tools/` and `tests/` are flat; `docxkit api` lists the public
+surface, where a subpackage IS its facade), and an allowlist entry whose
+walk has gone fails too. Each widened scan now asserts it reached a
+subpackage or the top level, which is the "say how many" half: a named
+canary rather than a count, for the reason `test_source_walk` gives.
+
 ---
 
 **One open, filed 2026-08-23** (above). Before it the section was empty: the three that were open — `crossrefs` calling an exhibit linked when nothing linked to it, and the two `refstyle` entries from Aging_Well's reference list — are in `Fixed` below, closed the day after they were filed. Before them: the cross-reference entry

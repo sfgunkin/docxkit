@@ -5494,7 +5494,7 @@ def test_a_loss_can_be_OKD_by_its_OWN_WORDS_alone():
 
 
 def test_a_row_level_DELETION_marker_does_not_swallow_the_link_after_it():
-    """`(?<!/)` in `_DELETION_RE`, which the census found unpinned. A
+    """`(?<!/)` in `_xml.DEL_RE`, which the census found unpinned. A
     row-level revision is a SELF-CLOSING `w:del` inside `w:trPr`, and
     without the guard the pattern opens a span on it and closes on the
     next `</w:del>` anywhere in the part — carrying off every link in

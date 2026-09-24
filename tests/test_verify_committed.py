@@ -28,6 +28,7 @@ sys.path.insert(0, str(TOOLS))
 from verify_committed import (  # noqa: E402  # pyright: ignore[reportMissingImports]
     ROOT,
     check,
+    committed_modules,
     export,
 )
 
@@ -47,6 +48,27 @@ def test_HEAD_imports_and_builds_its_parsers():
     """The gate's own subject. A red line here means the last commit
     cannot be used by anyone who has only the commit."""
     assert check("HEAD") == []
+
+
+def test_the_import_list_reaches_a_SUBPACKAGE(tmp_path):
+    """It was `glob("*.py")` until 2026-09-24 and named no module of
+    `revision/`. Built from 3 top-level modules and a subpackage of 5,
+    so a walk that drops either level cannot land on the right count."""
+    pkg = tmp_path / "docxkit"
+    (pkg / "sub" / "__pycache__").mkdir(parents=True)
+    for name in ("__init__", "a", "b", "c"):
+        (pkg / f"{name}.py").write_text("", encoding="utf-8")
+    for name in ("__init__", "_p", "_q", "_r", "_s"):
+        (pkg / "sub" / f"{name}.py").write_text("", encoding="utf-8")
+    (pkg / "sub" / "__pycache__" / "x.py").write_text("", encoding="utf-8")
+
+    assert committed_modules(pkg) == [
+        "a", "b", "c", "sub", "sub._p", "sub._q", "sub._r", "sub._s"]
+
+
+def test_the_live_package_is_walked_at_every_depth():
+    names = committed_modules(ROOT / "src" / "docxkit")
+    assert "revision._promote" in names and "cli" in names
 
 
 @pytest.mark.skipif(not _have(BROKEN), reason="shallow or rewritten history")

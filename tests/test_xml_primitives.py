@@ -29,7 +29,7 @@ import zipfile
 from xml.etree import ElementTree
 
 import pytest
-from conftest import NS, field
+from conftest import NS, field, module_name, source_files
 
 from docxkit._xml import (
     _PRINTED_RE,
@@ -405,28 +405,29 @@ def test_no_element_pattern_is_compiled_in_two_modules():
     ghost guard are exactly the kind of detail that gets added once.
 
     So the rule is mechanical, and this is the mechanism.
+
+    It walked `src.glob("*.py")` until 2026-09-24, so `revision/`'s
+    sixteen halves were outside it — and one of them was carrying the
+    tracked-deletion pattern `styles` also compiled. The walk is
+    `source_files()` now, and `scanned` says how far it reached.
     """
     import ast
     import re
     from collections import defaultdict
-    from pathlib import Path
 
-    import docxkit
-
-    src = Path(docxkit.__file__).parent
     literal = re.compile(r"""re\.compile\(\s*(?:rf?|fr?)?(['"])(.*?)\1""",
                          re.DOTALL)
     where: dict[str, set[str]] = defaultdict(set)
-    for path in sorted(src.glob("*.py")):
-        if path.name == "word_edits.py":       # a port, exempt by policy
-            continue
+    scanned = source_files()
+    assert any(module_name(p).startswith("revision.") for p in scanned)
+    for path in scanned:
         text = path.read_text(encoding="utf-8")
         ast.parse(text)                        # it must still be Python
         for _quote, pattern in literal.findall(text):
             # only WordprocessingML element shapes: a bare `\d+` or a
             # prose pattern is not this module's business
             if "<w:" in pattern or "<m:" in pattern:
-                where[" ".join(pattern.split())].add(path.stem)
+                where[" ".join(pattern.split())].add(module_name(path))
     twice = {pat: sorted(mods) for pat, mods in where.items()
              if len(mods) > 1}
     assert not twice, "\n".join(

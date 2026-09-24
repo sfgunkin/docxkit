@@ -21,16 +21,13 @@ from __future__ import annotations
 
 import ast
 import json
-import pathlib
 import shutil
 
 import pytest
-from conftest import make_parts, para, run, write
+from conftest import make_parts, module_name, para, run, source_files, write
 
 from docxkit import revision
 from docxkit.revision import _ledger
-
-SRC = pathlib.Path(revision.__file__).parent
 
 
 def _paper(tmp_path):
@@ -52,6 +49,46 @@ def _lines(paper) -> list[dict[str, object]]:
 # ------------------------------------------------- the staging promise
 
 
+def _imports_ledger(source: str) -> bool:
+    """Every spelling of an import that reaches `revision._ledger`."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            if any(a.name.endswith("revision._ledger") for a in node.names):
+                return True
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = node.module or ""
+        names = {a.name for a in node.names}
+        if module.split(".")[-1] == "_ledger":
+            return True
+        if "_ledger" in names and (module.endswith("revision")
+                                   or (node.level and not module)):
+            return True
+    return False
+
+
+@pytest.mark.parametrize("source", [
+    "from ._ledger import append\n",
+    "from . import _ledger\n",
+    "from .revision._ledger import append\n",
+    "from .revision import _ledger\n",
+    "from docxkit.revision import _ledger\n",
+    "import docxkit.revision._ledger\n",
+    "def f():\n    from ..revision._ledger import append\n",
+])
+def test_the_reader_check_sees_every_spelling(source):
+    """The canary: a check that cannot fire is the gate this file's
+    first version was — green over a package it could not read."""
+    assert _imports_ledger(source)
+
+
+def test_the_reader_check_is_not_fooled_by_a_neighbour():
+    assert not _imports_ledger("from ._timing import clock\n"
+                               "from .revision import _build\n"
+                               "ledger = 1\n")
+
+
 def test_nothing_READS_the_ledger_yet():
     """The whole of the staging, as a test rather than a comment.
 
@@ -60,20 +97,18 @@ def test_nothing_READS_the_ledger_yet():
     else may — and when a reader IS written next release, this test is
     what it has to argue with, deliberately, rather than a promise
     nobody remembers making.
+
+    It read `revision/` alone until 2026-09-24, so `cli` or any other
+    top-level module could have imported the ledger unseen. The walk is
+    the whole package now, and matches the absolute spelling too.
     """
-    writers = {"_build.py", "_promote.py", "_baseline.py", "_ledger.py"}
-    readers = []
-    for path in sorted(SRC.glob("*.py")):
-        if path.name in writers:
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            # `from ._ledger import x` and `from . import _ledger`
-            names = {a.name for a in node.names}
-            if node.module == "_ledger" or (node.level and "_ledger" in names):
-                readers.append(path.name)
+    writers = {"revision._build", "revision._promote", "revision._baseline",
+               "revision._ledger"}
+    scanned = source_files(include_init=True)
+    assert "cli" in {module_name(p) for p in scanned}, "the top level too"
+    readers = [module_name(p) for p in scanned
+               if module_name(p) not in writers
+               and _imports_ledger(p.read_text(encoding="utf-8"))]
 
     assert not readers, (
         f"{sorted(set(readers))} imports the ledger, which nothing may "

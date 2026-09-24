@@ -23,6 +23,7 @@ __all__ = [
     "BOOKMARK_START_ID_RE",
     "COMMENTS",
     "COMMENT_ID_RE",
+    "DEL_RE",
     "DOCUMENT",
     "ENDNOTES",
     "FLDCHAR_RE",
@@ -254,6 +255,13 @@ T_DEL_RE = re.compile(
 # which is the empty one's when two are merged. Fourteen call sites in
 # nine modules walk runs with this.
 RUN_RE = re.compile(r"<w:r\b[^>]*(?<!/)>.*?</w:r>", re.DOTALL)
+# One tracked deletion, whole. `(?<!/)>` keeps a self-closing `<w:del/>`
+# (a paragraph-mark flag in `w:rPr`) out of the walk, and the match is
+# non-greedy so two deletions in one paragraph are two spans rather than
+# everything between them. `styles` and `revision._losses` each had a
+# copy, and the gate that refuses a second copy could not see
+# `revision/` (2026-09-24).
+DEL_RE = re.compile(r"<w:del\b[^>]*(?<!/)>.*?</w:del>", re.DOTALL)
 # A w:t split into (open tag, close tag) so the body can be swapped.
 T_RUN_RE = re.compile(r"(<w:t[^>]*>)[^<]*(</w:t>)")
 # …and the EMPTY form Word writes beside it. `<w:t/>` is what a run

@@ -16,6 +16,7 @@ from typing import Any
 from .. import tracked
 from .._xml import (
     BOOKMARK_NAME_RE,
+    DEL_RE,
     ENDNOTES,
     FOOTNOTES,
     NOTE_DEF_RE,
@@ -511,11 +512,6 @@ def restored_bookmarks(baseline: dict[str, bytes], clean: dict[str, bytes],
 _MOVED_NOTE_RE = NOTE_DEF_RE[FOOTNOTES]
 
 
-#: One tracked deletion. `(?<!/)>` keeps a self-closing `<w:del/>` out
-#: of the walk, and the match is non-greedy so two deletions in one
-#: paragraph are two spans rather than everything between them.
-_DELETION_RE = re.compile(r"<w:del\b[^>]*(?<!/)>.*?</w:del>", re.DOTALL)
-
 
 def links_in_deletions(parts: dict[str, bytes]) -> list[tuple[str, str]]:
     """``(anchor, label)`` for every internal link inside a DELETION.
@@ -543,7 +539,7 @@ def links_in_deletions(parts: dict[str, bytes]) -> list[tuple[str, str]]:
     """
     found: list[tuple[str, str]] = []
     for _name, xml in text_parts(parts):
-        for span in _DELETION_RE.finditer(xml):
+        for span in DEL_RE.finditer(xml):
             found.extend(internal_links(span.group(0)))
     return found
 

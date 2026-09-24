@@ -154,7 +154,6 @@ from ._init import _set_key as _set_key
 from ._init import _toml_str as _toml_str
 from ._init import _value_end as _value_end
 from ._init import init as init
-from ._losses import _DELETION_RE as _DELETION_RE
 from ._losses import _DRAWING_GLYPH as _DRAWING_GLYPH
 from ._losses import _FOLD as _FOLD
 from ._losses import _MOVED_NOTE_RE as _MOVED_NOTE_RE

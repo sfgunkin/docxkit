@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from ._xml import (
     COMMENTS,
+    DEL_RE,
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
@@ -740,8 +741,6 @@ _CUSTOM_MARK_RE = re.compile(
     r'w:customMarkFollows="(?:1|true|on)"')
 _RPRCHANGE_RE = re.compile(r"<w:rPrChange\b.*?</w:rPrChange>", re.DOTALL)
 _RAISING = ("superscript", "subscript")
-#: A deleted run is going away; its typography is not a defect.
-_DEL_RE = re.compile(r"<w:del\b[^>]*(?<!/)>.*?</w:del>", re.DOTALL)
 
 
 def raised_prose(parts: dict[str, bytes]) -> list[Raised]:
@@ -816,7 +815,8 @@ def _raised_in(xml: str, part: str, cascade: Cascade) -> list[Raised]:
     spans = ([(m.start(), m.end(), m.group(2))
               for m in _NOTE_EL_RE.finditer(xml)] if notes else [])
     label = "fn" if part == FOOTNOTES else "en"
-    gone = [(m.start(), m.end()) for m in _DEL_RE.finditer(xml)]
+    # a deleted run is going away; its typography is not a defect
+    gone = [(m.start(), m.end()) for m in DEL_RE.finditer(xml)]
     found: list[Raised] = []
     for i, pm in enumerate(PARA_RE.finditer(xml)):
         para = pm.group(0)
