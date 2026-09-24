@@ -53,6 +53,7 @@ from docxkit._xml import (
     set_para_property,
     set_run_property,
     set_run_text,
+    set_sect_property,
     split_run,
     used_prefixes,
     visible_text,
@@ -1693,3 +1694,41 @@ def test_a_PAIRED_property_does_not_move_where_a_NEW_one_lands():
     _parsed(out)
     assert out == ('<w:r><w:rPr><w:b/><w:i></w:i><w:sz w:val="24"></w:sz>'
                    "</w:rPr><w:t>x</w:t></w:r>")
+
+
+# ---------------------------------------------------- set_sect_property --
+
+
+SECT = ('<w:sectPr w:rsidR="00A1"><w:footerReference w:type="default" '
+        'r:id="rId8"/><w:pgSz w:w="12240" w:h="15840"/>'
+        '<w:pgMar w:top="1440"/><w:cols w:space="720"/>'
+        '<w:docGrid w:linePitch="360"/></w:sectPr>')
+
+
+def test_a_section_property_goes_in_at_its_SCHEMA_slot():
+    """`titlePg` sits after `cols` and before `docGrid`; written at the
+    end, where a `.replace("</w:sectPr>", ...)` puts it, it is out of
+    order."""
+    got = set_sect_property(SECT, "titlePg", "<w:titlePg/>")
+
+    assert '<w:cols w:space="720"/><w:titlePg/><w:docGrid' in got
+    assert got.startswith('<w:sectPr w:rsidR="00A1">')
+
+
+def test_a_misplaced_or_DOUBLED_property_is_moved_not_kept():
+    doubled = SECT.replace("<w:pgSz", '<w:titlePg w:val="0"/><w:pgSz') \
+        .replace("</w:sectPr>", "<w:titlePg/></w:sectPr>")
+
+    got = set_sect_property(doubled, "titlePg", "<w:titlePg/>")
+
+    assert got.count("titlePg") == 1
+    assert got.index("<w:titlePg/>") < got.index("<w:docGrid")
+
+
+def test_an_empty_element_REMOVES_it_and_a_self_closing_section_expands():
+    with_title = set_sect_property(SECT, "titlePg", "<w:titlePg/>")
+
+    assert set_sect_property(with_title, "titlePg", "") == SECT
+    assert set_sect_property("<w:sectPr/>", "titlePg", "<w:titlePg/>") == \
+        "<w:sectPr><w:titlePg/></w:sectPr>"
+    assert set_sect_property("<w:sectPr/>", "titlePg", "") == "<w:sectPr/>"

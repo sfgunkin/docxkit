@@ -463,7 +463,7 @@ def test_the_next_relationship_id_is_one_PAST_the_highest():
     """Tested here rather than only through `replace_image`, because
     the fixture's highest id is even and `max | 1` reads the same on an
     even number — the parity of a fixture is not a proof."""
-    from docxkit.figures import _next_rid
+    from docxkit.package import next_rid as _next_rid
 
     assert _next_rid('<Relationships><Relationship Id="rId11"/>'
                      '<Relationship Id="rId3"/></Relationships>') == "rId12"
@@ -472,7 +472,7 @@ def test_the_next_relationship_id_is_one_PAST_the_highest():
 def test_the_next_relationship_id_in_an_EMPTY_rels_is_rId1():
     """rId0 is not a name Word writes, and starting there would collide
     with nothing today and everything the first time one is added."""
-    from docxkit.figures import _next_rid
+    from docxkit.package import next_rid as _next_rid
 
     assert _next_rid("<Relationships></Relationships>") == "rId1"
 

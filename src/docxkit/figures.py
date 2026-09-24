@@ -39,6 +39,7 @@ from ._xml import (
     visible_text,
 )
 from .errors import AnchorError, PackageError
+from .package import add_relationship, declare_default, rels_name
 
 __all__ = [
     "EMU_PER_INCH",
@@ -265,11 +266,6 @@ def _relationship_target(rels_xml: str, rid: str) -> str:
     return "word/" + m.group(1).lstrip("/")
 
 
-def _next_rid(rels_xml: str) -> str:
-    used = {int(n) for n in re.findall(r'Id="rId(\d+)"', rels_xml)}
-    return f"rId{max(used, default=0) + 1}"
-
-
 def _png_size(blob: bytes) -> tuple[int, int]:
     if blob[:8] != b"\x89PNG\r\n\x1a\n":
         raise PackageError("not a PNG — cannot read its dimensions")
@@ -328,8 +324,7 @@ def replace_image(parts: Parts, caption_prefix: str,
     if not image.exists():
         raise PackageError(f"image not found: {image}")
     doc = parts[DOCUMENT].decode("utf-8")
-    rels_name = "word/_rels/document.xml.rels"
-    rels = parts[rels_name].decode("utf-8")
+    rels = parts[rels_name(DOCUMENT)].decode("utf-8")
 
     figure = find(doc, caption_prefix)
     if not figure.embeds:
@@ -347,9 +342,8 @@ def replace_image(parts: Parts, caption_prefix: str,
     blob = image.read_bytes()
     if uses > 1 and isolate:
         target = _new_media_part(parts, blob)
-        new_rid = _next_rid(rels)
-        rels = _add_relationship(rels, new_rid, target[len("word/"):])
-        parts[rels_name] = rels.encode("utf-8")
+        new_rid = add_relationship(parts, DOCUMENT, _IMAGE_REL,
+                                   target[len("word/"):])
         doc = _repoint_one_drawing(doc, figure, rid, new_rid)
         rid = new_rid
     else:
@@ -477,62 +471,13 @@ def _new_media_part(parts: Parts, blob: bytes) -> str:
             if (m := re.search(r"image(\d+)\.", n))}
     name = f"word/media/image{max(used, default=0) + 1}.{ext}"
     parts[name] = blob
-    _declare_extension(parts, ext, content_type)
+    declare_default(parts, ext, content_type)
     return name
 
 
-_CONTENT_TYPES = "[Content_Types].xml"
-_TYPES_EMPTY_RE = re.compile(r"<Types\b[^>]*/>")
-_TYPES_OPEN_RE = re.compile(r"<Types\b[^>]*(?<!/)>")
+#: The relationship type of a picture.
 _IMAGE_REL = ("http://schemas.openxmlformats.org/officeDocument/2006/"
               "relationships/image")
-_RELS_EMPTY_RE = re.compile(r"<Relationships\b[^>]*/>")
-_RELS_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-             '<Relationships xmlns="http://schemas.openxmlformats.org/'
-             'package/2006/relationships"></Relationships>')
-
-
-def _declare_extension(parts: Parts, ext: str, content_type: str) -> None:
-    """Give `ext` a `Default` in `[Content_Types].xml` unless it has one."""
-    blob = parts.get(_CONTENT_TYPES)
-    if blob is None:
-        raise PackageError("the package has no [Content_Types].xml")
-    xml = blob.decode("utf-8")
-    if re.search(rf'<Default\b[^>]*\bExtension="{re.escape(ext)}"', xml,
-                 re.IGNORECASE):
-        return
-    default = f'<Default Extension="{ext}" ContentType="{content_type}"/>'
-    if (m := _TYPES_EMPTY_RE.search(xml)) is not None:
-        xml = (xml[:m.start()] + m.group(0)[:-2] + ">" + default
-               + "</Types>" + xml[m.end():])
-    elif (m := _TYPES_OPEN_RE.search(xml)) is not None:
-        xml = xml[:m.end()] + default + xml[m.end():]
-    else:
-        raise PackageError("[Content_Types].xml has no <Types> element")
-    parts[_CONTENT_TYPES] = xml.encode("utf-8")
-
-
-def _add_relationship(rels_xml: str, rid: str, target: str) -> str:
-    """`rels_xml` with an image relationship `rid` -> `target` added.
-
-    A rels part with nothing in it is written `<Relationships …/>`, and a
-    `.replace("</Relationships>", …)` finds no close to write before —
-    it returns the part unchanged and the drawing points at nothing.
-    """
-    rel = (f'<Relationship Id="{rid}" Type="{_IMAGE_REL}" '
-           f'Target="{escape_attr(target)}"/>')
-    if (m := _RELS_EMPTY_RE.search(rels_xml)) is not None:
-        return (rels_xml[:m.start()] + m.group(0)[:-2] + ">" + rel
-                + "</Relationships>" + rels_xml[m.end():])
-    if "</Relationships>" not in rels_xml:
-        raise PackageError("the relationships part has no <Relationships>")
-    return rels_xml.replace("</Relationships>", rel + "</Relationships>", 1)
-
-
-def _rels_name(part: str) -> str:
-    """``word/document.xml`` -> ``word/_rels/document.xml.rels``."""
-    folder, name = posixpath.split(part)
-    return posixpath.join(folder, "_rels", name + ".rels")
 
 
 _DOCPR_ID_RE = re.compile(r'<wp:docPr\b[^>]*?\bid="(\d+)"')
@@ -600,13 +545,12 @@ def embed_image(parts: Parts, image: str | Path | bytes, *,
     blob = image if isinstance(image, bytes) else Path(image).read_bytes()
     _ext, _type, width, height = _image_size(blob)
     target = _new_media_part(parts, blob)
-    rels_name = _rels_name(part)
-    rels = parts[rels_name].decode("utf-8") if rels_name in parts \
-        else _RELS_XML
+    rels_part = rels_name(part)
+    rels = (parts[rels_part].decode("utf-8") if rels_part in parts
+            else "")
     pid = _next_docpr_id(parts, part, rels)
-    rid = _next_rid(rels)
     relative = posixpath.relpath(target, posixpath.dirname(part))
-    parts[rels_name] = _add_relationship(rels, rid, relative).encode("utf-8")
+    rid = add_relationship(parts, part, _IMAGE_REL, relative)
 
     label = escape_attr(name or f"Picture {pid}")
     descr = f' descr="{escape_attr(alt)}"' if alt else ""

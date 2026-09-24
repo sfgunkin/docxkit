@@ -40,6 +40,7 @@ __all__ = [
     "RPR_ORDER",
     "RUN_OPEN_RE",
     "RUN_RE",
+    "SECTPR_ORDER",
     "TEXT_PARTS",
     "T_PARTS_RE",
     "T_RE",
@@ -73,6 +74,7 @@ __all__ = [
     "set_para_property",
     "set_run_property",
     "set_run_text",
+    "set_sect_property",
     "span_holding",
     "split_run",
     "text_parts",
@@ -1473,6 +1475,56 @@ def set_para_property(para_xml: str, tag: str, element: str) -> str:
             break
     inner = inner[:at] + element + inner[at:]
     return para_xml[:start] + f"<w:pPr>{inner}</w:pPr>" + para_xml[end:]
+
+
+#: ``CT_SectPr`` in schema order. The header and footer references come
+#: first, in any order among themselves; everything after them has one
+#: place. `titlePg` written at the END of a section — where a
+#: `.replace("</w:sectPr>", ...)` puts it — sits after `w:docGrid`, which
+#: is out of order.
+SECTPR_ORDER = (
+    "headerReference", "footerReference", "footnotePr", "endnotePr",
+    "type", "pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType",
+    "pgNumType", "cols", "formProt", "vAlign", "noEndnote", "titlePg",
+    "textDirection", "bidi", "rtlGutter", "docGrid", "printerSettings",
+    "sectPrChange",
+)
+_SECTPR_RANK = {name: i for i, name in enumerate(SECTPR_ORDER)}
+_SECTPR_OPEN_RE = re.compile(r"<w:sectPr\b[^>]*?(/?)>")
+
+
+def set_sect_property(sect_xml: str, tag: str, element: str) -> str:
+    """The same `w:sectPr` carrying `element` as its ``w:tag`` property.
+
+    The section's answer to :func:`set_para_property`: every existing
+    ``w:tag`` child is taken out and `element` goes in at its
+    :data:`SECTPR_ORDER` slot, so a property an older writer put in the
+    wrong place is repaired rather than kept. ``element=""`` removes the
+    property. For a header or footer REFERENCE, which a section holds
+    one of per type, use a writer that knows the type — this replaces
+    every reference of the tag.
+    """
+    m = _SECTPR_OPEN_RE.match(sect_xml)
+    if m is None:
+        raise ValueError("set_sect_property: not a w:sectPr")
+    if m.group(1) == "/":                   # `<w:sectPr/>`: expand it
+        return (sect_xml if not element else
+                m.group(0)[:-2] + ">" + element + "</w:sectPr>"
+                + sect_xml[m.end():])
+    close = sect_xml.rindex("</w:sectPr>")
+    inner = sect_xml[m.end():close]
+    while (dup := next((c for c in _own_children(inner) if c[0] == tag),
+                       None)) is not None:
+        inner = inner[:dup[1]] + inner[dup[2]:]
+    if element:
+        rank = _SECTPR_RANK.get(tag, len(SECTPR_ORDER))
+        at = len(inner)
+        for name, c_start, _c_end in _own_children(inner):
+            if _SECTPR_RANK.get(name, len(SECTPR_ORDER)) > rank:
+                at = c_start
+                break
+        inner = inner[:at] + element + inner[at:]
+    return m.group(0) + inner + sect_xml[close:]
 
 
 #: ``EG_RPrBase`` in schema order. Word REJECTS a run whose properties

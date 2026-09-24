@@ -443,8 +443,10 @@ HARNESS: dict[str, list[str]] = {
     "lint.py": ["tests/test_lint.py", "tests/test_cli_guards.py",
                 "tests/test_crossrefs.py"],
     "package.py": ["tests/test_package.py", "tests/test_parts_gaps.py",
-                   "tests/test_pathological.py"],
-    "pages.py": ["tests/test_pages.py", "tests/test_locate.py"],
+                   "tests/test_pathological.py",
+                   "tests/test_package_relationships.py"],
+    "pages.py": ["tests/test_pages.py", "tests/test_locate.py",
+                 "tests/test_pages_number.py"],
     # the numbering property: a module that changes HOW MANY paragraphs
     # there are is the one most able to break what ¶N points at
     "paragraph.py": ["tests/test_paragraph.py",

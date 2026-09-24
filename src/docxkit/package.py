@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -32,10 +33,11 @@ if TYPE_CHECKING:
 # caller naming one part itself, the drift R6 removed from fourteen
 # modules. It belongs here because it takes the parts dict, which is this
 # module's subject.
-from ._xml import Parts, escape, text_parts, zip_entry
+from ._xml import Parts, escape, escape_attr, text_parts, zip_entry
 from .errors import DocumentLocked, PackageError
 
 __all__ = [
+    "CONTENT_TYPES",
     "CORE_ORDER",
     "CORE_PART",
     "REGENERATED_BY_WORD",
@@ -43,19 +45,24 @@ __all__ = [
     "DocumentLocked",
     "PackageError",
     "Parts",
+    "add_relationship",
     "assert_unlocked",
     "backup",
     "changed_parts",
     "core_property",
+    "declare_default",
+    "declare_override",
     "edit_in_place",
     "is_locked",
     "malformed_parts",
     "missing_parts",
     "next_backup_path",
+    "next_rid",
     "part_fingerprint",
     "read_parts",
     "readable",
     "regenerated_by_word",
+    "rels_name",
     "same_part",
     "set_core_property",
     "text_parts",
@@ -574,3 +581,104 @@ def backup(path: str | Path, tag: str = "backup", *,
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, dest)
     return dest
+
+
+# ----------------------------------------------- relationships and types --
+# Two things every NEW part needs outside its own bytes, and which the
+# papers kept writing by hand: a relationship from the part that uses it,
+# and a content type for it. Here because they are the container's
+# business — `figures` embeds a picture and `pages` writes a footer, and
+# both answer to the same two files.
+
+CONTENT_TYPES = "[Content_Types].xml"
+_TYPES_EMPTY_RE = re.compile(r"<Types\b[^>]*/>")
+_TYPES_OPEN_RE = re.compile(r"<Types\b[^>]*(?<!/)>")
+_RELS_EMPTY_RE = re.compile(r"<Relationships\b[^>]*/>")
+_RELS_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+             '<Relationships xmlns="http://schemas.openxmlformats.org/'
+             'package/2006/relationships"></Relationships>')
+
+
+def rels_name(part: str) -> str:
+    """``word/document.xml`` -> ``word/_rels/document.xml.rels``."""
+    folder, name = posixpath.split(part)
+    return posixpath.join(folder, "_rels", name + ".rels")
+
+
+def next_rid(rels_xml: str) -> str:
+    """The next ``rIdN`` free in `rels_xml`."""
+    used = {int(n) for n in re.findall(r'Id="rId(\d+)"', rels_xml)}
+    return f"rId{max(used, default=0) + 1}"
+
+
+def add_relationship(parts: Parts, source: str, rel_type: str,
+                     target: str) -> str:
+    """Relate `source` to `target` with a fresh id; returns the id.
+
+    `target` is written as given — relative to `source`'s folder, as the
+    format wants (``media/image1.png`` from ``word/document.xml``). The
+    rels part is created if `source` has none, and one with nothing in it
+    — written ``<Relationships …/>`` — is expanded: a
+    ``.replace("</Relationships>", …)`` finds no close tag there, returns
+    the part unchanged, and whatever used the id points at nothing.
+    """
+    name = rels_name(source)
+    xml = parts[name].decode("utf-8") if name in parts else _RELS_XML
+    rid = next_rid(xml)
+    rel = (f'<Relationship Id="{rid}" Type="{escape_attr(rel_type)}" '
+           f'Target="{escape_attr(target)}"/>')
+    if (m := _RELS_EMPTY_RE.search(xml)) is not None:
+        xml = (xml[:m.start()] + m.group(0)[:-2] + ">" + rel
+               + "</Relationships>" + xml[m.end():])
+    elif "</Relationships>" in xml:
+        xml = xml.replace("</Relationships>", rel + "</Relationships>", 1)
+    else:
+        raise PackageError(f"{name} has no <Relationships> element")
+    parts[name] = xml.encode("utf-8")
+    return rid
+
+
+def _declare(parts: Parts, present: re.Pattern[str], element: str) -> bool:
+    blob = parts.get(CONTENT_TYPES)
+    if blob is None:
+        raise PackageError("the package has no [Content_Types].xml")
+    xml = blob.decode("utf-8")
+    if present.search(xml):
+        return False
+    if (m := _TYPES_EMPTY_RE.search(xml)) is not None:
+        xml = (xml[:m.start()] + m.group(0)[:-2] + ">" + element
+               + "</Types>" + xml[m.end():])
+    elif (m := _TYPES_OPEN_RE.search(xml)) is not None:
+        xml = xml[:m.end()] + element + xml[m.end():]
+    else:
+        raise PackageError("[Content_Types].xml has no <Types> element")
+    parts[CONTENT_TYPES] = xml.encode("utf-8")
+    return True
+
+
+def declare_default(parts: Parts, extension: str, content_type: str) -> bool:
+    """Give `extension` a ``Default`` unless it has one; True if added.
+
+    A part whose type the package does not declare is one Word refuses to
+    open: a paper with no pictures has no ``png`` Default, and the first
+    picture added to it needs one. Matched without regard to case, as
+    the format does.
+    """
+    return _declare(parts, re.compile(
+        rf'<Default\b[^>]*\bExtension="{re.escape(extension)}"',
+        re.IGNORECASE),
+        f'<Default Extension="{escape_attr(extension)}" '
+        f'ContentType="{escape_attr(content_type)}"/>')
+
+
+def declare_override(parts: Parts, part: str, content_type: str) -> bool:
+    """Give the part `part` an ``Override``; True if added.
+
+    For a part whose extension says nothing about it — every ``.xml``
+    part of a document is some other kind of XML.
+    """
+    name = "/" + part.lstrip("/")
+    return _declare(parts, re.compile(
+        rf'<Override\b[^>]*\bPartName="{re.escape(name)}"'),
+        f'<Override PartName="{escape_attr(name)}" '
+        f'ContentType="{escape_attr(content_type)}"/>')

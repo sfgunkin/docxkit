@@ -39,19 +39,23 @@ page each anchor falls on and leaves a PNG to look at.
 """
 from __future__ import annotations
 
+import posixpath
 import re
 import shutil
 import tempfile
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from itertools import pairwise
 from os.path import commonprefix
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from ._xml import Parts
 from .errors import PackageError
 
-__all__ = ["Sheet", "caption_problems", "page_texts", "problems",
+__all__ = ["Numbering", "PackageError", "Sheet", "caption_problems",
+           "number", "page_texts", "problems",
            "read_pdf", "read_texts", "render_anchors", "sheets",
            "sheets_and_texts"]
 
@@ -469,3 +473,187 @@ def _raster(embeds: Sequence[str], rels: str) -> bool:
                  if target.endswith(".svg")}
     return any(target.endswith(_RASTER) for k, target in enumerate(targets)
                if k not in fallbacks)
+
+
+# ------------------------------------------------------ writing numbers --
+# The half of this module that WRITES: everything above reads a render and
+# says what the sheets print. Four papers wrote their own — AFI's
+# `_add_page_numbers_via_zip` and three python-docx generators — and the
+# house rule they served is "bottom right, every page but the first".
+
+_FOOTER_REL = ("http://schemas.openxmlformats.org/officeDocument/2006/"
+               "relationships/footer")
+_FOOTER_TYPE = ("application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.footer+xml")
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_R_NS = ("http://schemas.openxmlformats.org/officeDocument/2006/"
+         "relationships")
+#: A footer reference's type and relationship id, in either order.
+_FOOTER_REF_RE = re.compile(
+    r'<w:footerReference\b(?=[^>]*\bw:type="(\w+)")'
+    r'(?=[^>]*\br:id="([^"]+)")[^>]*/>')
+#: A footer relationship's id and target, in any attribute order.
+_FOOTER_TARGET_RE = re.compile(
+    r'<Relationship\b(?=[^>]*\bType="[^"]*/relationships/footer")'
+    r'(?=[^>]*\bId="([^"]+)")(?=[^>]*\bTarget="([^"]+)")[^>]*>')
+_INSTRUCTION_RE = re.compile(
+    r"<w:instrText\b[^>]*>([^<]*)</w:instrText>"
+    r'|<w:fldSimple\b[^>]*?\bw:instr="([^"]*)"')
+#: PAGE and not NUMPAGES, PAGEREF or SECTIONPAGES.
+_PAGE_WORD_RE = re.compile(r"(?<![A-Z])PAGE(?![A-Z])")
+_OFF = r'(?![^>]*\bw:val="(?:0|false|off)")'
+_TITLE_PG_RE = re.compile(rf"<w:titlePg\b{_OFF}[^>]*/>")
+_EVEN_ODD_RE = re.compile(rf"<w:evenAndOddHeaders\b{_OFF}[^>]*/>")
+_ALIGN = ("left", "center", "right")
+_BODY_RE = re.compile(r"<w:body\b")
+
+
+@dataclass(frozen=True)
+class Numbering:
+    """What :func:`number` did, part by part."""
+
+    #: Footer parts it made, because the first section had none.
+    created: tuple[str, ...]
+    #: Existing default footers it gave a PAGE paragraph, keeping all
+    #: they already held.
+    extended: tuple[str, ...]
+    #: Default footers that already print a page number, left alone.
+    already: tuple[str, ...]
+    #: Later sections whose `w:titlePg` would have left their first sheet
+    #: unnumbered, and no longer does.
+    title_pages_cleared: int
+
+
+def _prints_page(footer_xml: str) -> bool:
+    """Does this header or footer print the page number?"""
+    fields = " ".join(a or b for a, b in _INSTRUCTION_RE.findall(footer_xml))
+    return _PAGE_WORD_RE.search(fields) is not None
+
+
+def _page_paragraph(align: str, styled: bool) -> str:
+    style = '<w:pStyle w:val="Footer"/>' if styled else ""
+    return (f'<w:p><w:pPr>{style}<w:jc w:val="{align}"/></w:pPr>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText>'
+            '</w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            '<w:r><w:t>1</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+
+
+def _next_footer_name(parts: Mapping[str, bytes]) -> str:
+    used = [int(m.group(1)) for name in parts
+            if (m := re.fullmatch(r"word/footer(\d+)\.xml", name))]
+    return f"word/footer{max(used, default=0) + 1}.xml"
+
+
+def number(parts: Parts, *, align: str = "right") -> Numbering:
+    """Number every page but the first, in the footer. Edits `parts`.
+
+    The house rule, written by what is ALREADY in the document rather
+    than over it. A section's own default footer is kept and given a
+    PAGE paragraph — Aging_Well's first-page footer carries the
+    sensitivity label that `[batch] carry` exists to protect, and a
+    writer that replaced footers wholesale, as AFI's did, would take it
+    — and a footer that already prints the number is left as it is. A
+    new footer part is made only when the FIRST section has no default
+    footer; a later section with none of its own inherits it, as Word
+    reads the format.
+
+    **"But the first" is the first SHEET, so `w:titlePg` goes on the
+    first section only.** The rule this implements was once written down
+    as "every `w:sectPr` carries `titlePg`", which is how AFI did it,
+    and on a paper with more than one section that blanks the first
+    sheet of every one: Aging_Well's landscape figure pages printed no
+    number and `pages --check` reported the jump. So a later section's
+    `titlePg` is removed, and counted, when the first-page footer it
+    would switch to prints no number.
+
+    Refused: a document whose settings give EVEN pages a footer of their
+    own (`w:evenAndOddHeaders`), which this does not write — numbering
+    the odd pages alone would be a document numbered on every other
+    sheet. Check the result with :func:`sheets` and :func:`problems`:
+    what a footer says and what a sheet prints are two claims.
+    """
+    from ._xml import DOCUMENT, SECTPR_RE, set_sect_property
+    from .package import (
+        add_relationship,
+        declare_override,
+        rels_name,
+    )
+
+    if align not in _ALIGN:
+        raise ValueError(f"number: align is one of {_ALIGN}, not {align!r}")
+    if _EVEN_ODD_RE.search(parts.get("word/settings.xml", b"")
+                           .decode("utf-8")):
+        raise PackageError(
+            "even and odd pages have separate footers here "
+            "(w:evenAndOddHeaders); numbering the default footer would "
+            "number every other sheet")
+    doc = parts[DOCUMENT].decode("utf-8")
+    spans = [(m.start(), m.end()) for m in SECTPR_RE.finditer(doc)]
+    if not spans:
+        raise PackageError("the document has no w:sectPr to number")
+    rels = parts.get(rels_name(DOCUMENT), b"").decode("utf-8")
+    targets = dict(_FOOTER_TARGET_RE.findall(rels))
+    styled = b'w:styleId="Footer"' in parts.get("word/styles.xml", b"")
+    page = _page_paragraph(align, styled)
+
+    def footer(rid: str) -> str:
+        if rid not in targets:
+            raise PackageError(f"footer relationship {rid} is not in "
+                               f"{rels_name(DOCUMENT)}")
+        return posixpath.normpath(posixpath.join("word", targets[rid]))
+
+    created: list[str] = []
+    extended: list[str] = []
+    already: list[str] = []
+    cleared = 0
+    rewritten: list[str] = []
+    for n, (start, end) in enumerate(spans):
+        sect = doc[start:end]
+        refs = dict(_FOOTER_REF_RE.findall(sect))
+        if "default" in refs:
+            name = footer(refs["default"])
+            xml = parts[name].decode("utf-8")
+            if name in extended or name in already:
+                pass
+            elif _prints_page(xml):
+                already.append(name)
+            else:
+                close = xml.rindex("</w:ftr>")
+                parts[name] = (xml[:close] + page + xml[close:]).encode()
+                extended.append(name)
+        elif n == 0:
+            name = _next_footer_name(parts)
+            parts[name] = (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                f'<w:ftr xmlns:w="{_W_NS}" xmlns:r="{_R_NS}">{page}'
+                "</w:ftr>").encode()
+            declare_override(parts, name, _FOOTER_TYPE)
+            rid = add_relationship(parts, DOCUMENT, _FOOTER_REL,
+                                   name[len("word/"):])
+            # the root declares `r:` in every document Word writes; one
+            # that does not gets it declared on the reference itself
+            body = _BODY_RE.search(doc)
+            head = doc[:body.start()] if body else doc
+            ns = "" if f'xmlns:r="{_R_NS}"' in head else \
+                f' xmlns:r="{_R_NS}"'
+            ref = (f'<w:footerReference{ns} w:type="default" '
+                   f'r:id="{rid}"/>')
+            opened = sect.index(">") + 1
+            sect = sect[:opened] + ref + sect[opened:]
+            created.append(name)
+        if n == 0:
+            sect = set_sect_property(sect, "titlePg", "<w:titlePg/>")
+        elif _TITLE_PG_RE.search(sect) and not (
+                "first" in refs and _prints_page(
+                    parts[footer(refs["first"])].decode("utf-8"))):
+            sect = set_sect_property(sect, "titlePg", "")
+            cleared += 1
+        rewritten.append(sect)
+    for (start, end), sect in reversed(list(zip(spans, rewritten,
+                                                strict=True))):
+        doc = doc[:start] + sect + doc[end:]
+    parts[DOCUMENT] = doc.encode("utf-8")
+    return Numbering(created=tuple(created), extended=tuple(extended),
+                     already=tuple(already), title_pages_cleared=cleared)

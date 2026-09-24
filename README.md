@@ -63,7 +63,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes and endnotes |
 | `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
 | `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass; `shared_session` spends one cold start on a whole ladder |
-| `pages` | what the RENDER says: blank sheets, printed numbers, orientation |
+| `pages` | what the RENDER says: blank sheets, printed numbers, orientation; `number` WRITES the house numbering — every page but the first, bottom right — extending the footers already there |
 | `comments` | comment every tracked revision; read threads/done flags, resolve (`set_done`) |
 | `authors` | who is credited with the changes: read them, or restamp every revision, comment, people entry and document property to one name |
 | `tracked` | build a tracked-changes deliverable end to end |

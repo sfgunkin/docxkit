@@ -1079,6 +1079,16 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
         "thing in its container, so `\\Z` refuses any probe with markup "
         "after the tag; both `w:tcPr` spellings, empty and full, are "
         "exercised in test_paragraph"),
+    ("pages.py", r"<w:body\b"): (
+        "name reader: `number` asks only where the body BEGINS, to read the "
+        "root's namespace declarations in front of it; an empty "
+        "`<w:body/>` begins there just the same"),
+    ("pages.py",
+     r"<w:instrText\b[^>]*>([^<]*)</w:instrText>"
+     r'|<w:fldSimple\b[^>]*?\bw:instr="([^"]*)"'): (
+        "attribute reader: `_prints_page` reads a simple field's "
+        "`w:instr`, which an empty `<w:fldSimple/>` carries like a full "
+        "one; nothing is paired, and test_pages_number reads both"),
     ("batch.py", r"<w:tr\b"): (
         "name reader: `invariants` counts rows before and after an edit; "
         "an empty row is one row on both sides, and nothing is paired"),
