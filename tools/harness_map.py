@@ -81,7 +81,8 @@ HARNESS: dict[str, list[str]] = {
                      "tests/test_equations_fragments.py",
                      "tests/test_prose_math.py", "tests/test_to_latex.py",
                      "tests/test_value_types.py",
-                      "tests/test_equations_typography.py"],
+                      "tests/test_equations_typography.py",
+                      "tests/test_equations_numbered.py"],
     # `test_note_orphans.py` joined on 2026-09-16, measured: of the 95
     # replayable survivors the whole sweep of 2026-09-15 left, that file
     # alone kills 44, nearly all of them in `orphans` and `prune_orphans`.
@@ -445,6 +446,7 @@ HARNESS: dict[str, list[str]] = {
     "package.py": ["tests/test_package.py", "tests/test_parts_gaps.py",
                    "tests/test_pathological.py",
                    "tests/test_package_relationships.py"],
+    "house.py": ["tests/test_house.py"],
     "pages.py": ["tests/test_pages.py", "tests/test_locate.py",
                  "tests/test_pages_number.py"],
     # the numbering property: a module that changes HOW MANY paragraphs

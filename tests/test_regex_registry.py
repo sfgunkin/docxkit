@@ -1079,6 +1079,12 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
         "thing in its container, so `\\Z` refuses any probe with markup "
         "after the tag; both `w:tcPr` spellings, empty and full, are "
         "exercised in test_paragraph"),
+    ("equations.py",
+     r"<w:(?:bookmarkStart|hyperlink|commentReference|ins|del|moveFrom"
+     r"|moveTo|drawing|footnoteReference|endnoteReference)\b"): (
+        "name reader: `_rebuildable_grid` refuses to rebuild a table "
+        "holding any of these, and an empty `<w:ins/>` or `<w:del/>` "
+        "flag is a revision all the same; nothing is paired"),
     ("pages.py", r"<w:body\b"): (
         "name reader: `number` asks only where the body BEGINS, to read the "
         "root's namespace declarations in front of it; an empty "

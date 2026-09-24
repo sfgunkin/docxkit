@@ -541,6 +541,48 @@ def test_smarten_write_applies_then_reports_nothing_left_to_do(
     assert straight.read_bytes() == after
 
 
+def test_house_says_so_when_there_is_NOTHING_to_read(monkeypatch, tmp_path,
+                                                     capsys):
+    """Exit 2, not 0: a clean audit of nothing and of a paper differ."""
+    path = write(tmp_path / "prose.docx", make_parts(para(run("Prose."))))
+
+    code, _ = run_cli(monkeypatch, "house", str(path))
+
+    assert code == 2
+    assert "NOTHING to check" in capsys.readouterr().out
+
+
+def test_house_audits_then_WRITES_then_audits_clean(monkeypatch, tmp_path,
+                                                   capsys):
+    path = pathlib.Path(write(tmp_path / "paper.docx", make_parts(
+        para(run("Table 1. Wages by region"))
+        + para(run("Source: Survey data.")))))
+    before = path.read_bytes()
+
+    code, _ = run_cli(monkeypatch, "house", str(path))
+    out = capsys.readouterr().out
+    assert code == 1 and "no keepNext" in out
+    assert path.read_bytes() == before, "an audit writes nothing"
+
+    code, _ = run_cli(monkeypatch, "house", str(path), "--write")
+    out = capsys.readouterr().out
+    assert code == 0 and "0 finding(s)" in out and "captions 1" in out
+    assert path.read_bytes() != before
+
+
+def test_house_exits_1_when_the_guarded_SAVE_refuses(monkeypatch, tmp_path):
+    """The same guarded save every writer goes through; a refusal there
+    is a failure here even when the audit came back clean."""
+    import docxkit.cli
+    path = write(tmp_path / "paper.docx",
+                 make_parts(para(run("Table 1. Wages"))))
+    monkeypatch.setattr(docxkit.cli, "_save", lambda *a, **k: False)
+
+    code, _ = run_cli(monkeypatch, "house", str(path), "--write")
+
+    assert code == 1
+
+
 def test_a_write_refused_by_lint_leaves_the_file_byte_identical(
         monkeypatch, tmp_path, capsys):
     """_write_document is the shared save path; its refusal is the one

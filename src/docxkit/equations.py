@@ -41,6 +41,7 @@ from ._xml import (
     OMML_STRUCT_RE,
     PARA_RE,
     RUN_RE,
+    SECTPR_RE,
     element_spans,
     escape,
     in_span,
@@ -54,6 +55,7 @@ __all__ = [
     "DEFAULT_FACE",
     "EQ_NUMBER_RE",
     "M_NS",
+    "NUMBER_COLUMN",
     "OMATH_RE",
     "XSL_ENV",
     "AnchorError",
@@ -75,6 +77,8 @@ __all__ = [
     "is_display",
     "is_italic",
     "latex_to_omml",
+    "number_displays",
+    "numbered_grid",
     "prose_math",
     "skeleton",
     "standalone",
@@ -1461,3 +1465,197 @@ def prose_math(xml: str, *, symbols: set[str] | None = None
                         "interval", i, m.group(0),
                         piece[lo:m.end() + 36].strip()))
     return out
+
+
+# --------------------------------------------- the NUMBERED display ----
+# Ported from Health_Capacity_to_Work's house applier, the one place a
+# paper had measured the choice between the two ways of putting a number
+# beside a centred equation. A right-aligned TAB carrying "(3)" in the
+# equation's own paragraph — the memory-recorded AFI method — puts a run
+# beside the `m:oMathPara`, and Word DEMOTES the display back to inline on
+# its next save: HCW's (3)-(7) rendered flush right in body text while
+# (1) and (2), built as grids, did not. So the number goes in a cell.
+
+#: The number's own column, in dxa, and a matching spacer on the left.
+NUMBER_COLUMN = 625
+_EQ_SPACING = '<w:spacing w:after="80" w:line="240" w:lineRule="auto"/>'
+#: A grid holding an equation is scaffolding, not a table, and must draw
+#: nothing. A style cannot be trusted with that: HCW's `TableGrid` drew no
+#: borders only because the paper defined it with an empty `w:tblPr`.
+_NO_BORDERS = ("<w:tblBorders>"
+               + "".join(f'<w:{side} w:val="nil"/>'
+                         for side in ("top", "left", "bottom", "right",
+                                      "insideH", "insideV"))
+               + "</w:tblBorders>")
+#: A number the paragraph ENDS on — "(3)", "(A.2)", with the punctuation
+#: after the maths kept in front of it.
+_TRAILING_NUMBER_RE = re.compile(r"^(.*?)\s*(\(\s*[A-Z]?\.?\d+\s*\))\s*$",
+                                 re.DOTALL)
+#: What a table may not hold for it to be rebuilt from scratch: rebuilding
+#: would drop it. A NAME reader: an empty `<w:ins/>` flag is a revision
+#: all the same.
+_CARRIES_RE = re.compile(
+    r"<w:(?:bookmarkStart|hyperlink|commentReference|ins|del|moveFrom"
+    r"|moveTo|drawing|footnoteReference|endnoteReference)\b")
+_PAGE_W_RE = re.compile(r'<w:pgSz\b(?=[^>]*\bw:w="(\d+)")[^>]*/>')
+_MARGINS_RE = re.compile(r'<w:pgMar\b(?=[^>]*\bw:left="(\d+)")'
+                         r'(?=[^>]*\bw:right="(\d+)")[^>]*/>')
+
+
+def numbered_grid(display_para: str, number: str, text_width: int) -> str:
+    """A 1x3 borderless table: spacer, the equation, its number.
+
+    `display_para` is the equation's paragraph (already in display mode —
+    :func:`display`), `number` the label as printed, "(3)", and
+    `text_width` the text column in dxa, which the three columns fill.
+
+    Three columns and not two because of the centring. With the number's
+    column taken off the right only, the equation is centred in what is
+    left and sits half that column — an eighth of an inch — left of the
+    page's centre: invisible one equation at a time, obvious down a page,
+    and true of every equation HCW had built that way.
+    """
+    middle = text_width - 2 * NUMBER_COLUMN
+    if middle <= 0:
+        raise ValueError(f"numbered_grid: a text width of {text_width} dxa "
+                         f"leaves no room between two {NUMBER_COLUMN}-dxa "
+                         f"number columns")
+    props = (f'<w:tblPr><w:tblW w:w="0" w:type="auto"/>{_NO_BORDERS}'
+             '<w:tblLook w:val="04A0"/></w:tblPr>')
+    grid = (f'<w:tblGrid><w:gridCol w:w="{NUMBER_COLUMN}"/>'
+            f'<w:gridCol w:w="{middle}"/>'
+            f'<w:gridCol w:w="{NUMBER_COLUMN}"/></w:tblGrid>')
+
+    def cell(width: int, content: str) -> str:
+        return (f'<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/>'
+                f'<w:vAlign w:val="center"/></w:tcPr>{content}</w:tc>')
+
+    spacer = f"<w:p><w:pPr>{_EQ_SPACING}</w:pPr></w:p>"
+    label = (f'<w:p><w:pPr>{_EQ_SPACING}<w:jc w:val="center"/></w:pPr>'
+             f"<w:r><w:t>{escape(number)}</w:t></w:r></w:p>")
+    return (f"<w:tbl>{props}{grid}<w:tr>"
+            + cell(NUMBER_COLUMN, spacer)
+            + cell(middle, display_para)
+            + cell(NUMBER_COLUMN, label)
+            + "</w:tr></w:tbl>")
+
+
+def _text_width_at(xml: str, at: int) -> int:
+    """The text column, in dxa, of the section holding offset `at`.
+
+    A `w:sectPr` ENDS the section it closes, so the first one past `at`
+    is the one that governs it — a landscape section is 3,600 dxa wider
+    than a portrait body, and reading the last one fits every equation in
+    it to the portrait width. 9,360 (US Letter at one-inch margins) when
+    the section says nothing.
+    """
+    for m in SECTPR_RE.finditer(xml):
+        if m.start() < at:
+            continue                # it closes an EARLIER section
+        page = _PAGE_W_RE.search(m.group(0))
+        margins = _MARGINS_RE.search(m.group(0))
+        if page and margins:
+            return (int(page.group(1)) - int(margins.group(1))
+                    - int(margins.group(2)))
+        break
+    return 9360
+
+
+def _rebuildable_grid(xml: str, at: int) -> tuple[int, int] | None:
+    """The one-row equation grid holding offset `at`, when rebuilding it
+    from scratch loses nothing: one row, two or three cells, and none of
+    `_CARRIES_RE` anywhere in it."""
+    for lo, hi in element_spans(xml, "tbl"):
+        if not lo <= at < hi:
+            continue                # not the table holding `at`
+        block = xml[lo:hi]
+        rows = element_spans(block, "tr")
+        if len(rows) != 1:
+            return None
+        if not 2 <= len(element_spans(block, "tc")) <= 3:
+            return None
+        if _CARRIES_RE.search(block):
+            return None
+        return lo, hi
+    return None
+
+
+def _maths_and(para: str, text: str) -> str:
+    """`para` with every run outside the maths replaced by ONE holding
+    `text`, after the equation — or by none, when `text` is empty.
+
+    Dropped rather than edited: the number and the comma after the maths
+    are usually one run, and rewriting it in place leaves the number.
+    """
+    math = OMATH_RE.search(para)
+    if math is None:
+        raise AnchorError("the paragraph holds no m:oMath")
+    kept: list[str] = []
+    rpr, at = "", 0
+    for r in RUN_RE.finditer(para):
+        if r.start() >= math.start() and r.end() <= math.end():
+            continue                # the maths' own runs stay
+        if not rpr:
+            m = re.search(r"<w:rPr\b[^>]*(?<!/)>.*?</w:rPr>", r.group(0),
+                          re.DOTALL)
+            rpr = m.group(0) if m else ""
+        kept.append(para[at:r.start()])
+        at = r.end()
+    kept.append(para[at:])
+    out = "".join(kept)
+    if text:
+        again = OMATH_RE.search(out)
+        assert again is not None
+        run = (f'<w:r>{rpr}<w:t xml:space="preserve">{escape(text)}</w:t>'
+               "</w:r>")
+        out = out[:again.end()] + run + out[again.end():]
+    return out
+
+
+def number_displays(xml: str) -> tuple[str, int]:
+    """Every NUMBERED display equation into the house grid; how many moved.
+
+    A display equation whose paragraph ends on its number — "…, (3)" — is
+    set in display mode, centred, with the number in a cell of
+    :func:`numbered_grid`; one already in a rebuildable grid is REBUILT to
+    the same shape, so equations built by hand and by this cannot drift
+    into two idioms. An unnumbered display is left to :func:`display`,
+    and an equation inside any other table is left alone.
+
+    Back to front, so an edit never moves a paragraph not yet done. The
+    count is of changes that MOVED the XML: a rebuild that comes out
+    identical is not work, and a report that counts it cannot tell a
+    no-op from a change.
+    """
+    changed = 0
+    for m in reversed(display_equations(xml)):
+        para = m.group(0)
+        prose = visible_text(OMATH_RE.sub("", para)).strip()
+        start, end = m.start(), m.end()
+        grid = _rebuildable_grid(xml, start)
+        number = ""
+        if grid is not None:
+            cells = element_spans(xml[grid[0]:grid[1]], "tc")
+            lo, hi = cells[-1]
+            number = visible_text(xml[grid[0] + lo:grid[0] + hi]).strip()
+            if not EQ_NUMBER_RE.fullmatch(number):
+                continue                # a grid, but not a numbered one
+            start, end = grid
+        elif any(lo <= start < hi for lo, hi in element_spans(xml, "tbl")):
+            continue                # some other table's maths
+        else:
+            hit = _TRAILING_NUMBER_RE.match(prose)
+            if hit is None:
+                continue            # a display with no number
+            prose, number = hit.group(1).strip(), hit.group(2)
+            number = "(" + number.strip("() ").strip() + ")"
+        try:
+            fixed = display(_maths_and(para, prose), jc="center",
+                            absorb=bool(prose))
+        except AnchorError:
+            continue                # not one equation display() can set
+        fixed = numbered_grid(fixed, number, _text_width_at(xml, start))
+        if fixed != xml[start:end]:
+            changed += 1
+        xml = xml[:start] + fixed + xml[end:]
+    return xml, changed

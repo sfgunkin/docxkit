@@ -49,6 +49,7 @@ __all__ = [
     "T_RUN_RE",
     "AnchorError",
     "editable_text",
+    "embolden",
     "field_spans",
     "find_normalized",
     "insert_in_para",
@@ -391,6 +392,22 @@ def italicize(para_xml: str, text: str, *, normalize: bool = False,
     """
     return _restyle(para_xml, text, _run_italic, normalize=normalize,
                     within=within)
+
+
+def embolden(para_xml: str, text: str, *, normalize: bool = False,
+             within: str | None = None) -> str:
+    """Set bold on exactly `text` inside one paragraph.
+
+    Same run-splitting contract as :func:`italicize`. Written for the
+    house Abstract rule — the word "Abstract" bold and nothing after it —
+    where the label and the prose it opens usually share one run.
+    Complex-script bold (`w:bCs`) goes with it, as Word sets the pair.
+    """
+    def bold(run_xml: str) -> str:
+        return set_run_property(set_run_property(run_xml, "b", "<w:b/>"),
+                                "bCs", "<w:bCs/>")
+
+    return _restyle(para_xml, text, bold, normalize=normalize, within=within)
 
 
 def subscript(para_xml: str, text: str, *, normalize: bool = False,

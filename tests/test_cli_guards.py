@@ -202,7 +202,7 @@ def test_a_count_under_the_limit_still_writes_its_report(monkeypatch,
 
 COMMANDS = ["inspect", "text", "figures", "lint", "count", "linkfix",
             "refstyle", "tasks", "math", "smarten", "authors", "crossrefs",
-            "link", "citations", "probe"]
+            "link", "citations", "probe", "house"]
 
 
 @pytest.fixture
@@ -252,6 +252,7 @@ _FLAGS: dict[str, dict[str, object]] = {
     "math": {"check": False},
     "tasks": {"all": False, "check": False, "done": None, "json": None},
     "smarten": {"write": False},
+    "house": {"write": False},
     "authors": {"set": None, "only": None, "initials": None, "write": False},
     "crossrefs": {"write": False, "audit": False},
     "link": {"write": False, "alias": None},
@@ -470,6 +471,7 @@ def test_inspect_counts_the_tables_a_reader_can_index(monkeypatch, tmp_path,
 READ_ONLY_COMMANDS = {
     "citations": (), "lint": (), "refstyle": (), "inspect": (),
     "text": (), "probe": (), "count": (), "tasks": (), "smarten": (),
+    "house": (),
     "figures": (), "fit": (), "authors": (), "linkfix": (), "link": (),
     "sections": (),
     "crossrefs": ("--audit",), "math": ("--check",),
@@ -838,6 +840,7 @@ WRITING_COMMANDS = {
     "link": ("--write",),
     "crossrefs": ("--write",),
     "smarten": ("--write",),
+    "house": ("--write",),
     "refstyle": ("--fix",),
     "tasks": ("--done", "1"),
     "authors": ("--set", "Michael Lokshin", "--write"),

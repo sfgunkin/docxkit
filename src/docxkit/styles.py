@@ -203,6 +203,23 @@ def _own_rpr(style_xml: str) -> str:
 _VAL_RE: dict[str, re.Pattern[str]] = {}
 
 
+_RFONTS_RE = re.compile(r"<w:rFonts\b[^>]*/?>")
+_ASCII_THEME_RE = re.compile(r'\bw:asciiTheme="([^"]*)"')
+_ASCII_RE = re.compile(r'\bw:ascii="([^"]*)"')
+
+
+def _latin_font(blob: str) -> str | None:
+    """The Latin font an `rFonts` in `blob` states, theme first."""
+    m = _RFONTS_RE.search(blob)
+    if m is None:
+        return None
+    if (theme := _ASCII_THEME_RE.search(m.group(0))) is not None:
+        return f"theme:{theme.group(1)}"
+    if (name := _ASCII_RE.search(m.group(0))) is not None:
+        return name.group(1)
+    return None
+
+
 def _val(rpr: str, prop: str) -> str | None:
     """``w:val`` of ``w:<prop>`` — attribute order not assumed."""
     pattern = _VAL_RE.get(prop)
@@ -522,6 +539,39 @@ class Cascade:
             if got is not None:
                 return got
         return False
+
+    def font(self, *, rpr: str | None = None, rstyle: str | None = None,
+             pstyle: str | None = None) -> str | None:
+        """The run's LATIN font, styles applied: a name, or
+        ``"theme:<slot>"`` for a theme font, or None when nothing sets one.
+
+        :meth:`resolve` reads ``w:val``, and a font lives in
+        ``w:rFonts/@w:ascii`` — so a caption in Times New Roman because its
+        paragraph's `Normal` style says so read as fontless, and an audit
+        requiring the face ON THE RUN reported sixty-one violations on a
+        paper that renders every one of them correctly (Health_Capacity_
+        to_Work, 2026-09-24). Word merges `rFonts` per attribute, so a run
+        naming only an East Asian font still inherits its Latin one; and
+        within one element a theme attribute outranks a named font.
+        """
+        for blob in self._font_sources(rpr, rstyle, pstyle):
+            if (found := _latin_font(blob)) is not None:
+                return found
+        return None
+
+    def _font_sources(self, rpr: str | None, rstyle: str | None,
+                      pstyle: str | None) -> Iterator[str]:
+        if rpr:
+            yield rpr
+        for start in (rstyle, pstyle or self._default_pstyle):
+            seen: set[str] = set()
+            sid = start
+            while sid and sid in self._own and sid not in seen:
+                seen.add(sid)
+                yield self._own[sid]
+                sid = self._based.get(sid)
+        if self._default:
+            yield self._default
 
     def _toggle_chain(self, sid: str | None, prop: str) -> bool | None:
         """:meth:`_chain`, for a property whose ON form has no value."""

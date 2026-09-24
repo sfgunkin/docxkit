@@ -542,6 +542,28 @@ def test_italicize_is_idempotent_on_an_italic_run():
     assert italicize(p, "Journal of Things").count("<w:i/>") == 1
 
 
+def test_embolden_bolds_ONLY_the_span_in_a_shared_run():
+    """The house Abstract: the label and its prose are one run."""
+    from docxkit.edit import embolden
+    p = para(run("Abstract: We study wages."))
+    out = embolden(p, "Abstract")
+    assert text_of(out) == text_of(p)
+    import re
+    bold = [r.group(0) for r in re.finditer(r"<w:r>.*?</w:r>", out)
+            if "<w:b/>" in r.group(0)]
+    assert len(bold) == 1 and "Abstract" in bold[0]
+    assert "wages" not in bold[0] and "<w:bCs/>" in bold[0]
+
+
+def test_embolden_puts_b_where_the_schema_wants_it_and_once():
+    from docxkit.edit import embolden
+    p = ('<w:p><w:r><w:rPr><w:rStyle w:val="X"/><w:i/></w:rPr>'
+         "<w:t>Title</w:t></w:r></w:p>")
+    once = embolden(p, "Title")
+    assert '<w:rStyle w:val="X"/><w:b/><w:bCs/><w:i/>' in once
+    assert embolden(once, "Title").count("<w:b/>") == 1
+
+
 def test_italicize_respects_run_property_order():
     """<w:i/> must follow rStyle/rFonts/b per the schema sequence."""
     from docxkit.edit import italicize

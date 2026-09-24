@@ -57,6 +57,10 @@ VALUES = [
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "placement.FitFinding",     # one exhibit breaking the fit rule
+    "house.Face",               # a run face, as data
+    "house.HouseReport",        # what `apply` set
+    "house.Rules",              # the house, as data
+    "house.Scope",              # what `audit` has to read
     "pages.Numbering",          # what `number` wrote, part by part
     "placement.Landscape",      # what `landscape` did, and the page it made
     "repack.Landing",           # where one exhibit sits in a render

@@ -63,6 +63,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `export` | the manuscript as markdown: headings, pipe tables, `$...$` math, footnotes and endnotes |
 | `styles` | read styles; apply a journal template's styles.xml with id remap and a dangling audit |
 | `word` | Word COM: compare, PDF export, page counts, page/line lookup, Flat OPC bypass; `shared_session` spends one cold start on a whole ladder |
+| `house` | the house TYPOGRAPHY — captions, notes, the Abstract, numbered equations in their 1x3 grid — `apply` and `audit`, both reading through the style cascade; `docxkit house [--write]` |
 | `pages` | what the RENDER says: blank sheets, printed numbers, orientation; `number` WRITES the house numbering — every page but the first, bottom right — extending the footers already there |
 | `comments` | comment every tracked revision; read threads/done flags, resolve (`set_done`) |
 | `authors` | who is credited with the changes: read them, or restamp every revision, comment, people entry and document property to one name |
@@ -112,6 +113,7 @@ docxkit figures PAPER.docx [--check]
 docxkit footnotes PAPER.docx [--check]      # the size they agree on, and who does not
 docxkit authors PAPER.docx [--set NAME] [--only A,B] [--initials XX] [--write]
 docxkit smarten PAPER.docx [--write]
+docxkit house PAPER.docx [--write]         # captions, notes, Abstract, numbered equations; exits 1 on a finding, 2 on nothing to read
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx [--sheets] [--check]
 docxkit fit PAPER.docx [--render] [--check]

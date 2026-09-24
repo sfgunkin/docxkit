@@ -19,6 +19,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit figures PAPER.docx [--check]
     docxkit footnotes PAPER.docx [--check]
     docxkit smarten PAPER.docx [--write]
+    docxkit house PAPER.docx [--write]
     docxkit lint PAPER.docx
     docxkit probe PAPER.docx [ANCHOR...]
     docxkit math PAPER.docx [--check]
@@ -1170,6 +1171,41 @@ def cmd_smarten(args: argparse.Namespace) -> int:
         return 0
     return 0 if _save(args.docx, parts, "pre_smarten",
                       allow_existing=args.allow_existing_lint) else 1
+
+
+def cmd_house(args: argparse.Namespace) -> int:
+    """The house typography: audit, and set it with --write.
+
+    Exits 1 while the audit finds anything, so a paper's gate chain can
+    run it, and 2 when there is nothing to read — no caption, note or
+    numbered equation — because a clean audit of nothing and a clean
+    audit of a paper must not look alike. `--write` applies the rules
+    first and audits what it wrote.
+    """
+    from .house import apply, audit, scope
+
+    parts = _package(args.docx, read_only=not args.write)
+    print(Path(args.docx).name)
+    read = scope(parts)
+    print(f"  read {read.captions} caption(s), {read.notes} note(s), "
+          f"{read.numbered_equations} numbered equation(s)")
+    if read.empty:
+        # its own code: "0 findings" over nothing and over a whole paper
+        # must not print the same line, or exit the same way
+        print("  NOTHING to check — no caption, note or numbered equation "
+              "in the body; is this the paper?")
+        return 2
+    if args.write:
+        report = apply(parts)
+        print("  " + report.format())
+    findings = audit(parts)
+    for finding in findings:
+        print(f"  ! {finding}")
+    print(f"  {len(findings)} finding(s)")
+    if args.write and not _save(args.docx, parts, "pre_house",
+                                allow_existing=args.allow_existing_lint):
+        return 1
+    return 1 if findings else 0
 
 
 def cmd_authors(args: argparse.Namespace) -> int:
@@ -2703,6 +2739,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="save the result; without it this is a dry run")
     _writes_the_file(p)
     p.set_defaults(fn=cmd_smarten)
+
+    p = sub.add_parser(
+        "house",
+        help="house typography — captions, notes, the Abstract, numbered "
+             "equations: audit, and set with --write")
+    p.add_argument("docx")
+    p.add_argument("--write", action="store_true",
+                   help="apply the rules and save; without it, audit only")
+    _writes_the_file(p)
+    p.set_defaults(fn=cmd_house)
 
     p = sub.add_parser(
         "authors",

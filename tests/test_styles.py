@@ -531,6 +531,47 @@ def test_a_paragraph_naming_a_MISSING_style_is_not_an_error():
     assert cascade.para_attr("ind", "left", pstyle="NoSuchStyle") is None
 
 
+_TNR = '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
+
+
+def test_a_FONT_resolves_through_the_default_paragraph_style():
+    """The HCW shape: a run stating only its size, in `Normal`, which
+    states Times New Roman over a themed document default."""
+    cascade = Cascade(_styles(
+        _para_style("Normal", _TNR, default=True),
+        default='<w:rFonts w:asciiTheme="minorHAnsi"/>'))
+
+    assert cascade.font(rpr='<w:rPr><w:sz w:val="20"/></w:rPr>') == \
+        "Times New Roman"
+    assert cascade.font() == "Times New Roman"
+
+
+def test_a_run_naming_only_an_EAST_ASIAN_font_keeps_its_latin_one():
+    """`rFonts` merges per attribute."""
+    cascade = Cascade(_styles(_para_style("Normal", _TNR, default=True)))
+
+    got = cascade.font(rpr='<w:rPr><w:rFonts w:eastAsia="SimSun"/></w:rPr>')
+
+    assert got == "Times New Roman"
+
+
+def test_the_CHARACTER_style_outranks_the_paragraph_style_for_a_font():
+    cascade = Cascade(_styles(
+        _para_style("Normal", _TNR, default=True),
+        '<w:style w:type="character" w:styleId="Code"><w:rPr>'
+        '<w:rFonts w:ascii="Consolas"/></w:rPr></w:style>'))
+
+    assert cascade.font(rstyle="Code") == "Consolas"
+
+
+def test_a_THEME_font_is_named_as_one_and_outranks_a_named_font():
+    cascade = Cascade(_styles(default='<w:rFonts w:asciiTheme="minorHAnsi" '
+                                      'w:ascii="Arial"/>'))
+
+    assert cascade.font() == "theme:minorHAnsi"
+    assert Cascade(None).font() is None
+
+
 def test_a_toggle_resolves_through_the_PARAGRAPH_style_too():
     """Word's order for a toggle is the run, the character style, then
     the paragraph style — and for a paragraph naming none, the default
