@@ -826,23 +826,6 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
-### S2 — `compare` FORMULA reports ten scripted equations as absent on the built side
-<!-- status: open -->
-
-`docxkit compare clean_edited8.docx <author copy>` (Misconceptions,
-2026-09-24): TEXT, STRUCTURE, FORMAT all `(none)`, and FORMULA lists ten
-entries `from=('', '<none>') -> to=(<structure>, <tokens>)` — the equations
-around eq. (9)/(10) that `W5_math_batch.py` wrote. Counted independently, both
-files hold 55 `m:oMath` with identical token strings in identical order; the
-author's Word save only added an `m:oMathPara` wrapper and `m:rPr`/`w:rPr`
-inside runs. So the built side's equations were not READ, and a real formula
-edit there would read the same way. Cause not isolated; the W5 equations
-carry namespace declarations on inner elements (`xmlns:m`/`xmlns:w` written
-by the OMML builder), which the rest of the document does not.
-
-Found by counting tokens by hand after the report said ten formulas had
-appeared; `--expect-clean` would have failed on a document that matched.
-
 ---
 
 ## Where the fixed entries are

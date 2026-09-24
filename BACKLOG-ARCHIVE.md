@@ -14,6 +14,37 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `compare` FORMULA reports ten scripted equations as absent on the built side~~ — FIXED 24.09, `0e3661f`
+
+<!-- status: fixed -->
+
+`docxkit compare clean_edited8.docx <author copy>` (Misconceptions,
+2026-09-24): TEXT, STRUCTURE, FORMAT all `(none)`, and FORMULA lists ten
+entries `from=('', '<none>') -> to=(<structure>, <tokens>)` — the equations
+around eq. (9)/(10) that `W5_math_batch.py` wrote. Counted independently, both
+files hold 55 `m:oMath` with identical token strings in identical order; the
+author's Word save only added an `m:oMathPara` wrapper and `m:rPr`/`w:rPr`
+inside runs. So the built side's equations were not READ, and a real formula
+edit there would read the same way. Cause not isolated; the W5 equations
+carry namespace declarations on inner elements (`xmlns:m`/`xmlns:w` written
+by the OMML builder), which the rest of the document does not.
+
+Found by counting tokens by hand after the report said ten formulas had
+appeared; `--expect-clean` would have failed on a document that matched.
+
+**Fixed in `0e3661f`; cause isolated.** It was the namespace declaration,
+as the entry suspected: `_compare_read.OMATH_RE` matched `<m:oMath>` with
+no attributes, and docxkit's OMML builder writes `xmlns:m` on the
+`m:oMath` it makes. `compare` now reads `equations.OMATH_RE` (which also
+gained the `(?<!/)>` guard for an empty `<m:oMath/>`). On the entry's own
+pair — clean_edited8 against the 2026-09-24 author copy — FORMULA reports
+none.
+
+The second worry measured rather than assumed: an edit that changes an
+equation's visible text was always caught by the TEXT layer; the
+invisibility hid only what FORMULA alone sees, a fence's separator sign.
+That is the regression test.
+
 ### ~~S2 — `tables.set_cell` flattens a result cell's superscript-star and second-paragraph runs~~ — FIXED 24.09, `c79bea3`
 
 <!-- status: fixed -->
