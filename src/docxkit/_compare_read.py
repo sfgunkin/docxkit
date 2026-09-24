@@ -36,7 +36,7 @@ from ._xml import (
     printed_text,
 )
 from .comments import read_all as _read_comments
-from .equations import tokens
+from .equations import OMATH_RE, tokens
 from .styles import Cascade
 
 # ------------------------------------------------------------- extraction
@@ -56,7 +56,6 @@ from .styles import Cascade
 #: the table-cell address and the run walk, which is why it survived: an
 #: empty paragraph contributes no text, so every text assertion passed.
 P_RE = PARA_RE
-OMATH_RE = re.compile(r"<m:oMath>.*?</m:oMath>", re.DOTALL)
 # `(?<!/)>`: a self-closing `<w:r/>` is an EMPTY run, and pairing it
 # with the next close merged it with the real run after it, so this
 # layer read the EMPTY run's properties as that run's. See `_xml.RUN_RE`
@@ -71,11 +70,14 @@ PARAID_RE = re.compile(r'w14:paraId="([0-9A-Fa-f]+)"')
 #: agreed on the day they were merged; the next element added to one of
 #: them would have split the answer from its own definition.
 #:
-#: `OMATH_RE` above stays local, and that difference is real rather than
-#: drift: this layer reads document PARTS, where Word writes the tag
-#: bare, while `equations` also reads harvested elements, which carry
-#: xmlns:m when serialized alone. Measured over 282 manuscripts holding
-#: OMML: not one writes an attribute on `m:oMath` inside a part.
+#: `OMATH_RE` is `equations`' too, since 2026-09-24. This layer kept a
+#: bare `<m:oMath>` on the strength of a measurement — over 282
+#: manuscripts, not one wrote an attribute on `m:oMath` inside a part —
+#: and docxkit's own OMML builder is what broke it: an equation it
+#: writes carries `xmlns:m`, so Misconceptions' W5 equations were
+#: invisible here and FORMULA reported ten of them as appearing from
+#: nothing on a document that matched (BACKLOG S2). A measurement of
+#: what Word writes says nothing about what this package writes.
 
 
 class Fields(TypedDict):

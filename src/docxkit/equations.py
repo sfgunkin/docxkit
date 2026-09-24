@@ -90,7 +90,11 @@ M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 # attributes allowed: inside a document the namespace is declared on the
 # root and the tag is bare, but a harvested element serialized on its own
 # carries xmlns:m, and both have to match
-OMATH_RE = re.compile(r"<m:oMath\b[^>]*>.*?</m:oMath>", re.DOTALL)
+# `(?<!/)>`: an EMPTY `<m:oMath/>` opens nothing — Word opens a file
+# carrying one, and pairing it with the NEXT equation's close merged
+# two equations into one reading.
+OMATH_RE = re.compile(r"<m:oMath\b[^>]*(?<!/)>.*?</m:oMath>",
+                      re.DOTALL)
 # public: wordcount counts equation tokens with the SAME matcher
 # structural OMML elements — the ones that change a formula's shape.
 # The shared definition: `compare`'s FORMULA layer decides whether an

@@ -504,6 +504,52 @@ def test_a_rewritten_equation_is_not_also_reported_as_typography(tmp_path):
     assert report["formula_format"] == []
 
 
+M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+
+
+def test_an_equation_DECLARING_its_namespace_is_read(tmp_path):
+    """BACKLOG S2. docxkit's own OMML builder writes `xmlns:m` on the
+    `m:oMath` it makes; FORMULA matched the bare tag only, so ten of
+    Misconceptions' scripted equations read as ABSENT on the built side
+    and appeared from nothing against the author's Word save — which
+    writes the tag bare — on a document that matched."""
+    built = f'<w:p><m:oMath xmlns:m="{M_NS}">{mrun("x")}</m:oMath></w:p>'
+    saved = f"<w:p><m:oMath>{mrun('x')}</m:oMath></w:p>"
+
+    report = compare(*docs(tmp_path, built, saved))
+
+    assert report["formula"] == []
+
+
+def test_a_real_edit_INSIDE_such_an_equation_is_still_a_finding(tmp_path):
+    """The other half of the entry. An edit that changes the visible text
+    reaches the TEXT layer either way; the ones only FORMULA can see —
+    a fence's separator, which lives in an attribute — read like no
+    change at all while the equation itself was invisible."""
+    def fence(sep: str, ns: str = "") -> str:
+        return (f"<w:p><m:oMath{ns}><m:d>"
+                f'<m:dPr><m:sepChr m:val="{sep}"/></m:dPr>'
+                f"<m:e>{mrun('a')}</m:e><m:e>{mrun('b')}</m:e>"
+                "</m:d></m:oMath></w:p>")
+
+    report = compare(*docs(tmp_path, fence("+", f' xmlns:m="{M_NS}"'),
+                           fence("−")))
+
+    assert [f["change"] for f in report["formula"]] == ["tokens"]
+    assert report["formula"][0]["from"][1] == "a+b"
+
+
+def test_an_EMPTY_equation_does_not_swallow_the_next_one(tmp_path):
+    """`<m:oMath/>` opens nothing. Read as an opening tag it paired with
+    the NEXT equation's close, and the two became one reading."""
+    both = f"<w:p><m:oMath/><m:oMath>{mrun('y')}</m:oMath></w:p>"
+    one = f"<w:p><m:oMath>{mrun('y')}</m:oMath></w:p>"
+
+    report = compare(*docs(tmp_path, both, one))
+
+    assert report["formula"] == []
+
+
 def test_a_SIGN_FLIP_inside_a_fence_is_a_finding(tmp_path):
     """The character Word draws between a delimiter's arguments lives in
     an ATTRIBUTE — `m:sepChr` — and in no `m:t`, so the token stream
