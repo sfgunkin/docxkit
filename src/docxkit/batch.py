@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
-from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, PARA_RE, internal_links
+from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, PARA_RE, Parts, internal_links
 from .console import utf8_stdout
 from .edit import preserve_space, replace_in_para, visible_text
 from .find import edit_para
@@ -126,7 +126,7 @@ class Step:
     """
 
     label: str
-    fn: Callable[[str, dict[str, bytes]], str]
+    fn: Callable[[str, Parts], str]
 
 
 @dataclass(frozen=True)
@@ -264,7 +264,7 @@ def preflight(edits: Sequence[Edit], xml: str) -> list[Verdict]:
 
 
 def apply_steps(
-    xml: str, parts: dict[str, bytes], steps: Sequence[Edit | Step],
+    xml: str, parts: Parts, steps: Sequence[Edit | Step],
     durations: list[tuple[str, float]] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """Run every step, keeping going so one failure does not hide the rest."""
@@ -309,7 +309,7 @@ def apply_steps(
 
 
 def run(name: str, steps: Sequence[Edit | Step], *,
-        parts: dict[str, bytes],
+        parts: Parts,
         out: Path | str | None = None,
         allow: dict[str, int] | None = None,
         require_settled: bool = True,

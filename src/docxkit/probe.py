@@ -33,6 +33,7 @@ from ._xml import (
     PARA_RE,
     SECTPR_RE,
     T_RE,
+    Parts,
     editable_text,
     element_spans,
     matching_close,
@@ -162,7 +163,7 @@ class Probe:
 
 def probe(path: str | Path, phrases: tuple[str, ...] = (), *,
           anchors: tuple[str, ...] | None = None,
-          parts: dict[str, bytes] | None = None) -> Probe:
+          parts: Parts | None = None) -> Probe:
     """Characterise `path`; `phrases` are the ones to show run splits for.
 
     Called PHRASES, not anchors: this module reports bookmark names too,

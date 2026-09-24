@@ -11,7 +11,14 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # lxml arrives through `_tracked_gates._root`, lazily; named here so
+    # the stubs see the walks in `_glyph` and `_counts`.
+    from lxml.etree import _Element
+
+    from ..footnotes import Footnote
 
 from .. import tracked
 from .._xml import (
@@ -21,6 +28,7 @@ from .._xml import (
     FOOTNOTES,
     NOTE_DEF_RE,
     WORD_ANCHOR,
+    Parts,
     internal_links,
     text_parts,
     visible_text,
@@ -84,7 +92,7 @@ def _norm(text: str) -> str:
 _DRAWING_GLYPH = "/"
 
 
-def _glyph(root: Any | None, *, main_story: bool = False) -> str:
+def _glyph(root: _Element | None, *, main_story: bool = False) -> str:
     """Every rendered character, prose and math alike, in document order.
 
     `main_story` narrows the walk to what Word's ``doc.Paragraphs``
@@ -103,10 +111,13 @@ def _glyph(root: Any | None, *, main_story: bool = False) -> str:
     if root is None:
         return ""
     out: list[str] = []
-    stack: list[Any] = [root]
+    stack: list[_Element] = [root]
     while stack:
         el = stack.pop()
-        tag = el.tag
+        # `object`, not the stubs' `str`: a comment's tag is the FUNCTION
+        # `etree.Comment`, and the guard below is live on every file
+        # Word wrote with one in it
+        tag: object = el.tag
         if not isinstance(tag, str):
             continue                       # a comment or a PI
         if tag in (W + "t", M + "t"):
@@ -121,7 +132,7 @@ def _glyph(root: Any | None, *, main_story: bool = False) -> str:
     return "".join(out)
 
 
-def _counts(root: Any | None) -> dict[str, int]:
+def _counts(root: _Element | None) -> dict[str, int]:
     if root is None:
         return {}
     return {
@@ -139,7 +150,7 @@ def _counts(root: Any | None) -> dict[str, int]:
     }
 
 
-def _links(parts: dict[str, bytes]) -> Counter[tuple[str, str]]:
+def _links(parts: Parts) -> Counter[tuple[str, str]]:
     """``(anchor, label)`` for every internal link, every text part.
 
     The fourth thing gate 5 compares, and the one it was blind to.
@@ -169,7 +180,7 @@ def _links(parts: dict[str, bytes]) -> Counter[tuple[str, str]]:
     return out
 
 
-def _bookmarks(parts: dict[str, bytes]) -> set[str]:
+def _bookmarks(parts: Parts) -> set[str]:
     return {n for name, blob in parts.items()
             if name in TEXT_PARTS
             for n in BOOKMARK_NAME_RE.findall(blob.decode("utf-8", "replace"))
@@ -228,7 +239,7 @@ class Relabelled:
         return f"link {self.anchor}: {self.was[:40]!r} -> {self.now[:40]!r}"
 
 
-def _link_changes(working: dict[str, bytes], prev: dict[str, bytes],
+def _link_changes(working: Parts, prev: Parts,
                   ) -> tuple[list[Loss], list[Relabelled]]:
     """Links the hand-back LOST, and links it merely RE-LABELLED.
 
@@ -274,7 +285,7 @@ def _link_changes(working: dict[str, bytes], prev: dict[str, bytes],
     return lost, relabelled
 
 
-def _visible(parts: dict[str, bytes]) -> str:
+def _visible(parts: Parts) -> str:
     """Every word a reader can see, all text parts, one stream.
 
     Read once per hand-back and searched per loss: a manuscript has one
@@ -285,8 +296,8 @@ def _visible(parts: dict[str, bytes]) -> str:
     return "\n".join(visible_text(xml) for _name, xml in text_parts(parts))
 
 
-def relabelled_links(working: dict[str, bytes],
-                     prev: dict[str, bytes]) -> list[Relabelled]:
+def relabelled_links(working: Parts,
+                     prev: Parts) -> list[Relabelled]:
     """Links whose visible text an author changed, anchors intact.
 
     Reported, never refused — see :func:`_link_changes` for why the two
@@ -295,8 +306,8 @@ def relabelled_links(working: dict[str, bytes],
     return _link_changes(working, prev)[1]
 
 
-def losses(working: dict[str, bytes],
-           prev: dict[str, bytes]) -> list[Loss]:
+def losses(working: Parts,
+           prev: Parts) -> list[Loss]:
     """What an author's Word session destroyed, and no text diff shows.
 
     The protocol's safety claim is that ``working.docx`` is the one file
@@ -365,8 +376,8 @@ def losses(working: dict[str, bytes],
     return out
 
 
-def _downgraded_math(working: dict[str, bytes],
-                     prev: dict[str, bytes]) -> list[Loss]:
+def _downgraded_math(working: Parts,
+                     prev: Parts) -> list[Loss]:
     """Equation runs the author's Word session flattened to ASCII.
 
     Word rewrites OMML on accept-and-save as readily as on Compare, and
@@ -386,7 +397,7 @@ def _downgraded_math(working: dict[str, bytes],
     author who genuinely rewrote an equation is not reported, because
     the two texts would not correspond that way.
     """
-    def runs(parts: dict[str, bytes]) -> Counter[str]:
+    def runs(parts: Parts) -> Counter[str]:
         found: Counter[str] = Counter()
         for name, blob in parts.items():
             if name.endswith(".xml"):
@@ -402,7 +413,7 @@ def _downgraded_math(working: dict[str, bytes],
             if _downgraded(text) != text and gained.get(_downgraded(text))]
 
 
-def _notes(parts: dict[str, bytes], part: str, kind: str) -> list[Any]:
+def _notes(parts: Parts, part: str, kind: str) -> list[Footnote]:
     from ..footnotes import find_all
 
     blob = parts.get(part)
@@ -412,8 +423,8 @@ def _notes(parts: dict[str, bytes], part: str, kind: str) -> list[Any]:
             if f.text]
 
 
-def _lost_notes(working: dict[str, bytes],
-                prev: dict[str, bytes]) -> list[Loss]:
+def _lost_notes(working: Parts,
+                prev: Parts) -> list[Loss]:
     """Notes the hand-back no longer HAS — never merely reworded ones.
 
     The first version compared note TEXT as a multiset, so editing one
@@ -484,8 +495,8 @@ def _names(token: str, loss: Loss) -> bool:
     return False
 
 
-def restored_bookmarks(baseline: dict[str, bytes], clean: dict[str, bytes],
-                       built: dict[str, bytes]) -> list[str]:
+def restored_bookmarks(baseline: Parts, clean: Parts,
+                       built: Parts) -> list[str]:
     """Bookmarks the clean edit REMOVED and Compare put back.
 
     Word's Compare carries bookmarks over from the ORIGINAL side, so a
@@ -513,7 +524,7 @@ _MOVED_NOTE_RE = NOTE_DEF_RE[FOOTNOTES]
 
 
 
-def links_in_deletions(parts: dict[str, bytes]) -> list[tuple[str, str]]:
+def links_in_deletions(parts: Parts) -> list[tuple[str, str]]:
     """``(anchor, label)`` for every internal link inside a DELETION.
 
     The other half of :func:`restored_bookmarks`, and the half that
@@ -544,8 +555,8 @@ def links_in_deletions(parts: dict[str, bytes]) -> list[tuple[str, str]]:
     return found
 
 
-def moved_footnotes(parts: dict[str, bytes],
-                    baseline: dict[str, bytes]) -> list[int]:
+def moved_footnotes(parts: Parts,
+                    baseline: Parts) -> list[int]:
     """Footnote ids whose whole body Compare wrapped in ``w:ins``.
 
     When a footnote's REFERENCE moves — same note, new position in the
@@ -577,8 +588,8 @@ def moved_footnotes(parts: dict[str, bytes],
     return out
 
 
-def emptied_footnotes(rejected: dict[str, bytes],
-                      baseline: dict[str, bytes],
+def emptied_footnotes(rejected: Parts,
+                      baseline: Parts,
                       candidates: Sequence[int]) -> list[int]:
     """Of `candidates`, the notes reject-all REALLY empties.
 
@@ -603,7 +614,7 @@ def emptied_footnotes(rejected: dict[str, bytes],
     What comes back is the condition the message describes — a
     definition rejecting would empty — and nothing else.
     """
-    def words(parts: dict[str, bytes]) -> dict[int, str]:
+    def words(parts: Parts) -> dict[int, str]:
         return {int(m.group(1)): visible_text(m.group(2)).strip()
                 for m in _MOVED_NOTE_RE.finditer(
                     parts.get(FOOTNOTES, b"").decode("utf-8"))}

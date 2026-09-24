@@ -30,6 +30,7 @@ from ._xml import (
     PARA_RE,
     T_PARTS_RE,
     WT_RE,
+    Parts,
     live_properties,
     own_properties,
     printed_text,
@@ -754,7 +755,7 @@ def _rel_targets(rels: str, base: str) -> dict[str, str]:
     return out
 
 
-def _media_labels(raw: dict[str, bytes]) -> dict[str, str]:
+def _media_labels(raw: Parts) -> dict[str, str]:
     """media part -> the caption of the exhibit that draws it.
 
     "word/media/image14.png" alone sends a reader to a folder; "Figure
@@ -790,7 +791,7 @@ def _media_labels(raw: dict[str, bytes]) -> dict[str, str]:
     return labels
 
 
-def _media_of(raw: dict[str, bytes]) -> dict[str, Media]:
+def _media_of(raw: Parts) -> dict[str, Media]:
     labels = _media_labels(raw)
     return {name: Media(name, len(blob),
                         hashlib.sha256(blob).hexdigest(), labels.get(name, ""))
@@ -856,7 +857,7 @@ def _rank(name: str) -> tuple[int, str]:
     return (len(_PART_RANK), name)
 
 
-def load_parts(raw: dict[str, bytes], path: str = "") -> Doc:
+def load_parts(raw: Parts, path: str = "") -> Doc:
     """The parts dict view, so a caller holding a package (the sweep, a
     build in memory) can diff without writing a file first.
 

@@ -27,6 +27,7 @@ from ._xml import (
     NOTE_REF_RE,
     PARA_RE,
     RUN_RE,
+    Parts,
     escape,
     escape_attr,
     live_properties,
@@ -248,7 +249,7 @@ def _orphan_of(kind: str, note: Footnote) -> Orphan:
                   len(_NOTE_CONTENT_RE.findall(note.xml)))
 
 
-def orphans(parts: dict[str, bytes], *,
+def orphans(parts: Parts, *,
             kind: str | None = None) -> list[Orphan]:
     """Note definitions no reference in the package points at.
 
@@ -287,7 +288,7 @@ def orphans(parts: dict[str, bytes], *,
     return out
 
 
-def prune_orphans(parts: dict[str, bytes]) -> list[Orphan]:
+def prune_orphans(parts: Parts) -> list[Orphan]:
     """Drop the EMPTY orphan definitions, in place. Returns what went.
 
     Only the shells. An unreferenced definition with words in it is a
@@ -329,7 +330,7 @@ _DEF = ('<w:footnote w:id="{id}"><w:p><w:pPr>'
         "</w:p></w:footnote>")
 
 
-def add(parts: dict[str, bytes], *, after: str, text: str) -> str:
+def add(parts: Parts, *, after: str, text: str) -> str:
     """Create a footnote and its reference AS A PAIR. Returns the id.
 
     `after` is visible text in the body; the reference goes immediately

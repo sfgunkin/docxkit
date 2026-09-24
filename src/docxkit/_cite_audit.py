@@ -36,6 +36,7 @@ from ._xml import (
     ENDNOTES,
     FOOTNOTES,
     PARA_RE,
+    Parts,
     dead_links,
     internal_links,
     visible_text,
@@ -295,7 +296,7 @@ class _Finding(NamedTuple):
     extra: str = ""    # DOUBLED LINK carries the OUTER target here
 
 
-def audit_links(parts: dict[str, bytes], *,
+def audit_links(parts: Parts, *,
                 heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                 ignore: frozenset[str] | set[str] = IGNORED_LEADS,
                 later_mentions: bool = False,
@@ -332,7 +333,7 @@ def audit_links(parts: dict[str, bytes], *,
     return [f.message for f in findings], stats
 
 
-def _read_notes(parts: dict[str, bytes], bookmarks: dict[str, int],
+def _read_notes(parts: Parts, bookmarks: dict[str, int],
                 links: dict[str, list[tuple[int, str]]],
                 empty: list[tuple[str, int]]) -> None:
     """Fold both note stores into the body's own bookmarks and links.
@@ -599,7 +600,7 @@ def _off_link(text: str, lo: int, hi: int, at: int, end: int) -> str | None:
     return None
 
 
-def _off_link_findings(parts: dict[str, bytes],
+def _off_link_findings(parts: Parts,
                        where: Callable[[int], str]) -> list[_Finding]:
     """Back-link markers that have left their link (BACKLOG S2, 2026-09-12).
 
@@ -640,7 +641,7 @@ def _off_link_findings(parts: dict[str, bytes],
     return out
 
 
-def _self_link_findings(parts: dict[str, bytes], bookmarks: dict[str, int],
+def _self_link_findings(parts: Parts, bookmarks: dict[str, int],
                         where: Callable[[int], str]) -> list[_Finding]:
     """Links that start inside the very bookmark they point at.
 
@@ -672,7 +673,7 @@ def _self_link_findings(parts: dict[str, bytes], bookmarks: dict[str, int],
     return out
 
 
-def _mention_scan(parts: dict[str, bytes], texts: list[str],
+def _mention_scan(parts: Parts, texts: list[str],
                   paras: list[re.Match[str]],
                   head_idx: int) -> list[tuple[int, str, str]]:
     """Every paragraph a citation can be MENTIONED in: `(where, text, xml)`.
@@ -843,7 +844,7 @@ def _marker_findings(ref_marks: dict[str, int], cite_marks: dict[str, int],
     return issues
 
 
-def _mention_findings(parts: dict[str, bytes], texts: list[str],
+def _mention_findings(parts: Parts, texts: list[str],
                       paras: list[re.Match[str]], *,
                       entries: list[Reference],
                       ref_marks: dict[str, int],
@@ -960,7 +961,7 @@ def _mention_findings(parts: dict[str, bytes], texts: list[str],
                     "mentions": mentions}
 
 
-def _audit_findings(parts: dict[str, bytes], *,
+def _audit_findings(parts: Parts, *,
                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS,
                     later_mentions: bool = False,

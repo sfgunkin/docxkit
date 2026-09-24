@@ -61,7 +61,7 @@ from dataclasses import dataclass, field
 
 from lxml import etree
 
-from ._xml import DOCUMENT
+from ._xml import DOCUMENT, Parts
 from .errors import DocxKitError, PackageError, WordTimeout
 from .exhibits import NOTE, Exhibit, exhibits, mention_of, text_of
 from .find import DEFAULT_LABELS, heading_level
@@ -222,7 +222,7 @@ def _describe(m: Move) -> str:
 
 # ------------------------------------------------------------ the document
 
-def _body(parts: dict[str, bytes]) -> etree._Element:
+def _body(parts: Parts) -> etree._Element:
     if DOCUMENT not in parts:
         raise PackageError("no word/document.xml in these parts")
     root = etree.fromstring(parts[DOCUMENT])
@@ -574,9 +574,9 @@ def _candidates(kids: list[etree._Element], body: etree._Element,
     return out[:limit]
 
 
-def _moved(parts: dict[str, bytes], caption_at: int, target: int, *,
+def _moved(parts: Parts, caption_at: int, target: int, *,
            labels: tuple[str, ...], note: re.Pattern[str],
-           ) -> tuple[dict[str, bytes], int]:
+           ) -> tuple[Parts, int]:
     """A copy of `parts` with the exhibit captioned at body child
     `caption_at` moved to just after body child `target`, and where its
     caption now sits.
@@ -612,7 +612,7 @@ def _moved(parts: dict[str, bytes], caption_at: int, target: int, *,
     return out, at + 1 + (x.caption_at - ms)
 
 
-def _measure(parts: dict[str, bytes], render: Callable[[dict[str, bytes]],
+def _measure(parts: Parts, render: Callable[[Parts],
                                                        list[str]], *,
              labels: tuple[str, ...], note: re.Pattern[str],
              threshold: float,
@@ -629,8 +629,8 @@ def _measure(parts: dict[str, bytes], render: Callable[[dict[str, bytes]],
             _verdict(_profile(sheets, landings), threshold)[0], found)
 
 
-def repack(parts: dict[str, bytes], *,
-           render: Callable[[dict[str, bytes]], list[str]],
+def repack(parts: Parts, *,
+           render: Callable[[Parts], list[str]],
            labels: tuple[str, ...] = LABELS,
            note: re.Pattern[str] = NOTE,
            threshold: float = DEFAULT_THRESHOLD,

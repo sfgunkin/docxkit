@@ -119,6 +119,7 @@ from ._xml import (
     ENDNOTES,
     FOOTNOTES,
     PARA_RE,
+    Parts,
     internal_links,
     visible_text,
 )
@@ -195,7 +196,7 @@ def _one_call(kind: str, name: str, issue: str,
     return calls.get(kind)
 
 
-def repair_plan(parts: dict[str, bytes]) -> str:
+def repair_plan(parts: Parts) -> str:
     """Classify the audit's findings into PROPOSED repairs, for a human.
 
     The LE, API10 and LI7 rounds ran the same forensic loop three times;
@@ -340,7 +341,7 @@ def repair_plan(parts: dict[str, bytes]) -> str:
 
 
 def check_citations(docx_path: str | Path, *,
-                    parts: dict[str, bytes] | None = None,
+                    parts: Parts | None = None,
                     later_mentions: bool = False,
                     ignore: frozenset[str] | set[str] = IGNORED_LEADS) -> int:
     """Print the link audit for a manuscript; the count of issues found.

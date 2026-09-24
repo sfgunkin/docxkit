@@ -40,6 +40,7 @@ from ._xml import (
     FOOTNOTES,
     NOTE_DEF_RE,
     PARA_RE,
+    Parts,
     normalize_glyphs,
     visible_text,
 )
@@ -406,7 +407,7 @@ def apply_overrides(doc_xml: str, overrides: list[dict[str, str]],
     return doc_xml, applied, missed
 
 
-def apply_part_overrides(parts: dict[str, bytes],
+def apply_part_overrides(parts: Parts,
                          overrides: list[dict[str, str]],
                          *, strict: bool = True) -> tuple[int, list[str]]:
     """Apply stored overrides to the whole package; (applied, missed).

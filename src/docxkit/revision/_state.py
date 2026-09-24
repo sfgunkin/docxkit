@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import footnotes, package, revisions
-from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
+from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES, Parts
 from ._common import SAVE_NOISE, TEXT_PARTS
 from ._config import Paper
 
@@ -90,7 +90,7 @@ def state(path: str | Path) -> State:
     return _state(parts, path, snapshot)
 
 
-def _state(parts: dict[str, bytes], path: Path, snapshot: bool) -> State:
+def _state(parts: Parts, path: Path, snapshot: bool) -> State:
     """:func:`state` over parts already read.
 
     The state a caller reports has to name the AUTHOR'S file. `ingest`
@@ -139,7 +139,7 @@ def _state(parts: dict[str, bytes], path: Path, snapshot: bool) -> State:
                  from_snapshot=snapshot)
 
 
-def _drifted(before: dict[str, bytes], after: dict[str, bytes]) -> list[str]:
+def _drifted(before: Parts, after: Parts) -> list[str]:
     """Which parts differ in MEANING, save-noise excluded."""
     parts = package.changed_parts(before, after)
     return sorted(name for bucket in ("changed", "added", "removed")

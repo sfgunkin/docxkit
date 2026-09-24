@@ -77,6 +77,7 @@ from ._tracked_report import BuildReport as BuildReport
 from ._tracked_report import MathOutcome as MathOutcome
 from ._tracked_report import _also_unaccepted as _also_unaccepted
 from ._tracked_report import _refuse_accept_side as _refuse_accept_side
+from ._xml import Parts
 from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
@@ -349,7 +350,7 @@ def _seed_scaffold(doc: Any, classify: Classifier | None,
         return 0
 
 
-def _carry_rewrites(parts: dict[str, bytes], original: str | Path,
+def _carry_rewrites(parts: Parts, original: str | Path,
                     report: BuildReport, say: Any) -> None:
     """What Compare REWRITES rather than drops, so nothing else sees it.
 
@@ -395,7 +396,7 @@ def _clear_staging(staging: Path, building: Path, published: bool,
             f"see what Word was given; the next build overwrites it")
 
 
-def _carry_parts(parts: dict[str, bytes], revised_parts: dict[str, bytes],
+def _carry_parts(parts: Parts, revised_parts: Parts,
                  original: str | Path, *, carry: tuple[str, ...],
                  report: BuildReport, say: Callable[[str], None]) -> None:
     """Put back what Compare dropped, from the clean copy or the baseline.

@@ -65,6 +65,7 @@ from ._xml import (
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
+    Parts,
 )
 from .console import utf8_console
 from .errors import (
@@ -719,7 +720,7 @@ _SNAPSHOT_NOTE = (
     "typed since.")
 
 
-def _package(path: str, *, read_only: bool = False) -> dict[str, bytes]:
+def _package(path: str, *, read_only: bool = False) -> Parts:
     """Every part of a manuscript, or a refusal a reader can act on.
 
     `read_parts` already turns a missing file or a non-zip into a
@@ -771,7 +772,7 @@ def _package(path: str, *, read_only: bool = False) -> dict[str, bytes]:
     return parts
 
 
-def _write_back(path: str, parts: dict[str, bytes], tag: str) -> str:
+def _write_back(path: str, parts: Parts, tag: str) -> str:
     """Backup, then save — the one way an in-place command writes.
 
     Where the backup lands is decided by :func:`_prior_generations`, and
@@ -892,7 +893,7 @@ def _refused_by_lint(path: str, problems: list[str], *,
     return True
 
 
-def _save(path: str, parts: dict[str, bytes], tag: str, *,
+def _save(path: str, parts: Parts, tag: str, *,
           allow_existing: bool = False) -> bool:
     """THE save path: preserve_space, lint, back up, write.
 
@@ -933,7 +934,7 @@ def _save(path: str, parts: dict[str, bytes], tag: str, *,
     return True
 
 
-def _write_document(path: str, parts: dict[str, bytes], doc_xml: str,
+def _write_document(path: str, parts: Parts, doc_xml: str,
                     tag: str, *, allow_existing: bool = False) -> bool:
     """:func:`_save`, for a command holding an edited ``document.xml``."""
     parts[DOCUMENT] = doc_xml.encode("utf-8")
@@ -1209,7 +1210,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
-def _raised_prose(parts: dict[str, bytes]) -> list[str]:
+def _raised_prose(parts: Parts) -> list[str]:
     """Advisory findings from :func:`styles.raised_prose`, for `lint`.
 
     Joined HERE rather than inside `lint.audit_parts`, which is where it
@@ -1321,7 +1322,7 @@ def cmd_repack(args: argparse.Namespace) -> int:
     staging = _Path(tempfile.mkdtemp(prefix="docxkit_repack_"))
     trials = [0]
 
-    def render(trial: dict[str, bytes]) -> list[str]:
+    def render(trial: Parts) -> list[str]:
         # Each candidate is a DIFFERENT document, so the render has to go
         # through the trial's own bytes: `fit` renders the file on disk
         # because its parts never change, and that shortcut is wrong here.
@@ -1367,11 +1368,11 @@ def cmd_fit(args: argparse.Namespace) -> int:
     """Does every exhibit obey the house fit rule? --check to gate on it."""
     from .placement import audit
 
-    render: Callable[[dict[str, bytes]], list[str]] | None = None
+    render: Callable[[Parts], list[str]] | None = None
     if args.render:
         from .pages import page_texts
 
-        def _render(_parts: dict[str, bytes]) -> list[str]:
+        def _render(_parts: Parts) -> list[str]:
             # The parts are the file's own; render the FILE, which is the
             # same document and one conversion cheaper. It must be the
             # sheets' TEXT: `audit` looks for each caption in it, and

@@ -29,6 +29,7 @@ from ._xml import (
     DOCUMENT,
     PARA_RE,
     T_PARTS_RE,
+    Parts,
     element_spans,
     escape,
     live_properties,
@@ -102,7 +103,7 @@ _EMPTY_CORE = (
 NOTE_LEADS = ("Примечание", "Note", "Notes", "Источник", "Source", "*")
 
 
-def strip_parts(parts: dict[str, bytes],
+def strip_parts(parts: Parts,
                 prefixes: tuple[str, ...] = (CUSTOM_XML,)) -> list[str]:
     """Drop whole part-trees by name prefix, patching what referenced them.
 
@@ -172,7 +173,7 @@ def _free_rid(rels_xml: str, wanted: str) -> str:
     return f"rId{n + 1}"
 
 
-def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
+def restore_parts(parts: Parts, source: Parts,
                   prefixes: tuple[str, ...] = (CUSTOM_XML,)) -> list[str]:
     """Copy whole part-trees back from `source`, with their references.
 
@@ -296,7 +297,7 @@ def restore_parts(parts: dict[str, bytes], source: dict[str, bytes],
     return missing
 
 
-def _put_back(parts: dict[str, bytes], name: str, xml: str,
+def _put_back(parts: Parts, name: str, xml: str,
               fixed: str) -> None:
     """Store a part's repaired text; leave an untouched part's bytes alone.
 
@@ -359,7 +360,7 @@ def _rid_for(rels_xml: str, rels_name: str, part: str) -> str | None:
     return None
 
 
-def _references(parts: dict[str, bytes]) -> dict[str, str]:
+def _references(parts: Parts) -> dict[str, str]:
     """Each part some relationship points at -> the rels part holding it."""
     hit: dict[str, str] = {}
     for name, blob in parts.items():
@@ -373,7 +374,7 @@ def _references(parts: dict[str, bytes]) -> dict[str, str]:
     return hit
 
 
-def _section_bound(pkg: dict[str, bytes], part: str) -> bool:
+def _section_bound(pkg: Parts, part: str) -> bool:
     """Does the document's ``sectPr`` reach this header or footer?
 
     The relationship is not the whole reference. A footer with a
@@ -442,7 +443,7 @@ def _typed_ref(block: str, kind: str, kind_type: str) -> re.Match[str] | None:
     return None
 
 
-def _part_of_rid(parts: dict[str, bytes], ref: str) -> str | None:
+def _part_of_rid(parts: Parts, ref: str) -> str | None:
     """Which part a `<w:…Reference r:id="rIdN"/>` reaches, in `parts`."""
     rid = re.search(r'r:id="([^"]+)"', ref)
     if rid is None:
@@ -477,8 +478,8 @@ def _source_type(src: str, src_rels: str, spans: list[tuple[int, int]],
     return f' w:type="{found.group(1)}"' if found else ' w:type="default"'
 
 
-def _restore_section_references(parts: dict[str, bytes],
-                                source: dict[str, bytes],
+def _restore_section_references(parts: Parts,
+                                source: Parts,
                                 missing: list[str],
                                 rid_for: dict[str, str]) -> None:
     """Put a restored header's or footer's ``sectPr`` reference back.
@@ -647,7 +648,7 @@ _AFTER_TRACK = (
 )
 
 
-def keep_tracking(parts: dict[str, bytes], source: dict[str, bytes]) -> bool:
+def keep_tracking(parts: Parts, source: Parts) -> bool:
     """Carry `<w:trackRevisions/>` across a Compare that dropped it.
 
     Word's Compare writes a fresh `settings.xml`, so a batch that turned
@@ -698,7 +699,7 @@ def keep_tracking(parts: dict[str, bytes], source: dict[str, bytes]) -> bool:
     return True
 
 
-def dedupe_comments(parts: dict[str, bytes]) -> list[str]:
+def dedupe_comments(parts: Parts) -> list[str]:
     """Drop a comment that says the same thing twice, and say which.
 
     Compare does not MERGE a comment present in both inputs: the
@@ -780,7 +781,7 @@ def dedupe_comments(parts: dict[str, bytes]) -> list[str]:
     return dropped
 
 
-def _drop_comment_anchors(parts: dict[str, bytes], ids: list[str]) -> None:
+def _drop_comment_anchors(parts: Parts, ids: list[str]) -> None:
     """Remove every anchor for `ids` from the text-bearing parts.
 
     Three things per id, and the third is a RUN rather than an element:
@@ -819,7 +820,7 @@ def _drop_comment_anchors(parts: dict[str, bytes], ids: list[str]) -> None:
         _put_back(parts, name, xml, reference.sub("", anchor.sub("", xml)))
 
 
-def carry_properties(parts: dict[str, bytes], source: dict[str, bytes],
+def carry_properties(parts: Parts, source: Parts,
                      tags: tuple[str, ...] = CARRIED_PROPERTIES) -> list[str]:
     """Copy what a document says about ITSELF across a rebuild.
 
@@ -1178,7 +1179,7 @@ def _smarten_para(para: str, report: SmartenReport) -> str:
     return para
 
 
-def smarten_parts(parts: dict[str, bytes]) -> SmartenReport:
+def smarten_parts(parts: Parts) -> SmartenReport:
     """:func:`smarten`, over every part a reader sees. Mutates `parts`.
 
     `_xml.TEXT_PARTS` states the rule this exists for: an operation that
@@ -1311,8 +1312,8 @@ def _as_utf8(blob: bytes) -> str | None:
         return None
 
 
-def restore_math_glyphs(parts: dict[str, bytes],
-                        *sources: dict[str, bytes]) -> list[str]:
+def restore_math_glyphs(parts: Parts,
+                        *sources: Parts) -> list[str]:
     """Put back math glyphs a Word round-trip flattened.
 
     `sources` are the documents this one was DERIVED from — for a

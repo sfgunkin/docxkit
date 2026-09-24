@@ -16,7 +16,7 @@ from .. import guard as _guard
 from .. import lint as _lint
 from .. import package, revisions, tracked
 from .. import word as _word
-from .._xml import FOOTNOTES, PARA_RE, WT_RE, text_parts
+from .._xml import FOOTNOTES, PARA_RE, WT_RE, Parts, text_parts
 from ..equations import OMATH_RE, tokens
 from ..hygiene import _downgraded
 
@@ -286,8 +286,8 @@ def _paragraph_phrase(para_xml: str) -> str:
     return ""
 
 
-def math_anchors(accepted: dict[str, bytes],
-                 baseline: dict[str, bytes] | None) -> list[str]:
+def math_anchors(accepted: Parts,
+                 baseline: Parts | None) -> list[str]:
     """Phrases that find the pages of the equations `accepted` ADDS or
     CHANGES against `baseline` — every equation, when there is none.
 

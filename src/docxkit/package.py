@@ -19,7 +19,12 @@ import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # lxml is imported lazily in `part_fingerprint`; named here so the
+    # stubs see the walk in `_shape`.
+    from lxml.etree import _Element
 
 # `text_parts` is re-exported, not re-implemented: a build that
 # post-processes its own output — protect every edge space, everywhere a
@@ -27,15 +32,8 @@ from typing import Any
 # caller naming one part itself, the drift R6 removed from fourteen
 # modules. It belongs here because it takes the parts dict, which is this
 # module's subject.
-from ._xml import escape, text_parts, zip_entry
+from ._xml import Parts, escape, text_parts, zip_entry
 from .errors import DocumentLocked, PackageError
-
-#: The package as this toolkit works on it: every member of the .docx
-#: zip, name -> bytes, in stored order. What `read_parts` returns and
-#: every editing path is handed. Spelt out 179 times across the
-#: package before it had a name (2026-09-03); the name is the same
-#: type, so an annotation written either way is one annotation.
-type Parts = dict[str, bytes]
 
 __all__ = [
     "CORE_ORDER",
@@ -286,10 +284,12 @@ def readable(path: str | Path) -> Iterator[tuple[Path, bool]]:
 _VOLATILE_ATTR = re.compile(r"rsid|paraId|textId", re.IGNORECASE)
 
 
-def _shape(el: Any) -> tuple[Any, ...]:
+def _shape(el: _Element) -> tuple[object, ...]:
     kids = tuple(_shape(c) for c in el if isinstance(c.tag, str))
-    attrs = tuple(sorted((k, v) for k, v in el.attrib.items()
-                         if not _VOLATILE_ATTR.search(k)))
+    # the stubs allow a bytes key; lxml on Python 3 only ever hands back
+    # str, so `str()` is a no-op that lets the str pattern read it
+    attrs = tuple(sorted((str(k), str(v)) for k, v in el.attrib.items()
+                         if not _VOLATILE_ATTR.search(str(k))))
     # Text is significant in a leaf (a `w:t` holds the prose, spaces and
     # all); between child elements it is only Word's or a writer's
     # indentation, and comparing it would report every re-serialisation.

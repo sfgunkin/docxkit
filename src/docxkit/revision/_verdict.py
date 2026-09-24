@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .. import guard as _guard
 from .. import package, revisions, tracked
+from .._xml import Parts
 from ._common import TEXT_PARTS, _today
 from ._config import Paper
 from ._losses import _bookmarks, _links
@@ -136,7 +137,7 @@ class Verdict:
         return ", ".join(bits) or "no visible change"
 
 
-def _para_counts(parts: dict[str, bytes], view: str) -> Counter[str]:
+def _para_counts(parts: Parts, view: str) -> Counter[str]:
     """Every paragraph's visible text on one side of the markup.
 
     Named apart from `tracked._paras`, which this module already

@@ -14,7 +14,14 @@ not meaning, and half-faithful emphasis is worse than none.
 """
 from __future__ import annotations
 
-from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, NOTE_REF_EL_RE, visible_text
+from ._xml import (
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    NOTE_REF_EL_RE,
+    Parts,
+    visible_text,
+)
 from .crossrefs import DEFAULT_LABELS, caption_re
 from .equations import EQ_NUMBER_RE, OMATH_RE, is_display, to_latex
 from .find import body_elements, heading_level
@@ -82,7 +89,7 @@ def _pipe_table(tbl_xml: str) -> str:
     return "\n".join(out)
 
 
-def to_markdown(parts: dict[str, bytes], *, view: str = FINAL) -> str:
+def to_markdown(parts: Parts, *, view: str = FINAL) -> str:
     """The manuscript as GitHub-flavoured markdown, in body order.
 
     `view` picks the side of any tracked changes. Headings map from

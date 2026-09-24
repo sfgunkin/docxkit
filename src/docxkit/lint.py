@@ -20,7 +20,15 @@ if TYPE_CHECKING:
     # every walk here rather than `Any` (until 2026-09-03 — review, row 7).
     from lxml.etree import _Element
 
-from ._xml import COMMENTS, DOCUMENT, ENDNOTES, FOOTNOTES, MATH_OBJECTS, XML_WS
+from ._xml import (
+    COMMENTS,
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    MATH_OBJECTS,
+    XML_WS,
+    Parts,
+)
 
 __all__ = [
     "XML_SPACE",
@@ -364,7 +372,7 @@ def audit(*roots: _Element | None) -> list[str]:
             + _empty_shells(roots))
 
 
-def audit_parts(parts: dict[str, bytes]) -> list[str]:
+def audit_parts(parts: Parts) -> list[str]:
     """:func:`audit` over the text-bearing parts of a package.
 
     The malformed-XML message is the answer here too, and dropping it
@@ -521,7 +529,7 @@ def _unbalanced_fields(roots: tuple[_Element | None, ...]) -> list[str]:
     return out
 
 
-def lint_parts(parts: dict[str, bytes]) -> list[str]:
+def lint_parts(parts: Parts) -> list[str]:
     """Lint the text-bearing parts of a package.
 
     OPENABILITY only — the callers that refuse a write on this answer
@@ -532,7 +540,7 @@ def lint_parts(parts: dict[str, bytes]) -> list[str]:
     return malformed or lint(*roots)
 
 
-def _roots(parts: dict[str, bytes]) -> tuple[list[_Element], list[str]]:
+def _roots(parts: Parts) -> tuple[list[_Element], list[str]]:
     """(parsed text-bearing parts, the message if one will not parse).
 
     A part that does not parse short-circuits: nothing below can read a

@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 
 from lxml import etree
 
-from ._xml import DOCUMENT, PPR_ORDER
+from ._xml import DOCUMENT, PPR_ORDER, Parts
 from .errors import PackageError
 
 # THE exhibit definition, from one layer down: which caption owns which
@@ -204,7 +204,7 @@ class PlacementReport:
         return "\n".join(lines + [f"  ! {x}" for x in self.problems])
 
 
-def _body(parts: dict[str, bytes]) -> etree._Element:
+def _body(parts: Parts) -> etree._Element:
     if DOCUMENT not in parts:
         raise PackageError("no word/document.xml in these parts")
     root = etree.fromstring(parts[DOCUMENT])
@@ -408,7 +408,7 @@ def _ends_section(el: etree._Element) -> bool:
     return el.tag == W + "p" and el.find(f"{W}pPr/{W}sectPr") is not None
 
 
-def exhibit_block(parts: dict[str, bytes], caption: str, *,
+def exhibit_block(parts: Parts, caption: str, *,
                   note: re.Pattern[str] = NOTE) -> Block:
     """The full span of one exhibit, INCLUDING a trailing section break.
 
@@ -842,10 +842,10 @@ def _has(el: etree._Element | None, tag: str) -> bool:
                                                               "off")
 
 
-def audit(parts: dict[str, bytes], *,
+def audit(parts: Parts, *,
           caption: re.Pattern[str] = CAPTION,
           note: re.Pattern[str] = NOTE,
-          render: Callable[[dict[str, bytes]], list[str]] | None = None,
+          render: Callable[[Parts], list[str]] | None = None,
           ) -> FitReport:
     """Does every exhibit obey the house fit rule? (report, not a repair.)
 
@@ -923,7 +923,7 @@ def audit(parts: dict[str, bytes], *,
     return report
 
 
-def place(parts: dict[str, bytes], *,
+def place(parts: Parts, *,
           caption: re.Pattern[str] = CAPTION,
           mention: re.Pattern[str] = MENTION,
           only: Iterable[int] | None = None,
@@ -935,8 +935,8 @@ def place(parts: dict[str, bytes], *,
           gap_pt: float = GAP_PT,
           caption_after_pt: float = CAPTION_AFTER_PT,
           max_drift: int = 1,
-          render: Callable[[dict[str, bytes]], list[str]] | None = None,
-          ) -> tuple[dict[str, bytes], PlacementReport]:
+          render: Callable[[Parts], list[str]] | None = None,
+          ) -> tuple[Parts, PlacementReport]:
     """Anchor each table to its first mention and keep it whole on one sheet.
 
     Returns new parts and a report. `render` is a callback taking parts and
@@ -1163,8 +1163,8 @@ def _locate_tables(sheets: list[str],
 def _measure_and_fix(report: PlacementReport,
                      blocks: dict[int, list[etree._Element]],
                      max_drift: int, *,
-                     render: Callable[[dict[str, bytes]], list[str]],
-                     parts: dict[str, bytes],
+                     render: Callable[[Parts], list[str]],
+                     parts: Parts,
                      freeze: Callable[[], None]) -> None:
     """Render, locate every table, fix what split, and render again.
 

@@ -33,6 +33,7 @@ from ._xml import (
     DOCUMENT,
     FOOTNOTES,
     RUN_RE,
+    Parts,
     overlaps,
     set_run_text,
     text_parts,
@@ -320,7 +321,7 @@ def audit(xml: str, label: str, *, prefix: str = "") -> list[str]:
     return problems
 
 
-def remap_parts(parts: dict[str, bytes], label: str, mapping: dict[int, int],
+def remap_parts(parts: Parts, label: str, mapping: dict[int, int],
                 *, prefix: str = "") -> ShiftReport:
     """:func:`remap` across every text-bearing part, in place.
 
@@ -357,7 +358,7 @@ def remap_parts(parts: dict[str, bytes], label: str, mapping: dict[int, int],
     return total
 
 
-def audit_parts(parts: dict[str, bytes], label: str, *,
+def audit_parts(parts: Parts, label: str, *,
                 prefix: str = "") -> list[str]:
     """:func:`audit` with mentions read from every text-bearing part."""
     doc = parts[DOCUMENT].decode("utf-8")
@@ -441,7 +442,7 @@ _FN_EL_RE = re.compile(r'<w:footnote\b[^>]*?w:id="(-?\d+)"[^>]*?'
 _RESERVED = {0, -1}
 
 
-def footnote_order(parts: dict[str, bytes]) -> tuple[list[int], list[int]]:
+def footnote_order(parts: Parts) -> tuple[list[int], list[int]]:
     """``(ids in REFERENCE order, ids as the notes part STORES them)``.
 
     The two disagreeing is the defect; both are returned because the
@@ -455,7 +456,7 @@ def footnote_order(parts: dict[str, bytes]) -> tuple[list[int], list[int]]:
     return referenced, stored
 
 
-def footnote_audit(parts: dict[str, bytes]) -> list[str]:
+def footnote_audit(parts: Parts) -> list[str]:
     """Where the footnote ids and the reference order disagree.
 
     The check that would have caught it, and cheap enough to run in any
@@ -482,7 +483,7 @@ def footnote_audit(parts: dict[str, bytes]) -> list[str]:
     return out
 
 
-def footnotes(parts: dict[str, bytes]) -> dict[int, int]:
+def footnotes(parts: Parts) -> dict[int, int]:
     """Renumber footnote ids into reference order. Returns what moved.
 
     Mutates `parts`: the references in ``document.xml``, the ids in

@@ -47,6 +47,7 @@ __all__ = [
     "XML_WS",
     "ZIP_STAMP",
     "Field",
+    "Parts",
     "delta_text",
     "editable_text",
     "element_spans",
@@ -79,6 +80,16 @@ __all__ = [
     "word_minted",
     "zip_entry",
 ]
+
+#: The package as this toolkit works on it: every member of the .docx
+#: zip, name -> bytes, in stored order. What `package.read_parts`
+#: returns and every editing path is handed. Spelt out 179 times across
+#: the package before it had a name (2026-09-03), and still 160 times a
+#: release later, because it was named in `package` — which `styles`,
+#: `lint` and `word` sit BESIDE in the layering and may not import.
+#: Defined here, at the bottom, so every module can say it; `package`
+#: re-exports it, which is where the papers import it from.
+type Parts = dict[str, bytes]
 
 # THE PART NAMES, ONCE. Every module used to spell them itself — 38
 # occurrences of the body's name across 16 modules, 19 of the footnotes' —
@@ -176,7 +187,7 @@ def append_before_close(xml: str, close_tag: str, addition: str) -> str:
     return xml[:at] + addition + xml[at:]
 
 
-def text_parts(parts: dict[str, bytes]) -> list[tuple[str, str]]:
+def text_parts(parts: Parts) -> list[tuple[str, str]]:
     """The (name, xml) of every text-bearing part present, in reading order.
 
     The iteration `TEXT_PARTS` exists for: callers that must cover the whole

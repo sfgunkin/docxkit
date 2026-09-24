@@ -38,6 +38,7 @@ from ._xml import (
     ENDNOTES,
     FOOTNOTES,
     PARA_RE,
+    Parts,
     internal_links,
     live_properties,
     own_properties,
@@ -552,7 +553,7 @@ class ConvertReport:
                          + [f"  SKIPPED {line}" for line in self.skipped])
 
 
-def convert(parts: dict[str, bytes], style: Style = HOUSE, *,
+def convert(parts: Parts, style: Style = HOUSE, *,
             heading: str | tuple[str, ...] = REF_HEADINGS,
             stop: tuple[str, ...] = REF_STOPS) -> ConvertReport:
     """Bring a manuscript's reference ENTRIES to `style`, in place.
@@ -730,7 +731,7 @@ def entry_layout_issues(para_xml: str, styles_xml: str | None,
     return issues
 
 
-def _layout_findings(parts: dict[str, bytes], matches: list[re.Match[str]],
+def _layout_findings(parts: Parts, matches: list[re.Match[str]],
                      texts: list[str], entries: list[Reference],
                      spec: Layout) -> list[Issue]:
     """`audit`'s half of the layout rules — the same checks, unrepaired.
@@ -795,7 +796,7 @@ def _starts_a_page(head: str, before: str | None) -> str:
     return ""
 
 
-def layout(parts: dict[str, bytes], spec: Layout = HOUSE_LAYOUT, *,
+def layout(parts: Parts, spec: Layout = HOUSE_LAYOUT, *,
            heading: str | tuple[str, ...] = REF_HEADINGS,
            stop: tuple[str, ...] = REF_STOPS) -> LayoutReport:
     """Set the reference list's page position and entry indents, in place.
@@ -1037,7 +1038,7 @@ def _misfiled(keys: list[tuple[str, str]]) -> list[int]:
 _CONTINUATION_RE = re.compile(r"^\s*[—–\-_]{2,}")
 
 
-def refile(parts: dict[str, bytes], *,
+def refile(parts: Parts, *,
            heading: str | tuple[str, ...] = REF_HEADINGS,
            stop: tuple[str, ...] = REF_STOPS) -> RefileReport:
     """Sort the reference list alphabetically, in place.
@@ -1236,7 +1237,7 @@ class RefStyleReport:
 
 
 def _note_paragraphs(
-        parts: dict[str, bytes]) -> Iterator[tuple[str, str, str]]:
+        parts: Parts) -> Iterator[tuple[str, str, str]]:
     """(xml, text, where) for every paragraph of BOTH note parts.
 
     Several journals take the whole apparatus as endnotes, and a
@@ -1448,7 +1449,7 @@ def _crosscheck_findings(entries: list[Reference],
     return issues
 
 
-def audit(parts: dict[str, bytes], style: Style = HOUSE, *,
+def audit(parts: Parts, style: Style = HOUSE, *,
           heading: str | tuple[str, ...] = REF_HEADINGS,
           stop: tuple[str, ...] = REF_STOPS,
           ignore: frozenset[str] | set[str] = IGNORED_LEADS,

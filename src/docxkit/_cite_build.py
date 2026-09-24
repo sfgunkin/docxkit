@@ -43,6 +43,7 @@ from ._xml import (
     FOOTNOTES,
     PARA_RE,
     RUN_RE,
+    Parts,
     internal_links,
     run_open_before,
     visible_text,
@@ -707,7 +708,7 @@ def _wire_mentions(para: str, items: list[tuple[str, str]], *, at: str,
     return para
 
 
-def link_all(parts: dict[str, bytes], *,
+def link_all(parts: Parts, *,
              aliases: dict[str, str] | None = None,
              heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
              ignore: frozenset[str] | set[str] = IGNORED_LEADS,
@@ -1009,7 +1010,7 @@ def _own_bookmarks(doc: str, entries: list[Reference],
     return [(r, own[r.index]) for r in entries if r.index in own]
 
 
-def link_rest(parts: dict[str, bytes], *,
+def link_rest(parts: Parts, *,
               aliases: dict[str, str] | None = None,
               heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
               ignore: frozenset[str] | set[str] = IGNORED_LEADS,

@@ -65,6 +65,7 @@ from ._xml import (
     FOOTNOTES,
     PARA_RE,
     T_RUN_RE,
+    Parts,
     live_properties,
     run_spans,
     set_run_text,
@@ -267,7 +268,7 @@ def _format(n: int, fmt: str) -> str:
     return "" if fmt == "none" else str(n)
 
 
-def list_numbers(parts: dict[str, bytes]) -> dict[int, str]:
+def list_numbers(parts: Parts) -> dict[int, str]:
     """The number Word prints before each numbered BODY paragraph, keyed
     by the paragraph's index in `PARA_RE` order — "2.1." as laid out.
 
@@ -541,7 +542,7 @@ def _around(text: str, m: re.Match[str]) -> str:
     return f"…{at}…"
 
 
-def audit(parts: dict[str, bytes]) -> SectionReport:
+def audit(parts: Parts) -> SectionReport:
     """The numbering and every mention of it, across the body, the
     footnotes and the endnotes. Headings are the body's."""
     report = SectionReport()
@@ -583,7 +584,7 @@ class Renumbering:
     """What :func:`renumber` did. `parts` is the new package, or the one it
     was handed, unchanged, when nothing needed to move."""
 
-    parts: dict[str, bytes]
+    parts: Parts
     numbers: dict[str, str] = field(default_factory=dict)
     """old -> new, for every heading or merged number that moved"""
     headings: list[tuple[str, str, str]] = field(default_factory=list)
@@ -807,7 +808,7 @@ def _edits(text: str, heading: bool, full: Mapping[str, str],
     return out
 
 
-def renumber(parts: dict[str, bytes], *,
+def renumber(parts: Parts, *,
              merged_into: Mapping[str, str] | None = None) -> Renumbering:
     """Close a gap in the typed section numbering: every heading renumbered
     by its position, and every mention with it, in ONE pass.

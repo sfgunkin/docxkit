@@ -18,7 +18,12 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # lxml is imported lazily in `_root`; named here so the stubs see
+    # every walk over what it returns.
+    from lxml.etree import _Element
 
 from . import footnotes as _footnotes
 from ._xml import (
@@ -29,6 +34,7 @@ from ._xml import (
     ENDNOTES,
     FOOTNOTES,
     TEXT_PARTS,
+    Parts,
     internal_links,
     text_parts,
     visible_text,
@@ -44,7 +50,7 @@ from .revisions import revision_elements
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
-def _anchors(parts: dict[str, bytes]) -> tuple[set[str], set[str]]:
+def _anchors(parts: Parts) -> tuple[set[str], set[str]]:
     """Every AUTHORED bookmark name and internal link target in a package.
 
     Word's own — `_Ref…`, `_Toc…`, `_Hlk…` — are left out on both sides,
@@ -65,8 +71,8 @@ def _anchors(parts: dict[str, bytes]) -> tuple[set[str], set[str]]:
     return names, targets
 
 
-def compare_collateral(revised: dict[str, bytes],
-                       redline: dict[str, bytes]) -> list[str]:
+def compare_collateral(revised: Parts,
+                       redline: Parts) -> list[str]:
     """What Word's Compare removed on the way from `revised` to `redline`.
 
     Compare rebuilds the document rather than annotating it, and what it
@@ -130,8 +136,8 @@ def compare_collateral(revised: dict[str, bytes],
     return notes
 
 
-def accepted_losses(revised: dict[str, bytes],
-                    accepted: dict[str, bytes]) -> list[str]:
+def accepted_losses(revised: Parts,
+                    accepted: Parts) -> list[str]:
     """Anchors the clean copy has that ACCEPTING the redline does not.
 
     The gap between the two checks that already exist.
@@ -160,7 +166,7 @@ def accepted_losses(revised: dict[str, bytes],
                for t in sorted(was_targets - now_targets)])
 
 
-def _math_texts(parts: dict[str, bytes]) -> list[str]:
+def _math_texts(parts: Parts) -> list[str]:
     """Every equation's rendered characters, in document order."""
     return [visible_text(m.group(0))
             for _name, xml in text_parts(parts)
@@ -203,8 +209,8 @@ def _first_difference(was: str, now: str) -> str:
     return ""
 
 
-def accepted_math(revised: dict[str, bytes],
-                  accepted: dict[str, bytes]) -> list[str]:
+def accepted_math(revised: Parts,
+                  accepted: Parts) -> list[str]:
     """Equations the ACCEPTED view does not reproduce from the clean copy.
 
     Word's Compare does not treat an inline ``m:oMath`` as a unit. It
@@ -235,14 +241,14 @@ def accepted_math(revised: dict[str, bytes],
             if w != n]
 
 
-def _root(parts: dict[str, bytes], name: str = DOCUMENT) -> Any | None:
+def _root(parts: Parts, name: str = DOCUMENT) -> _Element | None:
     from lxml import etree
 
     blob = parts.get(name)
     return etree.fromstring(blob) if blob else None
 
 
-def _paras(root: Any | None) -> list[str]:
+def _paras(root: _Element | None) -> list[str]:
     """Every paragraph's ``w:t`` text, in order, empties included.
 
     ``w:t`` ONLY, and that is a decision rather than an oversight: this
@@ -258,7 +264,7 @@ def _paras(root: Any | None) -> list[str]:
             for p in root.iter(W + "p")]
 
 
-def _simulate(parts: dict[str, bytes], how: Any) -> dict[str, bytes]:
+def _simulate(parts: Parts, how: Callable[[str], str]) -> Parts:
     """XML-level accept/reject of every text-bearing part.
 
     Then the one thing a part-by-part walk cannot do: a note's reference
@@ -318,9 +324,9 @@ _PART_LABELS = {DOCUMENT: "body", FOOTNOTES: "footnotes",
                ENDNOTES: "endnotes"}
 
 
-def _mismatched_paras(got: dict[str, bytes], want: dict[str, bytes],
-                      make: Any, limit: int,
-                      fold: Callable[[str], str] | None = None) -> list[Any]:
+def _mismatched_paras[R](got: Parts, want: Parts,
+                         make: Callable[[str, int, str, str], R], limit: int,
+                         fold: Callable[[str], str] | None = None) -> list[R]:
     """Paragraph-by-paragraph differences between two simulated views.
 
     One walk for both gates: the reject side compares against the
@@ -329,7 +335,7 @@ def _mismatched_paras(got: dict[str, bytes], want: dict[str, bytes],
     side, whether runs of whitespace count (see :func:`unaccepted`).
     """
     keep = fold or (lambda t: t)
-    out: list[Any] = []
+    out: list[R] = []
     # Every part `_simulate` accepted or rejected, keyed by part name so
     # a fourth one cannot arrive unlabelled — and for the reason
     # `revision.TEXT_PARTS` gives beside its own list: a gate that reads
@@ -353,7 +359,7 @@ def _mismatched_paras(got: dict[str, bytes], want: dict[str, bytes],
     return out
 
 
-def unaccepted(parts: dict[str, bytes], revised: dict[str, bytes], *,
+def unaccepted(parts: Parts, revised: Parts, *,
                limit: int = 8,
                fold_space: bool = False) -> list[Unaccepted]:
     """Paragraphs where accept-all does NOT reproduce `revised`.
@@ -386,7 +392,7 @@ def unaccepted(parts: dict[str, bytes], revised: dict[str, bytes], *,
         (lambda t: " ".join(t.split())) if fold_space else None)
 
 
-def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
+def untracked(parts: Parts, baseline: Parts, *,
               limit: int = 8) -> list[Untracked]:
     """Paragraphs where reject-all does NOT reproduce the baseline.
 
@@ -411,7 +417,7 @@ def untracked(parts: dict[str, bytes], baseline: dict[str, bytes], *,
                              Untracked, limit)
 
 
-def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
+def package_counts(parts: Parts) -> dict[str, int]:
     """What the PACKAGE holds: insertions, deletions, comments.
 
     Half of the "did Word repair this file?" check, and the half that
@@ -445,7 +451,7 @@ def package_counts(parts: dict[str, bytes]) -> dict[str, int]:
     }
 
 
-def revisions_by_part(parts: dict[str, bytes]) -> dict[str, int]:
+def revisions_by_part(parts: Parts) -> dict[str, int]:
     """Revision elements per text-bearing part; empty parts omitted.
 
     :func:`package_counts` gives the total and Word gives the body's,
@@ -459,7 +465,7 @@ def revisions_by_part(parts: dict[str, bytes]) -> dict[str, int]:
             if (n := len(revision_elements(xml)))}
 
 
-def _revision_gap(parts: dict[str, bytes], body: int, total: int) -> str:
+def _revision_gap(parts: Parts, body: int, total: int) -> str:
     """Why Word's body count and the package's total differ, in full.
 
     Both causes are named, and only when they are actually present. A
@@ -501,7 +507,7 @@ STRUCTURE_TAGS = ("tbl", "tr", "tc", "bookmarkStart", "sectPr",
                   "drawing", "footnoteReference")
 
 
-def structure_counts(parts: dict[str, bytes]) -> dict[str, int]:
+def structure_counts(parts: Parts) -> dict[str, int]:
     """Every glyph-less carrier in the package, counted.
 
     The sibling of :func:`package_counts`, and pure for the same reason:

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import footnotes, package, revisions, tracked
-from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES, text_parts
+from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES, Parts, text_parts
 from ..errors import (
     BaselinePending,
     MathResolved,
@@ -31,7 +31,7 @@ from ._state import drift
 # ---------------------------------------------------------------- build
 
 
-def _pending(parts: dict[str, bytes]) -> dict[str, int]:
+def _pending(parts: Parts) -> dict[str, int]:
     """What is pending in this package, by kind — EVERY kind.
 
     Both of this module's pending refusals read

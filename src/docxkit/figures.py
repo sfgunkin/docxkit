@@ -29,7 +29,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._xml import DOCUMENT, PARA_RE, SECTPR_RE, visible_text
+from ._xml import DOCUMENT, PARA_RE, SECTPR_RE, Parts, visible_text
 from .errors import AnchorError, PackageError
 
 __all__ = [
@@ -268,7 +268,7 @@ def _png_size(blob: bytes) -> tuple[int, int]:
     return width, height
 
 
-def replace_image(parts: dict[str, bytes], caption_prefix: str,
+def replace_image(parts: Parts, caption_prefix: str,
                   image: str | Path, *, isolate: bool | None = None,
                   keep_width: bool = True) -> str:
     """Point one figure at a new image. Returns the media part written.
@@ -424,7 +424,7 @@ def set_alt_text(doc_xml: str, caption_prefix: str, text: str, *,
     return doc_xml[:start] + new_block + doc_xml[end:]
 
 
-def _new_media_part(parts: dict[str, bytes], blob: bytes) -> str:
+def _new_media_part(parts: Parts, blob: bytes) -> str:
     existing = [n for n in parts if n.startswith("word/media/image")]
     used = {int(m.group(1)) for n in existing
             if (m := re.search(r"image(\d+)\.", n))}

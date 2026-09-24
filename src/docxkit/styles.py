@@ -25,6 +25,7 @@ from ._xml import (
     FOOTNOTES,
     PARA_RE,
     RUN_RE,
+    Parts,
     own_properties,
     visible_text,
 )
@@ -96,7 +97,7 @@ def _attr(xml: str, name: str) -> str | None:
     return m2.group(1) if m2 else None
 
 
-def read(parts: dict[str, bytes]) -> list[Style]:
+def read(parts: Parts) -> list[Style]:
     """Every style the package defines."""
     if _STYLES_PART not in parts:
         raise PackageError("package has no word/styles.xml")
@@ -575,7 +576,7 @@ class Cascade:
         return bool(self._own or self._default)
 
 
-def ensure(parts: dict[str, bytes], style_xml: str) -> bool:
+def ensure(parts: Parts, style_xml: str) -> bool:
     """Append a style definition unless its id already exists.
 
     The definition itself should be cloned from a document where Word
@@ -594,8 +595,8 @@ def ensure(parts: dict[str, bytes], style_xml: str) -> bool:
     return True
 
 
-def apply_template(parts: dict[str, bytes],
-                   template_parts: dict[str, bytes], *,
+def apply_template(parts: Parts,
+                   template_parts: Parts, *,
                    remap: dict[str, str] | None = None) -> StyleReport:
     """Swap in a template's ``styles.xml`` and remap the ids in use.
 
@@ -743,7 +744,7 @@ _RPRCHANGE_RE = re.compile(r"<w:rPrChange\b.*?</w:rPrChange>", re.DOTALL)
 _RAISING = ("superscript", "subscript")
 
 
-def raised_prose(parts: dict[str, bytes]) -> list[Raised]:
+def raised_prose(parts: Parts) -> list[Raised]:
     r"""Prose that renders raised because its CHARACTER STYLE says so.
 
     A footnote's whole sentence rendered in superscript for 20 days and

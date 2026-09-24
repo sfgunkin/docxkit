@@ -25,7 +25,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 
-from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, PARA_RE, visible_text
+from ._xml import DOCUMENT, ENDNOTES, FOOTNOTES, PARA_RE, Parts, visible_text
 from .crossrefs import DEFAULT_LABELS, caption_re
 from .equations import MT_RE, OMATH_RE
 from .find import body_elements, heading_level
@@ -108,7 +108,7 @@ def _para_words(para_xml: str) -> tuple[int, int]:
     return prose, math
 
 
-def count(parts: dict[str, bytes], *,
+def count(parts: Parts, *,
           view: str = FINAL,
           references_re: re.Pattern[str] = REFERENCES_RE,
           appendix_re: re.Pattern[str] = APPENDIX_RE) -> Counts:

@@ -26,6 +26,7 @@ from ._xml import (
     COMMENTS,
     DOCUMENT,
     PARA_RE,
+    Parts,
     delta_text,
     normalize_glyphs,
     own_properties,
@@ -248,7 +249,7 @@ class _Scaffold(NamedTuple):
     date_utc: str | None
 
     @classmethod
-    def read(cls, parts: dict[str, bytes]) -> _Scaffold:
+    def read(cls, parts: Parts) -> _Scaffold:
         com = parts[COMMENTS].decode("utf-8")
         # A comment WITH content: an empty one has no paragraph to carry
         # the new text, and read as an open tag it cloned as two.
@@ -281,7 +282,7 @@ def _decide(planned: list[_Planned],
             if p.comment is not None or generic is not None]
 
 
-def _write(parts: dict[str, bytes], doc: str,
+def _write(parts: Parts, doc: str,
            decided: list[tuple[int, int, str]],
            scaffold: _Scaffold) -> None:
     """Anchor each comment in the body and add its four part entries."""
@@ -319,7 +320,7 @@ def _write(parts: dict[str, bytes], doc: str,
             ).encode("utf-8")
 
 
-def annotate(parts: dict[str, bytes],
+def annotate(parts: Parts,
              classify: Callable[[RevisionContext], str | None],
              *, generic: str | None = GENERIC,
              tables: str = COALESCE) -> tuple[int, int]:
@@ -366,7 +367,7 @@ def annotate(parts: dict[str, bytes],
     return len(decided), unclassified
 
 
-def add_at(parts: dict[str, bytes], anchor: str, comment: str, *,
+def add_at(parts: Parts, anchor: str, comment: str, *,
            normalize: bool = True) -> int:
     """Comment the paragraph containing `anchor`. Returns its comment id.
 
@@ -429,7 +430,7 @@ def _set_comment_text(com: str, cid: str, new_text: str) -> str:
     return com[:m.start()] + m.group(1) + body + m.group(3) + com[m.end():]
 
 
-def reclassify(parts: dict[str, bytes],
+def reclassify(parts: Parts,
                classify: Callable[[RevisionContext], str | None],
                *, generic: str | None = GENERIC) -> tuple[int, list[str]]:
     """Re-derive the text of comments still carrying the generic marker.
@@ -638,7 +639,7 @@ def _comment_records(com: str) -> list[dict[str, str]]:
     return out
 
 
-def threads(parts: dict[str, bytes]) -> list[Thread]:
+def threads(parts: Parts) -> list[Thread]:
     """Every comment thread, roots in document order.
 
     The anchor text is read from the range between
@@ -700,7 +701,7 @@ def threads(parts: dict[str, bytes]) -> list[Thread]:
     return out
 
 
-def set_done(parts: dict[str, bytes], ids: Iterable[str],
+def set_done(parts: Parts, ids: Iterable[str],
              *, done: bool = True) -> int:
     """Mark comments resolved (or reopen them) by comment id.
 
@@ -744,7 +745,7 @@ def set_done(parts: dict[str, bytes], ids: Iterable[str],
     return changed
 
 
-def read_all(parts: dict[str, bytes]) -> list[tuple[str, str, str]]:
+def read_all(parts: Parts) -> list[tuple[str, str, str]]:
     """(id, author, text) for every comment, in part order.
 
     The compact view; :func:`threads` gives replies, done flags and
@@ -756,7 +757,7 @@ def read_all(parts: dict[str, bytes]) -> list[tuple[str, str, str]]:
             for r in _comment_records(com)]
 
 
-def remove(parts: dict[str, bytes], ids: Iterable[str]) -> int:
+def remove(parts: Parts, ids: Iterable[str]) -> int:
     """Delete comments by id from ALL the parts that reference them.
 
     Six places: the range start/end and the reference run in

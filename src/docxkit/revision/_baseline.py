@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import package
+from .._xml import Parts
 from ..errors import BaselinePending, DocumentLocked, HandbackLoss
 from ..hygiene import restore_math_glyphs
 from . import _ledger, _timing
@@ -148,7 +149,7 @@ def baseline(paper: Paper, *, force: bool = False,
             f"{paper.working.name} is open in Word. Close it first — a "
             f"baseline copied mid-save is a zip nothing can reject "
             f"against.")
-    repaired: dict[str, bytes] | None = None
+    repaired: Parts | None = None
     if paper.prev.exists():
         work, base = (package.read_parts(paper.working),
                       package.read_parts(paper.prev))

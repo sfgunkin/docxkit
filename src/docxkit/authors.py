@@ -40,7 +40,7 @@ import re
 from collections import Counter
 from typing import NamedTuple
 
-from ._xml import escape_attr
+from ._xml import Parts, escape_attr
 from .package import set_core_property
 
 __all__ = [
@@ -94,7 +94,7 @@ def initials_for(name: str) -> str:
     return "".join(w[0].upper() for w in words[:3]) or "?"
 
 
-def read_authors(parts: dict[str, bytes]) -> Counter[str]:
+def read_authors(parts: Parts) -> Counter[str]:
     """Every name credited with a change or a comment, and how often.
 
     Names come back as a person writes them: an author stored as
@@ -110,7 +110,7 @@ def read_authors(parts: dict[str, bytes]) -> Counter[str]:
     return found
 
 
-def set_author(parts: dict[str, bytes], name: str, *,
+def set_author(parts: Parts, name: str, *,
                initials: str | None = None,
                only: set[str] | None = None) -> AuthorReport:
     """Credit `name` with every change, comment and property.
@@ -169,7 +169,7 @@ def set_author(parts: dict[str, bytes], name: str, *,
     return AuthorReport(before, revisions, comments, people, properties)
 
 
-def _collapse_people(parts: dict[str, bytes]) -> int:
+def _collapse_people(parts: Parts) -> int:
     """Fold word/people.xml down to one entry per author.
 
     Renaming several reviewers to one leaves several identical

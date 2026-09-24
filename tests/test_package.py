@@ -46,6 +46,41 @@ def test_the_package_representation_has_a_NAME():
     assert Parts.__value__ == dict[str, bytes]
 
 
+def test_no_annotation_SPELLS_OUT_the_name():
+    """The name existed for three weeks and 160 annotations went on
+    spelling the type, because it lived in `package`, which half the
+    modules that pass parts around sit beside and may not import. It is
+    `_xml.Parts` now; this keeps the count at the one definition.
+
+    Read off the AST, so a docstring quoting the type (this one) is
+    not a finding — and counted, so a walk that reads nothing fails."""
+    import ast
+
+    from conftest import module_name, source_files
+
+    spelled, annotations = [], 0
+    for path in source_files(include_init=True):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            anns = []
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                a = node.args
+                anns += [x.annotation for x in
+                         (*a.posonlyargs, *a.args, *a.kwonlyargs,
+                          a.vararg, a.kwarg)
+                         if x is not None and x.annotation is not None]
+                anns += [node.returns] if node.returns else []
+            elif isinstance(node, ast.AnnAssign):
+                anns.append(node.annotation)
+            for ann in anns:
+                text = ast.unparse(ann)
+                annotations += "Parts" in text
+                if "dict[str, bytes]" in text:
+                    spelled.append(f"{module_name(path)}:{ann.lineno}")
+
+    assert annotations > 150, f"only {annotations} — is the walk reading?"
+    assert not spelled, f"say `Parts` (from `_xml`): {spelled}"
+
+
 def test_write_preserves_member_order(simple_docx, tmp_path):
     with zipfile.ZipFile(simple_docx) as z:
         order = z.namelist()
