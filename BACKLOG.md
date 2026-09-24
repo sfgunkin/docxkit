@@ -909,31 +909,6 @@ target paragraph. Separately, `linkfix` could check landing by position
 (the host paragraph — or the next one — must carry the name's year), which
 sees what name matching cannot.
 
-### S1 — `citations` skips the first five paragraphs BY INDEX, so a short title block hides real prose
-<!-- status: open -->
-
-`_cite_audit._mention_scan` treats paragraphs 0–4 as the title block,
-"the rule this inherits from the loop it was lifted out of". Month of
-Birth's `mb1.docx` has a three-paragraph head — title, a blank, "1.
-Introduction" — so its first TWO body paragraphs (¶3, ¶4) are never
-scanned. Their four citations are not in the denominator, and an
-unlinked citation there would not be reported: the audit prints `ALL
-CHECKS PASSED` over prose it did not read. S1 by this file's definition
-(reports success, did not do the job); measured on one manuscript, the
-corpus not yet swept.
-
-Found 2026-09-24 while probing `paragraph.merge` on a copy of `mb1.docx`:
-merging ¶5 into ¶4 dropped `Mentions` from 68 to 65 — the three
-citations of ¶5 moved INTO the skipped zone, still linked and still
-rendered. A spy on `find_citations` named them (Republic of Uzbekistan
-2020, Bedard and Dhuey 2006, Givord 2020).
-
-**Fix belongs in the scan:** find the title block by what it IS, not by
-a count — e.g. everything before the first heading or the first
-paragraph long enough to be prose, or the Abstract's end — and measure
-the change over the corpus (how many mentions appear, and whether any
-new UNLINKED is a real one) before trusting it.
-
 ---
 
 ## Where the fixed entries are

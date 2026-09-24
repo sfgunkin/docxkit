@@ -14,6 +14,43 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `citations` skips the first five paragraphs BY INDEX, so a short title block hides real prose~~ — FIXED 24.09, `e62d4ed`
+
+<!-- status: fixed -->
+
+`_cite_audit._mention_scan` treats paragraphs 0–4 as the title block,
+"the rule this inherits from the loop it was lifted out of". Month of
+Birth's `mb1.docx` has a three-paragraph head — title, a blank, "1.
+Introduction" — so its first TWO body paragraphs (¶3, ¶4) are never
+scanned. Their four citations are not in the denominator, and an
+unlinked citation there would not be reported: the audit prints `ALL
+CHECKS PASSED` over prose it did not read. S1 by this file's definition
+(reports success, did not do the job); measured on one manuscript, the
+corpus not yet swept.
+
+Found 2026-09-24 while probing `paragraph.merge` on a copy of `mb1.docx`:
+merging ¶5 into ¶4 dropped `Mentions` from 68 to 65 — the three
+citations of ¶5 moved INTO the skipped zone, still linked and still
+rendered. A spy on `find_citations` named them (Republic of Uzbekistan
+2020, Bedard and Dhuey 2006, Givord 2020).
+
+**Fix belongs in the scan:** find the title block by what it IS, not by
+a count — e.g. everything before the first heading or the first
+paragraph long enough to be prose, or the Abstract's end — and measure
+the change over the corpus (how many mentions appear, and whether any
+new UNLINKED is a real one) before trusting it.
+
+**Fixed as the entry asked, and measured first.** `_title_block` ends
+the block at the first PROSE paragraph (100+ characters, not a
+heading), capped at the old five so it only ever reads MORE. The
+old-vs-new oracle over 2,934 manuscripts: 295 gain mentions (1,027),
+none lose any; 601 findings added, 0 removed, all UNLINKED. Read by
+eye, every sampled one is a real citation in real prose — body
+paragraphs under a short head, abstracts, notes with no title at
+all — and none a byline, date line or title, the case the old rule
+existed to keep quiet. Those 601 are findings the papers will now
+see; they were always there.
+
 ### ~~S3 — the lint refusal may be FALSE for three classes, and the check needs Word~~ — FIXED 24.09, `67cf3e7`
 
 <!-- status: fixed -->
