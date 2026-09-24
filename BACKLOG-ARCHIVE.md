@@ -14,6 +14,57 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — the structure gate refuses bookmarks the CLEAN copy added, so a link repair cannot be built tracked~~ — FIXED 24.09, `506a89c`
+
+<!-- status: fixed -->
+
+`tracked.build`'s structure gate compares `bookmarkStart` COUNTS between
+the original and the rejected view. A bookmark is not revisable, so every
+bookmark the clean copy adds survives reject-all by construction — and the
+gate refuses. Any batch that links a new citation (`link_all` makes two
+bookmarks per work) or moves an anchor therefore cannot be built with
+`reject_check` on, and turning it off also turns off the TEXT reject gate,
+which is the one the deliverable exists for.
+
+Measured on Misconceptions, 2026-09-24 (`revision/do/W6_small_fixes.py`):
+`rejected: bookmarkStart: 121 -> 165`. Diffed by name, the 44 extra are
+exactly the names the clean copy added (17 works × 2 from `link_all`,
+plus `…txt` markers and two table back-links); `original − rejected` is
+empty, nothing lost. Also measured: Compare carries a bookmark the clean
+copy ADDS but not one it DELETES (`Brewer2007`, `Couldry2023` survive
+into the accepted view), so deleting debris in a clean edit only makes the
+accept side fail instead.
+
+**Fix belongs in the gate:** on the reject side compare by NAME, and allow
+`rejected − original ⊆ clean − original`; keep refusing anything lost and
+any other tag. The paper re-imposes exactly that after a
+`reject_check=False` build (`W2_tracked_build.py`) — delete it when this
+closes.
+
+**Same day, the mirror case on the ACCEPT side**, which `accept_check`
+refuses with no switch but `reject_check=False` (the structure verdict
+is raised under that flag for both sides). W7 deleted a reference entry
+(McNemar 1947) and its two bookmarks: `accepted: bookmarkStart: 163 ->
+165`, the extras being exactly `McNemar1947`, `McNemar1947txt`. So the
+rule is symmetric — Compare carries the clean copy's bookmark ADDITIONS
+into both views and its DELETIONS into neither — and the gate should
+allow `rejected − original ⊆ clean − original` AND
+`accepted − clean ⊆ original − clean`, refusing any loss on either side.
+
+**Fixed in `506a89c`.** `bookmark_changes(base, view, carried)` judges
+bookmarks by NAME, each view against the document it must reproduce —
+the rejected view against the original (a gain must be a clean-copy
+addition), the accepted view against the clean copy (a gain must be a
+deletion). Anything lost is refused on either side, now by name; Word's
+re-minted `_` names by count. `revision validate` runs the same rule on
+its reject side. On the paper's real files the old verdict reproduces
+this entry exactly (121 -> 165, 163 -> 165) and the new one is clean.
+
+**Paper-side, not done here:** `revision/do/W2_tracked_build.py` builds
+with `reject_check=False` and re-imposes both halves by hand (its
+`bookmark_names` block). With this fix it can build with the gate ON and
+drop that block — the paper's file, left for its session.
+
 ### ~~S2 — `body.insert_before` strands the target's body-level bookmark on the new paragraph~~ — FIXED 24.09, `81a8be1`
 
 <!-- status: fixed -->
