@@ -24,12 +24,20 @@ kept going wrong:
 """
 from __future__ import annotations
 
+import posixpath
 import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._xml import DOCUMENT, PARA_RE, SECTPR_RE, Parts, visible_text
+from ._xml import (
+    DOCUMENT,
+    PARA_RE,
+    SECTPR_RE,
+    Parts,
+    escape_attr,
+    visible_text,
+)
 from .errors import AnchorError, PackageError
 
 __all__ = [
@@ -40,6 +48,7 @@ __all__ = [
     "PackageError",
     "alt_texts",
     "caption_side",
+    "embed_image",
     "find",
     "find_all",
     "landscape",
@@ -268,6 +277,39 @@ def _png_size(blob: bytes) -> tuple[int, int]:
     return width, height
 
 
+#: JPEG frame headers: SOF0-SOF15 except DHT (C4), JPG (C8), DAC (CC).
+_JPEG_SOF = frozenset(range(0xC0, 0xD0)) - {0xC4, 0xC8, 0xCC}
+
+
+def _jpeg_size(blob: bytes) -> tuple[int, int]:
+    """Width and height from a JPEG's frame header, walking its segments."""
+    i = 2
+    while i + 9 <= len(blob):
+        if blob[i] != 0xFF:
+            break
+        marker = blob[i + 1]
+        if marker == 0xFF:                   # fill byte
+            i += 1
+            continue
+        if marker == 0x01 or 0xD0 <= marker <= 0xD8:   # no length
+            i += 2
+            continue
+        if marker in _JPEG_SOF:
+            height, width = struct.unpack(">HH", blob[i + 5:i + 9])
+            return width, height
+        i += 2 + struct.unpack(">H", blob[i + 2:i + 4])[0]
+    raise PackageError("not a readable JPEG — no frame header found")
+
+
+def _image_size(blob: bytes) -> tuple[str, str, int, int]:
+    """``(extension, content type, width, height)`` of a PNG or a JPEG."""
+    if blob[:8] == b"\x89PNG\r\n\x1a\n":
+        return ("png", "image/png", *_png_size(blob))
+    if blob[:3] == b"\xff\xd8\xff":
+        return ("jpeg", "image/jpeg", *_jpeg_size(blob))
+    raise PackageError("not a PNG or a JPEG — cannot read its dimensions")
+
+
 def replace_image(parts: Parts, caption_prefix: str,
                   image: str | Path, *, isolate: bool | None = None,
                   keep_width: bool = True) -> str:
@@ -306,11 +348,7 @@ def replace_image(parts: Parts, caption_prefix: str,
     if uses > 1 and isolate:
         target = _new_media_part(parts, blob)
         new_rid = _next_rid(rels)
-        rels = rels.replace(
-            "</Relationships>",
-            f'<Relationship Id="{new_rid}" Type="http://schemas.openxmlformats'
-            '.org/officeDocument/2006/relationships/image" '
-            f'Target="{target[len("word/"):]}"/></Relationships>')
+        rels = _add_relationship(rels, new_rid, target[len("word/"):])
         parts[rels_name] = rels.encode("utf-8")
         doc = _repoint_one_drawing(doc, figure, rid, new_rid)
         rid = new_rid
@@ -425,12 +463,184 @@ def set_alt_text(doc_xml: str, caption_prefix: str, text: str, *,
 
 
 def _new_media_part(parts: Parts, blob: bytes) -> str:
+    """A fresh ``word/media/imageN.<ext>`` holding `blob`, typed.
+
+    The extension is what the bytes ARE: this named every part `.png`,
+    so an isolated JPEG went into the package under a PNG name. And the
+    package has to say what the extension means — a document whose only
+    pictures were JPEGs has no `png` Default in `[Content_Types].xml`,
+    and a part of an undeclared type is one Word refuses to open.
+    """
+    ext, content_type, _w, _h = _image_size(blob)
     existing = [n for n in parts if n.startswith("word/media/image")]
     used = {int(m.group(1)) for n in existing
             if (m := re.search(r"image(\d+)\.", n))}
-    name = f"word/media/image{max(used, default=0) + 1}.png"
+    name = f"word/media/image{max(used, default=0) + 1}.{ext}"
     parts[name] = blob
+    _declare_extension(parts, ext, content_type)
     return name
+
+
+_CONTENT_TYPES = "[Content_Types].xml"
+_TYPES_EMPTY_RE = re.compile(r"<Types\b[^>]*/>")
+_TYPES_OPEN_RE = re.compile(r"<Types\b[^>]*(?<!/)>")
+_IMAGE_REL = ("http://schemas.openxmlformats.org/officeDocument/2006/"
+              "relationships/image")
+_RELS_EMPTY_RE = re.compile(r"<Relationships\b[^>]*/>")
+_RELS_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+             '<Relationships xmlns="http://schemas.openxmlformats.org/'
+             'package/2006/relationships"></Relationships>')
+
+
+def _declare_extension(parts: Parts, ext: str, content_type: str) -> None:
+    """Give `ext` a `Default` in `[Content_Types].xml` unless it has one."""
+    blob = parts.get(_CONTENT_TYPES)
+    if blob is None:
+        raise PackageError("the package has no [Content_Types].xml")
+    xml = blob.decode("utf-8")
+    if re.search(rf'<Default\b[^>]*\bExtension="{re.escape(ext)}"', xml,
+                 re.IGNORECASE):
+        return
+    default = f'<Default Extension="{ext}" ContentType="{content_type}"/>'
+    if (m := _TYPES_EMPTY_RE.search(xml)) is not None:
+        xml = (xml[:m.start()] + m.group(0)[:-2] + ">" + default
+               + "</Types>" + xml[m.end():])
+    elif (m := _TYPES_OPEN_RE.search(xml)) is not None:
+        xml = xml[:m.end()] + default + xml[m.end():]
+    else:
+        raise PackageError("[Content_Types].xml has no <Types> element")
+    parts[_CONTENT_TYPES] = xml.encode("utf-8")
+
+
+def _add_relationship(rels_xml: str, rid: str, target: str) -> str:
+    """`rels_xml` with an image relationship `rid` -> `target` added.
+
+    A rels part with nothing in it is written `<Relationships …/>`, and a
+    `.replace("</Relationships>", …)` finds no close to write before —
+    it returns the part unchanged and the drawing points at nothing.
+    """
+    rel = (f'<Relationship Id="{rid}" Type="{_IMAGE_REL}" '
+           f'Target="{escape_attr(target)}"/>')
+    if (m := _RELS_EMPTY_RE.search(rels_xml)) is not None:
+        return (rels_xml[:m.start()] + m.group(0)[:-2] + ">" + rel
+                + "</Relationships>" + rels_xml[m.end():])
+    if "</Relationships>" not in rels_xml:
+        raise PackageError("the relationships part has no <Relationships>")
+    return rels_xml.replace("</Relationships>", rel + "</Relationships>", 1)
+
+
+def _rels_name(part: str) -> str:
+    """``word/document.xml`` -> ``word/_rels/document.xml.rels``."""
+    folder, name = posixpath.split(part)
+    return posixpath.join(folder, "_rels", name + ".rels")
+
+
+_DOCPR_ID_RE = re.compile(r'<wp:docPr\b[^>]*?\bid="(\d+)"')
+
+
+def _next_docpr_id(parts: Parts, part: str, rels_xml: str) -> int:
+    """A `wp:docPr` id no drawing in the package has, or will have.
+
+    Word requires the id to be unique across the document, and a
+    header's picture counts: a clash is a file Word "repairs" by
+    dropping one of the two. Guessing a high number (the paper that
+    wrote `900 + n`) is a clash waiting for the second run of the same
+    script.
+
+    The ids IN the XML are not the whole answer, because this returns a
+    run for the caller to place: three embeds before any is placed saw
+    the same document and all took id 1. So every image relationship
+    `part` holds that nothing in it references yet — an embed minted and
+    not yet placed — counts as an id already handed out. Placing them
+    later cannot collide: the maximum and the pending count only move
+    together.
+    """
+    used = [int(i) for name, blob in parts.items()
+            if name.startswith("word/") and name.endswith(".xml")
+            for i in _DOCPR_ID_RE.findall(blob.decode("utf-8", "replace"))]
+    xml = parts.get(part, b"").decode("utf-8", "replace")
+    pending = sum(1 for rid in _IMAGE_REL_ID_RE.findall(rels_xml)
+                  if f'r:embed="{rid}"' not in xml)
+    return max(used, default=0) + pending + 1
+
+
+#: The id of every IMAGE relationship, in either attribute order.
+_IMAGE_REL_ID_RE = re.compile(
+    r'<Relationship\b(?=[^>]*\bType="[^"]*/relationships/image")'
+    r'[^>]*\bId="([^"]+)"')
+
+
+def embed_image(parts: Parts, image: str | Path | bytes, *,
+                width_inches: float, alt: str = "", name: str = "",
+                part: str = DOCUMENT) -> str:
+    """Put a NEW picture into the package; returns its drawing RUN.
+
+    Everything a new picture needs outside the run is done here, to
+    `parts`: the media part (named for what the bytes are), a
+    relationship with a fresh id in `part`'s rels, a `[Content_Types]`
+    Default for the extension, and a `wp:docPr` id no other drawing in
+    the package has. The run is an inline `w:drawing` `width_inches`
+    wide, its height from the image's own aspect; place it with
+    ``body.para(run, ppr=...)`` wherever the figure belongs. Nothing in
+    `part`'s own XML is touched, so the order of calls does not matter.
+
+    `alt` becomes the drawing's alt text (`wp:docPr descr`), which
+    journals have started requiring; left empty, :func:`alt_texts` will
+    report it missing, as it should. PNG and JPEG only — what papers
+    render figures to, and the two whose size this can read.
+
+    Health's `A1_t188_figures.py` wrote all of this by hand, with the
+    extent fixed at 16 x 12 inches whatever the picture, a `900 + n`
+    drawing id, and no Content_Types Default — the three things this
+    does instead.
+    """
+    if width_inches <= 0:
+        raise ValueError(f"embed_image: width {width_inches} in is not a "
+                         f"width")
+    blob = image if isinstance(image, bytes) else Path(image).read_bytes()
+    _ext, _type, width, height = _image_size(blob)
+    target = _new_media_part(parts, blob)
+    rels_name = _rels_name(part)
+    rels = parts[rels_name].decode("utf-8") if rels_name in parts \
+        else _RELS_XML
+    pid = _next_docpr_id(parts, part, rels)
+    rid = _next_rid(rels)
+    relative = posixpath.relpath(target, posixpath.dirname(part))
+    parts[rels_name] = _add_relationship(rels, rid, relative).encode("utf-8")
+
+    label = escape_attr(name or f"Picture {pid}")
+    descr = f' descr="{escape_attr(alt)}"' if alt else ""
+    cx = round(width_inches * EMU_PER_INCH)
+    cy = round(cx * height / width)
+    return (
+        "<w:r><w:drawing>"
+        f'<wp:inline distT="0" distB="0" distL="0" distR="0" '
+        f'xmlns:wp="{_WP_NS}">'
+        f'<wp:extent cx="{cx}" cy="{cy}"/>'
+        '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
+        f'<wp:docPr id="{pid}" name="{label}"{descr}/>'
+        f'<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="{_A_NS}" '
+        'noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+        f'<a:graphic xmlns:a="{_A_NS}">'
+        f'<a:graphicData uri="{_PIC_NS}">'
+        f'<pic:pic xmlns:pic="{_PIC_NS}">'
+        f'<pic:nvPicPr><pic:cNvPr id="{pid}" name="{label}"/>'
+        "<pic:cNvPicPr/></pic:nvPicPr>"
+        f'<pic:blipFill><a:blip xmlns:r="{_R_NS}" r:embed="{rid}"/>'
+        "<a:stretch><a:fillRect/></a:stretch></pic:blipFill>"
+        '<pic:spPr><a:xfrm><a:off x="0" y="0"/>'
+        f'<a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+        "</pic:pic></a:graphicData></a:graphic></wp:inline>"
+        "</w:drawing></w:r>")
+
+
+_WP_NS = ("http://schemas.openxmlformats.org/drawingml/2006/"
+          "wordprocessingDrawing")
+_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+_R_NS = ("http://schemas.openxmlformats.org/officeDocument/2006/"
+         "relationships")
 
 
 def _repoint_one_drawing(doc: str, figure: Figure, old_rid: str,
@@ -457,7 +667,7 @@ def _rescale_drawing(doc: str, rid: str, blob: bytes) -> str:
         m = _EXTENT_RE.search(block)
         if not m:
             return doc
-        width, height = _png_size(blob)
+        _e, _t, width, height = _image_size(blob)
         cx = int(m.group(1))
         cy = round(cx * height / width)
         return doc[:p.start()] + set_extent(block, cx, cy) + doc[p.end():]
@@ -477,7 +687,7 @@ def set_extent(block: str, cx: int, cy: int) -> str:
 def scale_to_width(block: str, image: str | Path, width_inches: float) -> str:
     """Size a drawing to `width_inches`, height following the aspect."""
     blob = Path(image).read_bytes()
-    width, height = _png_size(blob)
+    _e, _t, width, height = _image_size(blob)
     cx = round(width_inches * EMU_PER_INCH)
     return set_extent(block, cx, round(cx * height / width))
 

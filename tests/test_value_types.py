@@ -57,6 +57,7 @@ VALUES = [
     "footnotes.SizeOutlier",
     "placement.Block",          # an exhibit's span, and what moving it costs
     "placement.FitFinding",     # one exhibit breaking the fit rule
+    "placement.Landscape",      # what `landscape` did, and the page it made
     "repack.Landing",           # where one exhibit sits in a render
     "repack.Move",              # one placement, and what the render said
     "repack.Sheet",             # one rendered sheet's fill

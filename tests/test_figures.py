@@ -480,15 +480,18 @@ def test_the_next_relationship_id_in_an_EMPTY_rels_is_rId1():
 def test_the_next_media_part_is_one_PAST_the_highest(tmp_path):
     from docxkit.figures import _new_media_part
 
-    parts = {"word/media/image5.png": b"x", "word/media/image2.png": b"y"}
+    parts = {"word/media/image5.png": b"x", "word/media/image2.png": b"y",
+             "[Content_Types].xml": b"<Types/>"}
 
-    assert _new_media_part(parts, b"z") == "word/media/image6.png"
+    assert _new_media_part(parts, png(3, 5)) == "word/media/image6.png"
 
 
 def test_the_first_media_part_in_a_package_with_none_is_image1():
     from docxkit.figures import _new_media_part
 
-    assert _new_media_part({}, b"z") == "word/media/image1.png"
+    parts = {"[Content_Types].xml": b"<Types/>"}
+
+    assert _new_media_part(parts, png(3, 5)) == "word/media/image1.png"
 
 
 # --- the run of 2026-08-20: 3.8 %, and what was left of it ---------------

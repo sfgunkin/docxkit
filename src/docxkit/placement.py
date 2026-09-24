@@ -35,6 +35,7 @@ language it is reading.
 """
 from __future__ import annotations
 
+import copy
 import re
 from bisect import bisect_right
 from collections.abc import Callable, Iterable
@@ -50,7 +51,14 @@ from .errors import PackageError
 # with it. `NOTE` lived here and is re-exported; `exhibit_block` is that
 # engine asked about one caption. What a MARKER is comes from there too:
 # this module kept a list of its own, and the two disagreed.
-from .exhibits import NOTE, exhibits, is_body, is_end_marker, is_marker
+from .exhibits import (
+    NOTE,
+    Exhibit,
+    exhibits,
+    is_body,
+    is_end_marker,
+    is_marker,
+)
 
 # THE caption definition, from one layer down: `crossrefs` classifies by
 # the same regex and is this module's SIBLING, which the layering gate
@@ -67,12 +75,14 @@ __all__ = [
     "Block",
     "FitFinding",
     "FitReport",
+    "Landscape",
     "PackageError",
     "Placement",
     "PlacementReport",
     "audit",
     "exhibit_block",
     "keep_together",
+    "landscape",
     "own_page",
     "place",
     "space_block",
@@ -408,6 +418,29 @@ def _ends_section(el: etree._Element) -> bool:
     return el.tag == W + "p" and el.find(f"{W}pPr/{W}sectPr") is not None
 
 
+def _exhibit_at(body: etree._Element, kids: list[etree._Element],
+                caption: str, note: re.Pattern[str]) -> Exhibit:
+    """The ONE exhibit whose caption paragraph contains `caption`."""
+    heads = [i for i, el in enumerate(kids)
+             if el.tag == W + "p" and caption in _text(el)
+             and _caption_re().match(_text(el).strip())]
+    if not heads:
+        raise PackageError(
+            f"no caption paragraph containing {caption!r} — a caption "
+            f"OPENS its paragraph, so a mention of it in prose is not one")
+    if len(heads) > 1:
+        raise PackageError(
+            f"{len(heads)} caption paragraphs contain {caption!r}; say "
+            f"which by passing more of it")
+    found = next((x for x in exhibits(body, note=note)
+                  if x.caption_at == heads[0]), None)
+    if found is None or found.body_at is None:
+        raise PackageError(
+            f"caption {caption!r} has no table or image beside it — this "
+            f"returns an exhibit's span, and there is no exhibit here")
+    return found
+
+
 def exhibit_block(parts: Parts, caption: str, *,
                   note: re.Pattern[str] = NOTE) -> Block:
     """The full span of one exhibit, INCLUDING a trailing section break.
@@ -436,25 +469,8 @@ def exhibit_block(parts: Parts, caption: str, *,
     """
     body = _body(parts)
     kids = list(body)
-    heads = [i for i, el in enumerate(kids)
-             if el.tag == W + "p" and caption in _text(el)
-             and _caption_re().match(_text(el).strip())]
-    if not heads:
-        raise PackageError(
-            f"no caption paragraph containing {caption!r} — a caption "
-            f"OPENS its paragraph, so a mention of it in prose is not one")
-    if len(heads) > 1:
-        raise PackageError(
-            f"{len(heads)} caption paragraphs contain {caption!r}; say "
-            f"which by passing more of it")
-    i = heads[0]
-
-    found = next((x for x in exhibits(body, note=note) if x.caption_at == i),
-                 None)
-    if found is None or found.body_at is None:
-        raise PackageError(
-            f"caption {caption!r} has no table or image beside it — this "
-            f"returns an exhibit's span, and there is no exhibit here")
+    found = _exhibit_at(body, kids, caption, note)
+    i = found.caption_at
     head, block = found.start, list(found.elements)
 
     content = [el for el in kids if el.tag in (W + "p", W + "tbl")]
@@ -793,6 +809,202 @@ def own_page(block: list[etree._Element]) -> None:
             rpr = row.find(W + "trPr")
             if rpr is not None:
                 _flag(rpr, "cantSplit", False)
+
+
+@dataclass(frozen=True)
+class Landscape:
+    """What :func:`landscape` did, and the page it made.
+
+    `text_width_in`/`text_height_in` are the landscape page's TEXT area —
+    what a figure has to fit, caption included. Size the drawing from
+    these rather than from the paper's page: Aging_Well's first attempt at
+    a landscape Figure 1 took the full 9 in width at the image's aspect,
+    and the caption spilled onto a second landscape page.
+    """
+
+    caption: str
+    text_width_in: float
+    text_height_in: float
+    #: The sections this made: 3 (portrait, landscape, portrait) or 2
+    #: when the exhibit already began a section.
+    sections: int
+    #: An empty paragraph was inserted to carry a break, because the
+    #: element beside it was a table and a table cannot hold a `w:sectPr`.
+    carriers_inserted: int
+    #: Page breaks removed beside the new break: a `nextPage` section break
+    #: already starts a page, and one more prints a blank sheet.
+    page_breaks_removed: int
+
+
+#: Properties that belong to the START of a section. When one section
+#: becomes several they go with the first — cloned into the others, a
+#: `titlePg` blanks the page number on each one's first sheet (Aging_Well,
+#: sheets 20 and 21), a `pgNumType w:start` restarts the numbering, and a
+#: `continuous` type lets a landscape page share a portrait sheet.
+_SECTION_START = ("titlePg", "type")
+
+
+def _section_starts_here(sect: etree._Element, keep: bool) -> None:
+    """Keep or strip what only the first of a split section may carry."""
+    if keep:
+        return
+    for tag in _SECTION_START:
+        for el in sect.findall(W + tag):
+            sect.remove(el)
+    num = sect.find(W + "pgNumType")
+    if num is not None and num.get(W + "start") is not None:
+        del num.attrib[W + "start"]
+
+
+def _turned(sect: etree._Element) -> etree._Element:
+    """A copy of `sect` with its page turned: width and height swapped."""
+    turned = copy.deepcopy(sect)
+    size = turned.find(W + "pgSz")
+    if size is None or size.get(W + "w") is None or size.get(W + "h") is None:
+        raise PackageError("the section has no w:pgSz width and height")
+    w, h = size.get(W + "w"), size.get(W + "h")
+    size.set(W + "w", h or "")
+    size.set(W + "h", w or "")
+    size.set(W + "orient", "landscape")
+    return turned
+
+
+def _carry(el: etree._Element, sect: etree._Element) -> None:
+    """Make paragraph `el` end a section with `sect`'s properties."""
+    ppr = _ppr(el)
+    slot = _in_order(ppr, "sectPr")
+    ppr.replace(slot, sect)
+
+
+def _drop_page_breaks(el: etree._Element) -> int:
+    """Remove the page breaks in paragraph `el`; how many there were."""
+    gone = 0
+    for br in el.findall(f".//{W}br"):
+        if br.get(W + "type") == "page":
+            run = br.getparent()
+            assert run is not None
+            run.remove(br)
+            gone += 1
+            if all(child.tag == W + "rPr" for child in run):
+                parent = run.getparent()
+                assert parent is not None
+                parent.remove(run)
+    return gone
+
+
+def _text_area(sect: etree._Element) -> tuple[float, float]:
+    """Width and height of the TEXT area, in inches: page less margins.
+
+    A section with no `w:pgMar` has no margins to take off; one with no
+    `w:pgSz` cannot reach here, `_turned` refuses it first.
+    """
+    def twips(el: etree._Element, attr: str) -> int:
+        value = el.get(W + attr) or ""
+        return int(value) if value.lstrip("-").isdigit() else 0
+
+    page = sect.find(W + "pgSz")
+    assert page is not None
+    margin = sect.find(W + "pgMar")
+    left, right, top, bottom = ((twips(margin, a) for a in
+                                 ("left", "right", "top", "bottom"))
+                                if margin is not None else (0, 0, 0, 0))
+    return (round((twips(page, "w") - left - right) / 1440, 3),
+            round((twips(page, "h") - top - bottom) / 1440, 3))
+
+
+def landscape(parts: Parts, caption: str, *,
+              note: re.Pattern[str] = NOTE) -> Landscape:
+    """Give one exhibit a landscape page of its own. Edits `parts`.
+
+    The exhibit is :func:`exhibit_block`'s span — caption, figure or
+    table, notes — and the section it sits in is split around it: the
+    paragraph before the block closes a PORTRAIT copy of that section,
+    the block's last paragraph closes a LANDSCAPE copy, and the original
+    section carries on after it. Both copies are clones, so margins,
+    columns and every header and footer reference come with them; what
+    only a section's START may carry — `titlePg`, the start type, a
+    page-number restart — stays with the first of the pieces, as
+    `_SECTION_START` says why.
+
+    A page break beside the new break is removed (a `nextPage` break
+    already starts a sheet, and one more prints a blank page — Aging_Well
+    R114), and so is `pageBreakBefore` on the block's first paragraph. A
+    table on either side cannot carry a `w:sectPr`, so an empty paragraph
+    is inserted to carry it, and counted.
+
+    Refused: an exhibit that already ends a section (it is already on a
+    page of its own, or about to be moved with one — see `exhibit_block`),
+    one in a section that is already landscape, and one at the very
+    start of the body. Sizing the drawing is the caller's, from the
+    returned text area: `figures.set_extent`.
+    """
+    body = _body(parts)
+    kids = list(body)
+    found = _exhibit_at(body, kids, caption, note)
+    block = list(found.elements)
+    if any(_ends_section(el) for el in block):
+        raise PackageError(
+            f"{caption!r} already ends a section — its page is set there")
+
+    after = kids[found.stop:]
+    closing = next((el for el in after if _ends_section(el)), None)
+    section = (closing.find(f"{W}pPr/{W}sectPr") if closing is not None
+               else body.find(W + "sectPr"))
+    if section is None:
+        raise PackageError("the document has no w:sectPr to clone")
+    size = section.find(W + "pgSz")
+    if size is not None and size.get(W + "orient") == "landscape":
+        raise PackageError(f"{caption!r} is in a section that is already "
+                           f"landscape")
+
+    content = [el for el in kids[:found.start]
+               if el.tag in (W + "p", W + "tbl")]
+    if not content:
+        raise PackageError(f"{caption!r} opens the body; there is no "
+                           f"portrait section before it to close")
+    before = content[-1]
+    starts_a_section = _ends_section(before)
+    inserted = removed = 0
+
+    turned = _turned(section)
+    if starts_a_section:
+        # the exhibit already opens its section: it keeps the start
+        _section_starts_here(turned, keep=True)
+    else:
+        portrait = copy.deepcopy(section)
+        if before.tag == W + "tbl":
+            carrier = etree.Element(W + "p")
+            before.addnext(carrier)
+            before = carrier
+            inserted += 1
+        removed += _drop_page_breaks(before)
+        _carry(before, portrait)
+        _section_starts_here(turned, keep=False)
+    _section_starts_here(section, keep=False)
+
+    first = next((el for el in block if el.tag == W + "p"), None)
+    if first is not None:
+        ppr = first.find(W + "pPr")
+        if ppr is not None and ppr.find(W + "pageBreakBefore") is not None:
+            _flag(ppr, "pageBreakBefore", False)
+            removed += 1
+    last = block[-1]
+    if last.tag != W + "p":
+        carrier = etree.Element(W + "p")
+        last.addnext(carrier)
+        last = carrier
+        inserted += 1
+    _carry(last, turned)
+
+    parts[DOCUMENT] = etree.tostring(body.getroottree(), xml_declaration=True,
+                                     encoding="UTF-8", standalone=True)
+    width, height = _text_area(turned)
+    return Landscape(caption=found.caption[:70],
+                     text_width_in=width,
+                     text_height_in=height,
+                     sections=2 if starts_a_section else 3,
+                     carriers_inserted=inserted,
+                     page_breaks_removed=removed)
 
 
 @dataclass(frozen=True)

@@ -49,7 +49,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `tables` | locate/read manuscript tables on either side of a redline; `update` rebuilds one from data, formatting preserved; `reorder_rows` / `clone_row` / `set_row` move and fill ROWS, gated on the row multiset; `house` sets the paper's style in one call |
 | `equations` | LaTeX→OMML via Word's own XSL, and OMML→LaTeX back (`to_latex`); harvest, fingerprints, run `face` |
 | `testing` | scaffolding for the paper value-test suites (latest version, lock-safe loads, prose numbers) |
-| `figures` | find figures by caption, replace images safely, extents, landscape sections, alt-text audit/setter |
+| `figures` | find figures by caption, replace images safely, `embed_image` a NEW one (media part, relationship, content type, unique drawing id), extents, alt-text audit/setter |
 | `compare` | the authoritative multi-layer diff (structure/text/formula/formula-typography/format/paragraph/glyph/fields/integrity) over EVERY part a reader sees — body, footnotes, endnotes, headers, footers, comments — with each entry addressed to its part and table cell. FORMAT covers emphasis **and size and colour**, and PARAGRAPH covers **indent, spacing, alignment and keep-with-next** — both resolved through `styles.Cascade` rather than read off the markup |
 | `styles` | named styles: read, remap, apply a journal template — and `Cascade`, what a run's properties RESOLVE to once the style chain and docDefaults are applied |
 | `footnotes` | locate/append, and remap ids Word renumbered on save |
@@ -77,7 +77,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `_xml` | internal: the WordprocessingML primitives, defined once |
 | `_compare_read` / `_compare_diff` / `_compare_render` | internal: the diff's three layers — a package to paragraphs, paragraphs to a report, a report to a page. `compare` is the facade |
 | `exhibits` | what the exhibits ARE: every caption, which table or image is its body — on either side, read off the document — and the span each one owns, hoisted bookmarks and notes included. `placement`, `repack` and `exhibit_block` sit on it |
-| `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word; `exhibit_block` is one exhibit's span, section break included |
+| `placement` | where a table SITS: anchored beside the paragraph that first mentions it, kept whole on one sheet — the XML half here, the page half measured by Word; `exhibit_block` is one exhibit's span, section break included; `landscape` gives it a landscape page of its own |
 | `repack` | which sheet is mostly EMPTY and which exhibit's placement caused it — renders each alternative placement and ranks what it would save; reports, never edits |
 | `snapshot` | a round's starting state frozen as text (`[P31]`, `[T4:2,3]`, one `⟦MATH⟧` per equation) and structure (counts, bookmarks, link targets in every form, per part), accepted view and baseline numbering after insertions included; `resolve` holds a protocol's anchors to "exactly once, in the paragraph named" and says what each span meets |
 | `probe` | the four facts a batch has to know first: which FORM the links take, where the exhibit blocks and section breaks sit, which bookmarks are body-level, how a phrase is split across runs |

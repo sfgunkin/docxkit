@@ -414,7 +414,8 @@ HARNESS: dict[str, list[str]] = {
                     "tests/test_placement.py"],
     "export.py": ["tests/test_export_md.py"],
     "figures.py": ["tests/test_figures.py", "tests/test_alt_text.py",
-                   "tests/test_value_types.py"],
+                   "tests/test_value_types.py",
+                   "tests/test_figures_embed.py"],
     # Checked by COVERAGE CONTEXT (`--cov-context=test`), so this is what
     # executes the module, not what mentions it. The suite runs 92 lines
     # of find.py; the six files listed here ran 51. The four added below
@@ -448,7 +449,8 @@ HARNESS: dict[str, list[str]] = {
     # there are is the one most able to break what ¶N points at
     "paragraph.py": ["tests/test_paragraph.py",
                      "tests/test_paragraph_numbering.py"],
-    "placement.py": ["tests/test_placement.py"],
+    "placement.py": ["tests/test_placement.py",
+                     "tests/test_placement_landscape.py"],
     "repack.py": ["tests/test_repack.py"],
     "sections.py": ["tests/test_sections.py", "tests/test_sections_edges.py"],
     "snapshot.py": ["tests/test_snapshot.py"],
