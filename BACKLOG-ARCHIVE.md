@@ -14,6 +14,44 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `body.insert_before` strands the target's body-level bookmark on the new paragraph~~ — FIXED 24.09, `81a8be1`
+
+<!-- status: fixed -->
+
+Word writes many bookmarks BETWEEN paragraphs (`</w:p><w:bookmarkStart
+w:name="BBC2018"/>…<w:p>BBC (2018)…`). `insert_before(doc, sig, block)`
+splices the block immediately before the target `<w:p>`, i.e. AFTER that
+bookmarkStart, so the bookmark now marks the inserted paragraph and every
+link to it lands one entry early. No gate sees it: the name still exists,
+so `citations` counts no broken link.
+
+Measured on Misconceptions batch 3 (`W4_writing_batch3.py`, 17 reference
+entries inserted alphabetically): 13 entry bookmarks stranded
+(`Sjöberg2000` on Shi, `USGS2023` on Tversky, `Loomba2021` two entries
+early, …). `linkfix` caught 11 by name matching and MISSED `Sjöberg2000`
+and `USGS2023`, whose names do not match their entries' heads — found only
+by checking that each link target's paragraph carries the work's year.
+
+**Fix:** `insert_before` should step back over the body-level bookmark
+starts (and `w:proofErr`, `w:permStart`) that immediately precede the
+target paragraph. Separately, `linkfix` could check landing by position
+(the host paragraph — or the next one — must carry the name's year), which
+sees what name matching cannot.
+
+**Fixed in `81a8be1`.** `insert_before` steps back over the openers
+standing right before the target (bookmarkStart, commentRangeStart,
+permStart, proofErr) and never over an END; `insert_after` mirrors it,
+stepping past the closers of a range that wraps the target. On a copy of
+Aging_Well — six captions and boxes whose head bookmark Word hoisted —
+inserting before each leaves the bookmark on its own paragraph 6/6 with
+the fix, 0/6 without.
+
+**Not done: `linkfix` checking landing by POSITION** (the host paragraph,
+or the next, must carry the name's year). It is a separate check that
+would have caught `Sjöberg2000` and `USGS2023`, which name matching
+missed; with the stranding itself fixed it is a second line of defence,
+left for a batch that wants one.
+
 ### ~~S1 — `citations` skips the first five paragraphs BY INDEX, so a short title block hides real prose~~ — FIXED 24.09, `e62d4ed`
 
 <!-- status: fixed -->

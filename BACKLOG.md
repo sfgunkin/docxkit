@@ -862,6 +862,23 @@ into both views and its DELETIONS into neither — and the gate should
 allow `rejected − original ⊆ clean − original` AND
 `accepted − clean ⊆ original − clean`, refusing any loss on either side.
 
+### S2 — `compare` FORMULA reports ten scripted equations as absent on the built side
+<!-- status: open -->
+
+`docxkit compare clean_edited8.docx <author copy>` (Misconceptions,
+2026-09-24): TEXT, STRUCTURE, FORMAT all `(none)`, and FORMULA lists ten
+entries `from=('', '<none>') -> to=(<structure>, <tokens>)` — the equations
+around eq. (9)/(10) that `W5_math_batch.py` wrote. Counted independently, both
+files hold 55 `m:oMath` with identical token strings in identical order; the
+author's Word save only added an `m:oMathPara` wrapper and `m:rPr`/`w:rPr`
+inside runs. So the built side's equations were not READ, and a real formula
+edit there would read the same way. Cause not isolated; the W5 equations
+carry namespace declarations on inner elements (`xmlns:m`/`xmlns:w` written
+by the OMML builder), which the rest of the document does not.
+
+Found by counting tokens by hand after the report said ten formulas had
+appeared; `--expect-clean` would have failed on a document that matched.
+
 ### S2 — `tables.set_cell` flattens a result cell's superscript-star and second-paragraph runs
 <!-- status: open -->
 
@@ -885,29 +902,6 @@ stars into the superscript run (cloned when absent), and a `(b, stars, se)`
 form that fills a second paragraph's runs. The paper's `write_cell` in
 `revision/do/W7_mi_tables.py` does this by regex; delete it when this
 closes.
-
-### S2 — `body.insert_before` strands the target's body-level bookmark on the new paragraph
-<!-- status: open -->
-
-Word writes many bookmarks BETWEEN paragraphs (`</w:p><w:bookmarkStart
-w:name="BBC2018"/>…<w:p>BBC (2018)…`). `insert_before(doc, sig, block)`
-splices the block immediately before the target `<w:p>`, i.e. AFTER that
-bookmarkStart, so the bookmark now marks the inserted paragraph and every
-link to it lands one entry early. No gate sees it: the name still exists,
-so `citations` counts no broken link.
-
-Measured on Misconceptions batch 3 (`W4_writing_batch3.py`, 17 reference
-entries inserted alphabetically): 13 entry bookmarks stranded
-(`Sjöberg2000` on Shi, `USGS2023` on Tversky, `Loomba2021` two entries
-early, …). `linkfix` caught 11 by name matching and MISSED `Sjöberg2000`
-and `USGS2023`, whose names do not match their entries' heads — found only
-by checking that each link target's paragraph carries the work's year.
-
-**Fix:** `insert_before` should step back over the body-level bookmark
-starts (and `w:proofErr`, `w:permStart`) that immediately precede the
-target paragraph. Separately, `linkfix` could check landing by position
-(the host paragraph — or the next one — must carry the name's year), which
-sees what name matching cannot.
 
 ---
 
