@@ -214,14 +214,54 @@ def insert_after(xml: str, sig: str, content: str, *,
             f"insert_after({sig[:40]!r}): that paragraph ends in a colon, so "
             "it introduces what follows and this would split them. Anchor on "
             "the following block, or pass allow_colon=True.")
+    end = _past_closers(xml, end)
     return xml[:end] + content + xml[end:]
 
 
 def insert_before(xml: str, sig: str, content: str, *,
                   normalize: bool = False) -> str:
-    """Insert `content` immediately before the paragraph containing `sig`."""
+    """Insert `content` immediately before the paragraph containing `sig`.
+
+    Before its OPENERS too. Word writes a paragraph-head bookmark
+    between paragraphs (`</w:p><w:bookmarkStart w:name="BBC2018"/><w:p>`),
+    and a block spliced at the target's own `<w:p>` lands AFTER that start,
+    so the bookmark marks the new paragraph and every link to the entry
+    arrives one early. Misconceptions batch 3 inserted 17 reference
+    entries and stranded 13 bookmarks this way, and `citations` saw none:
+    the names still existed (BACKLOG S2, 2026-09-24). A bookmark END is
+    never stepped over — it closes something before the target.
+    """
     start, _ = para_slice(xml, sig, normalize=normalize)
+    start = _before_openers(xml, start)
     return xml[:start] + content + xml[start:]
+
+
+#: Zero-width markers that OPEN what follows them, written between
+#: paragraphs: a head bookmark, a comment range, a permission range, and
+#: Word's proofing mark.
+_OPENERS_RE = re.compile(
+    r"(?:<w:(?:bookmarkStart|commentRangeStart|permStart|proofErr)\b"
+    r"[^>]*/>\s*)+\Z")
+#: ...and those that CLOSE what precedes them.
+_CLOSERS_RE = re.compile(
+    r"(?:\s*<w:(?:bookmarkEnd|commentRangeEnd|permEnd)\b[^>]*/>)+")
+#: How far back an opener run can reach: a few short tags.
+_MARKER_WINDOW = 2048
+
+
+def _before_openers(xml: str, start: int) -> int:
+    """`start`, moved back over the openers standing right before it."""
+    lo = max(0, start - _MARKER_WINDOW)
+    m = _OPENERS_RE.search(xml, lo, start)
+    return m.start() if m else start
+
+
+def _past_closers(xml: str, end: int) -> int:
+    """`end`, moved on past the closers standing right after it — a
+    bookmark or comment range wrapping the target paragraph ends there,
+    and content spliced inside it would join the range."""
+    m = _CLOSERS_RE.match(xml, end)
+    return m.end() if m else end
 
 
 def prose_props(para_xml: str) -> tuple[str, str]:

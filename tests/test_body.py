@@ -131,6 +131,47 @@ def test_insert_before_places_content_ahead_of_the_anchor():
     assert out.index("first") < out.index("INSERTED") < out.index("second")
 
 
+def test_insert_before_steps_back_over_the_targets_HOISTED_bookmark():
+    """BACKLOG S2. Word writes an entry's head bookmark between
+    paragraphs; spliced after it, the new entry takes the old one's
+    bookmark and every link to BBC (2018) lands one entry early."""
+    xml = document(para(run("Allen (2017).")) +
+                   '<w:bookmarkStart w:id="4" w:name="BBC2018"/>'
+                   '<w:proofErr w:type="spellStart"/>'
+                   + para(run("BBC (2018).")) + '<w:bookmarkEnd w:id="4"/>')
+
+    out = insert_before(xml, "BBC (2018)", para(run("Baker (2018).")))
+
+    assert out.index("Baker (2018)") < out.index("BBC2018")
+    assert out.index("BBC2018") < out.index("BBC (2018).")
+
+
+def test_insert_before_never_steps_over_an_END():
+    """A bookmark END closes something BEFORE the target; the new block
+    goes between it and the target, not in front of it."""
+    xml = document('<w:bookmarkStart w:id="1" w:name="Allen2017"/>'
+                   + para(run("Allen (2017).")) + '<w:bookmarkEnd w:id="1"/>'
+                   + para(run("BBC (2018).")))
+
+    out = insert_before(xml, "BBC (2018)", para(run("Baker (2018).")))
+
+    assert out.index('<w:bookmarkEnd w:id="1"/>') < out.index("Baker")
+
+
+def test_insert_after_steps_past_a_range_CLOSING_on_the_target():
+    """The mirror: a bookmark or comment range wrapping the target ends
+    after its `</w:p>`, and content spliced before that END joins it."""
+    xml = document('<w:bookmarkStart w:id="2" w:name="Table1"/>'
+                   + para(run("Table 1. Wages"))
+                   + '<w:bookmarkEnd w:id="2"/><w:commentRangeEnd w:id="0"/>'
+                   + para(run("Next.")))
+
+    out = insert_after(xml, "Table 1", para(run("Inserted.")))
+
+    assert out.index('<w:commentRangeEnd w:id="0"/>') < out.index("Inserted")
+    assert out.index("Inserted") < out.index("Next.")
+
+
 def test_insert_after_refuses_to_split_a_colon_from_what_it_introduces():
     """A lead-in ending in ':' introduces the block after it; inserting
     between them silently orphans the sentence from its equation."""
