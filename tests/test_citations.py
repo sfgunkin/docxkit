@@ -674,20 +674,64 @@ def test_unlinked_citation_text_is_reported_on_the_shared_grammar():
                         "citation but is not hyperlinked"]
 
 
-def test_the_FIRST_FIVE_paragraphs_are_not_scanned_for_citations():
+def _unlinked_in(parts: dict[str, bytes]) -> list[str]:
+    return [i for i in audit_links(parts)[0] if i.startswith("UNLINKED")]
+
+
+#: A body paragraph: long enough to be PROSE, with an unlinked citation.
+_PROSE = P(R("Ranges shift with age across the countries of the region, "
+             "and the gap widens after sixty (Mühlbach 2022)."))
+
+
+def test_a_short_TITLE_BLOCK_is_still_not_scanned_for_citations():
     """A title page carries "(2024)" and an affiliation carries a year in
     brackets; treating those as unlinked citations put a finding at the
     top of every report, which is where a reader decides whether to keep
-    reading. Five is the window, and the sixth paragraph IS scanned."""
-    cite = P(R("Ranges shift with age (Mühlbach 2022)."))
-    filler = "".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
-                     for i in range(4))
-    quiet = xml_parts(filler + cite + P(R("References")))       # ¶5
-    scanned = xml_parts(filler + P(R("One more.")) + cite
-                        + P(R("References")))                   # ¶6
+    reading. Short lines before the first prose paragraph are that block
+    — here a citation-shaped byline in the fifth, and it stays quiet."""
+    head = "".join(P(R(line)) for line in (
+        "Aging and Wages", "A. Author and B. Author", "World Bank (2024)",
+        "September 2026", "Smith 2021 draft"))
 
-    assert not [i for i in audit_links(quiet)[0] if i.startswith("UNLINKED")]
-    assert [i for i in audit_links(scanned)[0] if i.startswith("UNLINKED")]
+    assert not _unlinked_in(xml_parts(head + P(R("References"))))
+    assert _unlinked_in(xml_parts(head + _PROSE + P(R("References"))))
+
+
+def test_prose_INSIDE_the_old_five_is_scanned_now():
+    """BACKLOG S1. Month of Birth's head is a title, a blank line and
+    "1. Introduction", so its first two body paragraphs were ¶3 and ¶4,
+    inside the five skipped BY INDEX: four citations never counted, and
+    an unlinked one would still print ALL CHECKS PASSED."""
+    head = P(R("Month of Birth and School Outcomes")) + "<w:p/>" \
+        + P(R("1. Introduction"))
+
+    got = _unlinked_in(xml_parts(head + _PROSE + P(R("References"))))
+
+    assert got == ['UNLINKED: "Mühlbach 2022" (¶3) — looks like a '
+                   "citation but is not hyperlinked"]
+
+
+def test_an_ABSTRACT_inside_the_old_five_is_scanned_now():
+    """HCW's and Parental Style's heads are four lines, so the Abstract
+    was the fifth paragraph and skipped with them."""
+    head = "".join(P(R(line)) for line in (
+        "Health Capacity to Work", "M. Lokshin and F. Valverde",
+        "This version: August 2026", ""))
+    abstract = P(R("Abstract: Governments in many countries have responded "
+                   "to population aging by raising the retirement age "
+                   "(Mühlbach 2022)."))
+
+    got = _unlinked_in(xml_parts(head + abstract + P(R("References"))))
+
+    assert len(got) == 1
+
+
+def test_the_title_block_is_never_LONGER_than_the_old_five():
+    """Capped, so the new rule only ever reads MORE than the old one."""
+    head = "".join(P(R(f"Line {i}")) for i in range(7))
+    short = P(R("Short but cited (Mühlbach 2022)."))
+
+    assert _unlinked_in(xml_parts(head + short + P(R("References"))))
 
 
 def test_a_citation_whose_LABEL_is_linked_elsewhere_is_not_UNLINKED():

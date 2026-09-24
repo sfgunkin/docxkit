@@ -42,6 +42,7 @@ from ._xml import (
     visible_text,
 )
 from .edit import _links_to
+from .find import heading_level
 
 # ------------------------------------------------------ the link audit ---
 
@@ -673,6 +674,38 @@ def _self_link_findings(parts: Parts, bookmarks: dict[str, int],
     return out
 
 
+#: The most leading paragraphs a title block may take — the rule this
+#: replaced skipped exactly this many, whatever they held.
+_TITLE_BLOCK_MAX = 5
+#: A paragraph this long, and not a heading, is PROSE. Every title,
+#: subtitle, byline, affiliation and date line in the papers here is
+#: shorter; every opening paragraph of body or abstract is longer.
+_PROSE_MIN = 100
+
+
+def _title_block(texts: list[str], paras: list[re.Match[str]]) -> int:
+    """How many leading paragraphs are the title block: up to the first
+    PROSE paragraph, and never more than `_TITLE_BLOCK_MAX`.
+
+    The title block is skipped because author names in a byline read as
+    citations. It used to be the first five paragraphs BY INDEX, and a
+    paper whose head is short gave its prose away: Month of Birth's is
+    a title, a blank line and "1. Introduction", so its first two body
+    paragraphs — four citations — were never read, and an unlinked
+    citation there would still print ALL CHECKS PASSED (BACKLOG S1,
+    2026-09-24). HCW's and Parental Style's heads are four lines, so
+    their Abstracts were skipped too.
+
+    Capped at the old five, so this only ever reads MORE than the rule
+    it replaced — never less.
+    """
+    for i, text in enumerate(texts[:_TITLE_BLOCK_MAX]):
+        if (len(text.strip()) >= _PROSE_MIN
+                and heading_level(paras[i].group(0)) is None):
+            return i
+    return min(len(texts), _TITLE_BLOCK_MAX)
+
+
 def _mention_scan(parts: Parts, texts: list[str],
                   paras: list[re.Match[str]],
                   head_idx: int) -> list[tuple[int, str, str]]:
@@ -688,14 +721,14 @@ def _mention_scan(parts: Parts, texts: list[str],
     `Mentions: 103 of 103 linked` before the link was made AND after.
     Six of that paper's works are cited only in footnotes.
 
-    The first five paragraphs are skipped as the title block, which is
-    the rule this inherits from the loop it was lifted out of.
-    `_NOTE_AT`'s sentinel stands in for the index, so `where()` says
+    The title block is skipped — see :func:`_title_block` for what that
+    is. `_NOTE_AT`'s sentinel stands in for the index, so `where()` says
     "fn" or "en" rather than a paragraph number a reader would go
     hunting for in the body.
     """
+    skip = _title_block(texts, paras)
     scan = [(i, text, paras[i].group(0))
-            for i, text in enumerate(texts[:head_idx]) if i >= 5]
+            for i, text in enumerate(texts[:head_idx]) if i >= skip]
     for part, at in _NOTE_AT.items():
         blob = parts.get(part)
         if blob:
@@ -857,8 +890,8 @@ def _mention_findings(parts: Parts, texts: list[str],
     """Unlinked citation-like text, on the shared grammar, and the
     mention counts the report quotes ("53 of 73 linked").
 
-    Only body prose before the reference list; the first five paragraphs
-    are the title block, where author names read as citations.
+    Only body prose before the reference list, past the title block
+    (`_title_block`), where author names read as citations.
 
     Everything this needs beyond the document is derived here, because
     nothing else in the audit uses it — the five bindings below were
