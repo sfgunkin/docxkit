@@ -826,6 +826,114 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
+### S3 — the structure gate refuses bookmarks the CLEAN copy added, so a link repair cannot be built tracked
+<!-- status: open -->
+
+`tracked.build`'s structure gate compares `bookmarkStart` COUNTS between
+the original and the rejected view. A bookmark is not revisable, so every
+bookmark the clean copy adds survives reject-all by construction — and the
+gate refuses. Any batch that links a new citation (`link_all` makes two
+bookmarks per work) or moves an anchor therefore cannot be built with
+`reject_check` on, and turning it off also turns off the TEXT reject gate,
+which is the one the deliverable exists for.
+
+Measured on Misconceptions, 2026-09-24 (`revision/do/W6_small_fixes.py`):
+`rejected: bookmarkStart: 121 -> 165`. Diffed by name, the 44 extra are
+exactly the names the clean copy added (17 works × 2 from `link_all`,
+plus `…txt` markers and two table back-links); `original − rejected` is
+empty, nothing lost. Also measured: Compare carries a bookmark the clean
+copy ADDS but not one it DELETES (`Brewer2007`, `Couldry2023` survive
+into the accepted view), so deleting debris in a clean edit only makes the
+accept side fail instead.
+
+**Fix belongs in the gate:** on the reject side compare by NAME, and allow
+`rejected − original ⊆ clean − original`; keep refusing anything lost and
+any other tag. The paper re-imposes exactly that after a
+`reject_check=False` build (`W2_tracked_build.py`) — delete it when this
+closes.
+
+**Same day, the mirror case on the ACCEPT side**, which `accept_check`
+refuses with no switch but `reject_check=False` (the structure verdict
+is raised under that flag for both sides). W7 deleted a reference entry
+(McNemar 1947) and its two bookmarks: `accepted: bookmarkStart: 163 ->
+165`, the extras being exactly `McNemar1947`, `McNemar1947txt`. So the
+rule is symmetric — Compare carries the clean copy's bookmark ADDITIONS
+into both views and its DELETIONS into neither — and the gate should
+allow `rejected − original ⊆ clean − original` AND
+`accepted − clean ⊆ original − clean`, refusing any loss on either side.
+
+### S2 — `tables.set_cell` flattens a result cell's superscript-star and second-paragraph runs
+<!-- status: open -->
+
+`set_cell` puts the whole new text in the cell's FIRST `w:t` and blanks
+the rest. On a results table that is the wrong half to keep: the house
+cell is `[number][stars, vertAlign=superscript]`, and in a two-line cell
+(coefficient over SE) `[number][stars]` ¶ `[(][SE, italic][)]`. Writing
+"0.017\*\*\*" gives full-size stars in the number run, an empty superscript
+run, and — for a two-line cell — the SE pulled up onto the coefficient's
+line with the second paragraph left empty.
+
+Measured on Misconceptions W7 (2026-09-24), rewriting Tables 4, 5, 6, B1,
+B2 (770 cells): rendered through Word, Table 4 wrapped "0.017\*\*" / "\*" in
+every coefficient column; Table 6 lost its SE line. No gate saw it — the
+cell TEXT is right, so `rows[r][c]` reads back exactly what was written.
+`superscript_stars` afterwards repairs the single-paragraph case only (it
+skips any cell that is not exactly number+stars).
+
+**Fix:** a result-aware write — number into the first non-superscript run,
+stars into the superscript run (cloned when absent), and a `(b, stars, se)`
+form that fills a second paragraph's runs. The paper's `write_cell` in
+`revision/do/W7_mi_tables.py` does this by regex; delete it when this
+closes.
+
+### S2 — `body.insert_before` strands the target's body-level bookmark on the new paragraph
+<!-- status: open -->
+
+Word writes many bookmarks BETWEEN paragraphs (`</w:p><w:bookmarkStart
+w:name="BBC2018"/>…<w:p>BBC (2018)…`). `insert_before(doc, sig, block)`
+splices the block immediately before the target `<w:p>`, i.e. AFTER that
+bookmarkStart, so the bookmark now marks the inserted paragraph and every
+link to it lands one entry early. No gate sees it: the name still exists,
+so `citations` counts no broken link.
+
+Measured on Misconceptions batch 3 (`W4_writing_batch3.py`, 17 reference
+entries inserted alphabetically): 13 entry bookmarks stranded
+(`Sjöberg2000` on Shi, `USGS2023` on Tversky, `Loomba2021` two entries
+early, …). `linkfix` caught 11 by name matching and MISSED `Sjöberg2000`
+and `USGS2023`, whose names do not match their entries' heads — found only
+by checking that each link target's paragraph carries the work's year.
+
+**Fix:** `insert_before` should step back over the body-level bookmark
+starts (and `w:proofErr`, `w:permStart`) that immediately precede the
+target paragraph. Separately, `linkfix` could check landing by position
+(the host paragraph — or the next one — must carry the name's year), which
+sees what name matching cannot.
+
+### S1 — `citations` skips the first five paragraphs BY INDEX, so a short title block hides real prose
+<!-- status: open -->
+
+`_cite_audit._mention_scan` treats paragraphs 0–4 as the title block,
+"the rule this inherits from the loop it was lifted out of". Month of
+Birth's `mb1.docx` has a three-paragraph head — title, a blank, "1.
+Introduction" — so its first TWO body paragraphs (¶3, ¶4) are never
+scanned. Their four citations are not in the denominator, and an
+unlinked citation there would not be reported: the audit prints `ALL
+CHECKS PASSED` over prose it did not read. S1 by this file's definition
+(reports success, did not do the job); measured on one manuscript, the
+corpus not yet swept.
+
+Found 2026-09-24 while probing `paragraph.merge` on a copy of `mb1.docx`:
+merging ¶5 into ¶4 dropped `Mentions` from 68 to 65 — the three
+citations of ¶5 moved INTO the skipped zone, still linked and still
+rendered. A spy on `find_citations` named them (Republic of Uzbekistan
+2020, Bedard and Dhuey 2006, Givord 2020).
+
+**Fix belongs in the scan:** find the title block by what it IS, not by
+a count — e.g. everything before the first heading or the first
+paragraph long enough to be prose, or the Abstract's end — and measure
+the change over the corpus (how many mentions appear, and whether any
+new UNLINKED is a real one) before trusting it.
+
 ---
 
 ## Where the fixed entries are
