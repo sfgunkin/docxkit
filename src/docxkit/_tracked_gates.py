@@ -365,6 +365,75 @@ def _mismatched_paras[R](got: Parts, want: Parts,
     return out
 
 
+#: Compare's shape when a full stop moves in front of a note mark:
+#: ``[mark]<del>. </del><r><t>Japan`` — the deletion took the SPACE too,
+#: and the next run starts on the word. Groups: the mark's run end, the
+#: deletion up to its text, the text kept deleted, the space, the
+#: deletion's close, the next run up to its `w:t`, that tag's rest.
+_NOTE_SPACE_RE = re.compile(
+    r"(<w:(?:footnote|endnote)Reference\b[^>]*/></w:r>)"
+    r"(<w:del\b[^>]*><w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
+    r"<w:delText\b[^>]*>)([^<]*?)([ \t]+)(</w:delText></w:r></w:del>)"
+    r"(<w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t)"
+    r"((?:\s[^>]*)?>)(?=[^\s<])",
+    re.DOTALL)
+
+
+def _return_space(m: re.Match[str]) -> str:
+    kept = m.group(3)
+    deletion = m.group(2) + kept + m.group(5) if kept else ""
+    attrs = m.group(7)                  # ">" or ' a="b">'
+    if "xml:space" not in attrs:
+        attrs = ' xml:space="preserve"' + attrs
+    return m.group(1) + deletion + m.group(6) + attrs + m.group(4)
+
+
+def return_note_spaces(parts: Parts, revised: Parts, *,
+                       fold_space: bool = False) -> list[str]:
+    """Give back the space Compare deletes after a note mark.
+
+    Moving a full stop in front of a footnote mark — ``2017)[mark].
+    Japan`` to ``2017).[mark] Japan`` — Compare inserts ``).`` before the
+    mark and deletes ``. `` after it, the SPACE included, so accepting
+    reads ``.Japan`` (Misconceptions C28; reproduced 2026-09-25 by
+    rebuilding r1 against the clean r2 through Word — in isolation the
+    same edit came out right). The deletion is shrunk to what the clean
+    copy really removed and the space goes, untracked, to the start of
+    the next run: rejecting still gives the original's ``. ``, accepting
+    gives the clean copy's space.
+
+    Applied one candidate at a time and KEPT only when it lowers the
+    number of paragraphs accept-all fails to reproduce, so a document
+    that really means ``.[mark]Word`` is left as it is. Returns what was
+    repaired.
+    """
+    xml = parts[DOCUMENT].decode("utf-8")
+    candidates = list(_NOTE_SPACE_RE.finditer(xml))
+    if not candidates:
+        return []
+
+    def failing(body: str) -> int:
+        return len(unaccepted({**parts, DOCUMENT: body.encode("utf-8")},
+                              revised, limit=1 << 30,
+                              fold_space=fold_space))
+
+    before = failing(xml)
+    done: list[str] = []
+    for m in reversed(candidates):
+        if not before:
+            break
+        trial = xml[:m.start()] + _return_space(m) + xml[m.end():]
+        after = failing(trial)
+        if after < before:
+            xml, before = trial, after
+            word = m.string[m.end():m.end() + 30].split("<")[0].split()
+            done.append(f"returned the space after a note mark, before "
+                        f"{(word[0] if word else '')!r}")
+    if done:
+        parts[DOCUMENT] = xml.encode("utf-8")
+    return done
+
+
 def unaccepted(parts: Parts, revised: Parts, *,
                limit: int = 8,
                fold_space: bool = False) -> list[Unaccepted]:

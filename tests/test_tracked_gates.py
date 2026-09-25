@@ -812,6 +812,70 @@ def test_a_record_holding_the_WRONG_old_properties_is_refused(monkeypatch,
         "rejected: cell properties: 1 cell(s) differ — table 1 row 1 cell 1"]
 
 
+# --- the space Compare deletes after a note mark (BACKLOG S4, 2026-09-25) --
+# Misconceptions C28, reproduced by rebuilding r1 against clean_r2 through
+# Word: "2017)[mark]. Japan" -> "2017).[mark] Japan" came back with ". "
+# deleted after the mark, so accepting read ".Japan".
+
+MARK = '<w:r><w:footnoteReference w:id="3"/></w:r>'
+SPACE_DEL = ('<w:del w:id="10" w:author="W" w:date="2026-09-25T00:00:00Z">'
+             '<w:r><w:delText xml:space="preserve">. </w:delText></w:r>'
+             "</w:del>")
+
+
+def _compare_output() -> str:
+    """Compare's shape: `)` -> `).` before the mark, `. ` deleted after."""
+    return para(run("(Latre 2017"), dele(")", 7), ins(").", 8), MARK,
+                SPACE_DEL, run("Japan suspended."))
+
+
+def test_the_space_after_a_note_mark_is_GIVEN_BACK():
+    parts = make_parts(_compare_output())
+    clean = make_parts(para(run("(Latre 2017)."), MARK,
+                            run(" Japan suspended.", preserve=True)))
+    original = make_parts(para(run("(Latre 2017)"), MARK,
+                               run(". Japan suspended.", preserve=True)))
+    assert len(tracked.unaccepted(parts, clean)) == 1
+
+    done = tracked.return_note_spaces(parts, clean)
+
+    assert done == ["returned the space after a note mark, before 'Japan'"]
+    assert tracked.unaccepted(parts, clean) == []
+    assert tracked.untracked(parts, original) == [], "reject still gives '. '"
+
+
+def test_a_document_that_MEANS_no_space_is_left_alone():
+    """Kept only when it helps: a clean copy reading ``.[mark]Japan``
+    already accepts, so there is nothing to repair."""
+    parts = make_parts(_compare_output())
+    clean = make_parts(para(run("(Latre 2017)."), MARK,
+                            run("Japan suspended.")))
+    before = dict(parts)
+
+    assert tracked.return_note_spaces(parts, clean) == []
+    assert parts == before
+
+
+def test_build_gives_the_space_back_and_SAYS_so(monkeypatch, tmp_path):
+    body = clean_document().replace(
+        "<w:body>", "<w:body>" + _compare_output(), 1)
+    clean = clean_document().replace(
+        "<w:body>", "<w:body>" + para(
+            run("(Latre 2017)."), MARK,
+            run(" Japan suspended.", preserve=True)), 1)
+    original = clean_document().replace(
+        "<w:body>", "<w:body>" + para(
+            run("(Latre 2017)"), MARK,
+            run(". Japan suspended.", preserve=True)), 1)
+    sources = _pair(tmp_path, original, clean)
+
+    report, _ = _build(monkeypatch, body, sources)
+
+    assert report.returned_spaces == [
+        "returned the space after a note mark, before 'Japan'"]
+    assert report.unaccepted == []
+
+
 def test_the_structure_refusal_can_be_turned_off_like_the_other_one(
         monkeypatch, sources):
     """`reject_check=False` builds the file anyway, which is what a

@@ -1055,6 +1055,17 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
     ("_tracked_gates.py", r"<w:del(?=[\s/>])"): (
         "name reader: `package_counts` counts deletions as Word does, and "
         "a paragraph mark's empty one is a deletion"),
+    ("_tracked_gates.py",
+     r"(<w:(?:footnote|endnote)Reference\b[^>]*/></w:r>)"
+     r"(<w:del\b[^>]*><w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
+     r"<w:delText\b[^>]*>)([^<]*?)([ \t]+)(</w:delText></w:r></w:del>)"
+     r"(<w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t)"
+     r"((?:\s[^>]*)?>)(?=[^\s<])"): (
+        "shape reader: `return_note_spaces` looks for ONE sequence Compare "
+        "writes — a note mark, a deletion ending in a space, a run — and "
+        "the probes cannot reach the deletion without the mark before it; "
+        "a miss leaves the redline as Compare wrote it, and each repair is "
+        "kept only if accept-all then reproduces more of the clean copy"),
     ("_tracked_gates.py", r"<w:{tag}\b"): (
         "name reader: `structure_counts` compares element counts before "
         "and after a batch; an empty table, row or cell is one element on "

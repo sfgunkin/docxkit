@@ -231,6 +231,9 @@ class BuildReport:
         #: OMML, put back from what a source really spells. See
         #: :func:`docxkit.hygiene.restore_math_glyphs`.
         self.restored_glyphs: list[str] = []
+        #: Spaces Compare deleted after a note mark and the build gave
+        #: back. See :func:`return_note_spaces`.
+        self.returned_spaces: list[str] = []
         #: Comments Compare kept TWICE because both inputs carried them.
         #: See :func:`docxkit.hygiene.dedupe_comments`.
         self.deduped_comments: list[str] = []

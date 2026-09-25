@@ -70,6 +70,7 @@ from ._tracked_gates import bookmark_names as bookmark_names
 from ._tracked_gates import cell_property_changes as cell_property_changes
 from ._tracked_gates import compare_collateral as compare_collateral
 from ._tracked_gates import package_counts as package_counts
+from ._tracked_gates import return_note_spaces as return_note_spaces
 from ._tracked_gates import revisions_by_part as revisions_by_part
 from ._tracked_gates import structure_counts as structure_counts
 from ._tracked_gates import structure_diff as structure_diff
@@ -126,6 +127,7 @@ __all__ = [
     "cell_property_changes",
     "compare_collateral",
     "package_counts",
+    "return_note_spaces",
     "revisions_by_part",
     "structure_counts",
     "structure_diff",
@@ -356,6 +358,17 @@ def _seed_scaffold(doc: Any, classify: Classifier | None,
         notes.append(f"no comment scaffold could be seeded ({exc}) — the "
                      "XML pass has nothing to clone and will refuse")
         return 0
+
+
+def _return_spaces(parts: Parts, revised_parts: Parts, report: BuildReport,
+                   say: Any, *, fold_space: bool) -> None:
+    """The space Compare deletes after a note mark, given back BEFORE the
+    gates read the redline — a Compare artefact, not an edit. See
+    :func:`return_note_spaces`."""
+    report.returned_spaces = return_note_spaces(parts, revised_parts,
+                                                fold_space=fold_space)
+    for note in report.returned_spaces:
+        say(f"  {note} (Compare deleted it with the full stop)")
 
 
 def _carry_rewrites(parts: Parts, original: str | Path,
@@ -670,6 +683,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"fields; metadata is not tracked-changeable, so nothing "
                 f"else would ever report this)")
         _carry_rewrites(parts, original, report, say)
+        _return_spaces(parts, revised_parts, report, say,
+                       fold_space=not whitespace)
         report.dropped = compare_collateral(revised_parts, parts)
         for note in report.dropped:
             say(f"  WARNING: Compare {note}")
