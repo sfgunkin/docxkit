@@ -14,6 +14,21 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `set_cell` into a cell with NO run writes nothing and reports success~~ — FIXED 25.09, `e08262a`
+
+<!-- status: fixed -->
+
+Seen while fixing the table writers (2026-09-25), not measured on a real
+cell yet. `set_run_text` returns the fragment unchanged when it holds no
+`w:t` ("if not runs: return xml"), so `set_cell` / `set_row` / `update`
+on a cell whose paragraph has no run at all return the document as it
+was — no error, and `update` even records a `CellChange`. A cell Word
+emptied can be `<w:tc><w:tcPr/><w:p/></w:tc>`. **Fix:** grow a run in
+the paragraph's own properties (as `set_result` grows an SE line), or
+refuse; first count such cells across the corpus.
+
+**Measured, then fixed in `e08262a`.** Common, not exotic: 9,360 of 81,386 table cells in a 150-manuscript sample have no run at all (60 more have a run and no `w:t`) — every blank cell Word writes. Reproduced on both `<w:p/>` and a `pPr`-only paragraph: `set_cell` returned the document unchanged, and `update` reported a `CellChange` it never made, which is an S1 shape in all but name. `_table_core._ensure_run` grows a run at the end of the first paragraph (expanding a self-closing one) in the paragraph MARK's live run properties; `_write_text` and `set_result` call it. Every blank cell of a copy of the HCW manuscript filled: 72 written and read back, lint clean.
+
 ### ~~S2 — the result-aware table write (`set_cell` / `set_result`) is incomplete — reopens the 24.09 S2~~ — FIXED 25.09, `381a048`
 
 <!-- status: fixed -->

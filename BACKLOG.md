@@ -46,18 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `set_cell` into a cell with NO run writes nothing and reports success
-<!-- status: open -->
-
-Seen while fixing the table writers (2026-09-25), not measured on a real
-cell yet. `set_run_text` returns the fragment unchanged when it holds no
-`w:t` ("if not runs: return xml"), so `set_cell` / `set_row` / `update`
-on a cell whose paragraph has no run at all return the document as it
-was — no error, and `update` even records a `CellChange`. A cell Word
-emptied can be `<w:tc><w:tcPr/><w:p/></w:tc>`. **Fix:** grow a run in
-the paragraph's own properties (as `set_result` grows an SE line), or
-refuse; first count such cells across the corpus.
-
 ### S4 — no tool closes a BACKLOG entry; every session hand-rolls the move
 <!-- status: open -->
 
