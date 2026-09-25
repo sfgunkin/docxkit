@@ -266,7 +266,8 @@ def test_a_table_with_TRACKED_CHANGES_is_refused_by_every_writer():
     """Gap 6: `set_result` wrote inside the `w:ins`, so reject-all gave
     ``0.012*`` for ``0.012**``, and its clones copied revision ids."""
     from docxkit.tables import set_row
-    tracked = para('<w:ins w:id="7" w:author="R" w:date="2026-09-24T00:00:00Z">'
+    tracked = para('<w:ins w:id="7" w:author="R" '
+                   'w:date="2026-09-24T00:00:00Z">'
                    + r("0.015") + "</w:ins>", r("**", SUP))
     xml = results(tracked)
     table = by_caption(xml, "Table 4.")
