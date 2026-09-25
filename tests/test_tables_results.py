@@ -76,7 +76,7 @@ def test_set_cell_REFUSES_a_two_line_cell_unless_asked_to_flatten():
     xml = results(TWO_LINE)
     table = by_caption(xml, "Table 4.")
 
-    with pytest.raises(AnchorError, match=r"2 lines of text.*set_result"):
+    with pytest.raises(AnchorError, match=r"more than one line.*set_result"):
         set_cell(xml, table, 1, 1, "0.017***")
     flat = set_cell(xml, table, 1, 1, "x", flatten=True)
     assert visible_text(cell(flat)) == "x"
@@ -138,6 +138,188 @@ def test_stars_that_are_not_asterisks_are_refused():
     with pytest.raises(ValueError, match="asterisks"):
         set_result(xml, by_caption(xml, "Table 4."), 1, 1, "0.1",
                    stars="+")
+
+
+# --- the review of 2026-09-24: nine gaps in the fix above ---------------
+
+
+def results_row(*cells: str) -> str:
+    """A captioned table whose data row holds `cells` after its label."""
+    tcs = "".join(f"<w:tc>{c}</w:tc>" for c in cells)
+    heads = "".join(f"<w:tc>{para(r(f'({i})'))}</w:tc>"
+                    for i in range(1, len(cells) + 1))
+    return document(
+        para(r("Table 4. Estimates"))
+        + "<w:tbl><w:tr><w:tc>" + para(r("Variable")) + "</w:tc>" + heads
+        + "</w:tr><w:tr><w:tc>" + para(r("Age")) + "</w:tc>" + tcs
+        + "</w:tr></w:tbl>")
+
+
+def line_texts(xml: str) -> list[str]:
+    return [visible_text(p.group(0)) for p in PARA_RE.finditer(cell(xml))]
+
+
+def test_UPDATE_keeps_the_stars_superscript():
+    """Gap 1: `update` — the documented regenerate-from-data path —
+    still wrote every cell through `set_run_text`."""
+    from docxkit.tables import update
+    xml = results(STARRED)
+
+    out, _ = update(xml, by_caption(xml, "Table 4."), [[0.0171]],
+                    row0=1, col0=1)
+
+    assert lines(out) == [[("0.017", False, False), ("**", True, False)]]
+
+
+def test_UPDATE_refuses_a_coefficient_over_its_SE():
+    """Its text reads as ONE string, so the old SE rode onto line 1 as the
+    number's suffix — ``0.017** (0.004)`` — and the SE line emptied."""
+    from docxkit.tables import update
+    xml = results(TWO_LINE)
+
+    with pytest.raises(AnchorError, match="set_result"):
+        update(xml, by_caption(xml, "Table 4."), [[0.0171]], row0=1, col0=1)
+
+
+def test_SET_ROW_keeps_the_stars_superscript():
+    from docxkit.tables import set_row
+    xml = results(STARRED)
+
+    out = set_row(xml, by_caption(xml, "Table 4."), 1, [None, "0.017***"])
+
+    assert lines(out) == [[("0.017", False, False), ("***", True, False)]]
+
+
+def test_FLATTEN_puts_a_result_on_ONE_line_with_its_stars_raised():
+    """Gap 2: the star branch ignored `flatten` and spliced the old SE
+    back under the new coefficient: ['0.017***', '(0.004)']."""
+    xml = results(TWO_LINE)
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 1, "0.017***",
+                   flatten=True)
+
+    assert line_texts(out) == ["0.017***", ""]
+    assert lines(out)[0] == [("0.017", False, False), ("***", True, False)]
+
+
+@pytest.mark.parametrize("se_line", [
+    para(r("("), r("0.0", ITALIC), r("10", ITALIC), r(")")),
+    para(r("("), r("0.004", ITALIC), r(")"), r(" ")),
+])
+def test_the_SE_stays_italic_however_many_runs_its_line_has(se_line):
+    """Gap 3: any count but three wrote "(se)" into the upright "(" run —
+    13 of 42 SEs in Misconceptions Table 6."""
+    xml = results(para(r("0.012"), r("**", SUP)) + se_line)
+
+    out = set_result(xml, by_caption(xml, "Table 4."), 1, 1, "0.017",
+                     stars="**", se="0.005")
+
+    assert [t for t in lines(out)[1] if t[0].strip()] == [
+        ("(", False, False), ("0.005", False, True), (")", False, False)]
+
+
+def test_set_cell_CLONES_a_star_run_in_a_table_that_raises_its_stars():
+    """Gap 4: a bare coefficient that has just become significant, beside
+    a starred one."""
+    xml = results_row(STARRED, para(r("0.012")))
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 2, "0.017**")
+
+    assert lines(out) == [[("0.017", False, False), ("**", True, False)]]
+
+
+def test_set_cell_leaves_FULL_SIZE_stars_in_a_table_that_prints_them_so():
+    """The other half of gap 4: no superscript star anywhere in the table
+    is that paper's house, and a clone would break it."""
+    xml = results(para(r("0.012**")))
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 1, "0.017***")
+
+    assert lines(out) == [[("0.017***", False, False)]]
+
+
+def test_an_NBSP_paragraph_is_NOT_a_second_line():
+    """Gap 5: 141 real cells were refused as two-line, and following the
+    refusal's advice corrupted them."""
+    xml = results(para(r("Country")) + para(r(" ")))
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 1, "Economy")
+
+    assert line_texts(out)[0] == "Economy"
+
+
+def test_a_result_stacked_with_a_LINE_BREAK_is_refused():
+    """The other half of gap 5: coefficient and SE in ONE paragraph were
+    not refused, and the SE was blanked."""
+    stacked = para(r("0.012"), r("**", SUP), "<w:r><w:br/></w:r>",
+                   r("("), r("0.004", ITALIC), r(")"))
+    xml = results(stacked)
+    table = by_caption(xml, "Table 4.")
+
+    with pytest.raises(AnchorError, match="more than one line"):
+        set_cell(xml, table, 1, 1, "0.017***")
+    with pytest.raises(AnchorError, match="broken inside a paragraph"):
+        set_result(xml, table, 1, 1, "0.017", stars="***")
+
+
+def test_a_table_with_TRACKED_CHANGES_is_refused_by_every_writer():
+    """Gap 6: `set_result` wrote inside the `w:ins`, so reject-all gave
+    ``0.012*`` for ``0.012**``, and its clones copied revision ids."""
+    from docxkit.tables import set_row
+    tracked = para('<w:ins w:id="7" w:author="R" w:date="2026-09-24T00:00:00Z">'
+                   + r("0.015") + "</w:ins>", r("**", SUP))
+    xml = results(tracked)
+    table = by_caption(xml, "Table 4.")
+
+    for write in (lambda: set_result(xml, table, 1, 1, "0.017", stars="*"),
+                  lambda: set_cell(xml, table, 1, 1, "0.017*"),
+                  lambda: set_row(xml, table, 1, [None, "0.017*"])):
+        with pytest.raises(AnchorError, match="tracked changes"):
+            write()
+
+
+def test_set_result_finds_the_SE_line_past_an_EMPTY_spacer():
+    """Gap 7: by raw paragraph index the spacer was the "SE line", and
+    the old SE went on printing under the new one."""
+    xml = results(para(r("0.012"), r("**", SUP)) + para()
+                  + para(r("("), r("0.004", ITALIC), r(")")))
+
+    out = set_result(xml, by_caption(xml, "Table 4."), 1, 1, "0.017",
+                     stars="***", se="0.005")
+
+    assert line_texts(out) == ["0.017***", "", "(0.005)"]
+
+
+def test_a_LEADING_superscript_marker_does_not_take_the_stars():
+    """Gap 8: ``[a (sup)][0.012]`` printed ``**0.017``."""
+    xml = results_row(STARRED, para(r("a", SUP), r("0.012")))
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 2, "0.017**")
+
+    assert visible_text(cell(out)) == "0.017**"
+    assert lines(out) == [[("0.017", False, False), ("**", True, False)]]
+
+
+def test_a_line_with_ONLY_a_superscript_run_gets_a_plain_one():
+    """Gap 8, second half: it raised, where the old writer wrote the text
+    (Job Tenure, Table 4, the Moldova row)."""
+    xml = results(para(r("a", SUP)))
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 1, "12")
+
+    assert lines(out) == [[("12", False, False)]]
+
+
+def test_a_cloned_run_does_NOT_copy_the_number_runs_tab():
+    """Gap 9: the star run was the whole number run re-styled, so its
+    `w:tab` came too and the stars printed at the next tab stop."""
+    xml = results(para('<w:r><w:tab/><w:t>0.012</w:t></w:r>'))
+
+    out = set_result(xml, by_caption(xml, "Table 4."), 1, 1, "0.017",
+                     stars="**", se="0.004")
+
+    assert cell(out).count("<w:tab/>") == 1
+    assert line_texts(out) == ["0.017**", "(0.004)"]
 
 
 def test_the_written_cell_LINTS_clean():

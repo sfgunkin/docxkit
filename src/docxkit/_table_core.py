@@ -897,21 +897,31 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str, *,
     shading survive — EXCEPT in the two shapes where that loses what a
     results table is made of (BACKLOG S2, Misconceptions W7, 770 cells):
 
-    * a cell with a SUPERSCRIPT run, written ``"0.017***"``: the number
-      goes into the plain run and the stars into the superscript one, as
-      :func:`set_result` does. Blanking the superscript run and putting
-      the stars in the number printed them full size, and Word wrapped
-      "0.017**" / "*" in every coefficient column of Table 4;
-    * a cell of TWO text paragraphs — a coefficient over its standard
-      error: refused, because one string cannot say what goes on which
-      line, and blanking the second pulled the SE onto the coefficient's
-      line and left an empty one. Use :func:`set_result`, or pass
-      ``flatten=True`` for the old one-line behaviour.
+    * a number with STARS, ``"0.017***"``, in a table that raises its
+      stars: the number goes into the plain run and the stars into a
+      superscript one — the cell's own, or one cloned from the number's
+      properties when the cell had none (a coefficient that has just
+      become significant, a blanked cell). A table whose stars print
+      full size is left that way. Blanking the superscript run and
+      putting the stars in the number printed them full size, and Word
+      wrapped "0.017**" / "*" in every coefficient column of Table 4;
+    * a cell of TWO lines of text — a coefficient over its standard
+      error, as two paragraphs or one broken by ``<w:br/>``: refused,
+      because one string cannot say what goes on which line, and
+      blanking the second pulled the SE onto the coefficient's line and
+      left an empty one. Use :func:`set_result`; or pass
+      ``flatten=True`` to write the text on the FIRST line and blank the
+      rest (stars still raised). A paragraph holding only spaces or an
+      NBSP is not a line.
 
     No gate saw either: the cell TEXT reads back exactly as written.
+    A table with tracked changes is refused, as :func:`update` refuses
+    one: the row index counts the table as finally shown, and a written
+    run can land inside a revision.
     """
     table = _fresh(xml, table, "set_cell")
     body = xml[table.start:table.end]
+    _refuse_revisions(body, table, "set_cell")
     trs = list(rows_of(body))
     row = _row_at(table, len(trs), row, "set")
     tr = trs[row]
@@ -920,23 +930,9 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str, *,
         raise AnchorError(f"row {row} has {len(tcs)} cells, "
                           f"cannot set column {col}")
     tc = tcs[col]
-    cell = tc.group(0)
-    lines = [m for m in PARA_RE.finditer(cell) if visible_text(m.group(0))]
-    stars = _STARS_RE.fullmatch(text)
-    if len(lines) > 1 and not flatten:
-        raise AnchorError(
-            f"row {row} col {col} holds {len(lines)} lines of text "
-            f"({' / '.join(visible_text(m.group(0))[:20] for m in lines)!r}); "
-            f"one string cannot say what goes on which — use "
-            f"tables.set_result(..., se=...), or flatten=True")
-    if stars and lines and _superscript_runs(lines[0].group(0)):
-        first = lines[0]
-        new_tc = (cell[:first.start()]
-                  + _fill_result(first.group(0), stars.group(1),
-                                 stars.group(2))
-                  + cell[first.end():])
-    else:
-        new_tc = set_run_text(cell, text)
+    new_tc = _write_text(tc.group(0), text, flatten=flatten,
+                         raises=_raises_stars(body),
+                         where=f"row {row} col {col}")
     new_tr = tr.group(0)[:tc.start()] + new_tc + tr.group(0)[tc.end():]
     new_body = body[:tr.start()] + new_tr + body[tr.end():]
     return xml[:table.start] + new_body + xml[table.end:]
@@ -945,6 +941,71 @@ def set_cell(xml: str, table: Table, row: int, col: int, text: str, *,
 #: A result: the number, and the significance stars after it.
 _STARS_RE = re.compile(rf"({_NUM_RE.pattern})(\*{{0,3}})")
 _SUPERSCRIPT = '<w:vertAlign w:val="superscript"/>'
+#: A line break inside a paragraph — not a page or column break.
+_LINE_BREAK_RE = re.compile(r'<w:br\b(?![^>]*w:type="(?:page|column)")[^>]*/>')
+
+
+def _refuse_revisions(body: str, table: Table, verb: str) -> None:
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - {verb} the "
+            f"clean build and rebuild the redline from it")
+
+
+def _shows(xml: str) -> bool:
+    """Does this fragment print anything? Spaces and NBSP do not count —
+    Word fills an empty cell paragraph with an NBSP."""
+    return bool(visible_text(xml).strip())
+
+
+def _lines(cell: str) -> list[re.Match[str]]:
+    """The cell's paragraphs that print something, in order."""
+    return [m for m in PARA_RE.finditer(cell) if _shows(m.group(0))]
+
+
+def _broken(para_xml: str) -> bool:
+    """Two lines in ONE paragraph: text on both sides of a ``<w:br/>``."""
+    return sum(_shows(piece) for piece in
+               _LINE_BREAK_RE.split(para_xml)) > 1
+
+
+def _raises_stars(body: str) -> bool:
+    """Does this table print its significance stars as superscript?"""
+    return any(_is_superscript(m.group(0)) and "*" in visible_text(m.group(0))
+               for m in RUN_RE.finditer(body))
+
+
+def _write_text(cell: str, text: str, *, flatten: bool, raises: bool,
+                where: str) -> str:
+    """One cell rewritten to `text` — the writer `set_cell`, `set_row` and
+    `update` share (review of 2026-09-24: `c79bea3` fixed `set_cell` and
+    left the other two writing every cell through `set_run_text`).
+
+    `raises`: the table prints its stars as superscript, so a star run is
+    cloned where the cell has none. See :func:`set_cell` for the rules.
+    """
+    lines = _lines(cell)
+    if (len(lines) > 1 or any(_broken(m.group(0)) for m in lines)) \
+            and not flatten:
+        shown = " / ".join(visible_text(m.group(0)).strip()[:20]
+                           for m in lines)
+        raise AnchorError(
+            f"{where} holds more than one line of text ({shown!r}); one "
+            f"string cannot say what goes on which — use "
+            f"tables.set_result(..., se=...), or flatten=True")
+    result = _STARS_RE.fullmatch(text)
+    target = lines[0] if lines else next(
+        (m for m in PARA_RE.finditer(cell) if _text_runs(m.group(0))), None)
+    if result is None or target is None or not (
+            _superscript_runs(target.group(0))
+            or (raises and result.group(2))):
+        return set_run_text(cell, text)
+    filled = _fill_result(target.group(0), result.group(1), result.group(2),
+                          clone=raises)
+    before, after = cell[:target.start()], cell[target.end():]
+    if flatten:                  # one line: every other line's words go
+        before, after = set_run_text(before, ""), set_run_text(after, "")
+    return before + filled + after
 
 
 def _is_superscript(run_xml: str) -> bool:
@@ -966,42 +1027,104 @@ def _superscript_runs(para_xml: str) -> list[re.Match[str]]:
     return [m for m in _text_runs(para_xml) if _is_superscript(m.group(0))]
 
 
-def _fill_result(para_xml: str, number: str, stars: str) -> str:
+def _run_like(run_xml: str, text: str, *, raised: bool) -> str:
+    """A NEW run with `run_xml`'s own live properties and only `text`.
+
+    Properties, not the run: copying the whole run carried its `w:tab`,
+    `w:br`, `w:noBreakHyphen` or note reference into the clone, so the
+    stars printed at the next tab stop or a reference was duplicated —
+    and the text read back right every time (review of 2026-09-24).
+    `live_properties` leaves any tracked-change record behind.
+    """
+    own = own_properties(run_xml, "rPr")
+    rpr = f"<w:rPr>{live_properties(own[2])}</w:rPr>" if own else ""
+    run = set_run_property(f"<w:r>{rpr}<w:t></w:t></w:r>", "vertAlign",
+                           _SUPERSCRIPT if raised else "")
+    return set_run_text(run, text)
+
+
+def _fill_result(para_xml: str, number: str, stars: str, *,
+                 clone: bool = True) -> str:
     """`number` into the first plain run, `stars` into the first
-    superscript run — cloned from the number run when the cell had none —
-    and every other text run blanked."""
+    superscript run AFTER it, every other text run blanked.
+
+    With no superscript run after the number, the stars get a new one in
+    the number's properties (`clone`), or go into the number's own run
+    when the table prints its stars full size. A superscript run BEFORE
+    the number — a leading note marker — is not the star run: writing
+    the stars there printed ``**0.017``. A line with no plain run at all
+    gets one, in the first run's properties lowered.
+    """
     runs = _text_runs(para_xml)
-    plain = next((m for m in runs if not _is_superscript(m.group(0))), None)
+    at = next((i for i, m in enumerate(runs)
+               if not _is_superscript(m.group(0))), None)
+    sup = next((m for m in runs[at + 1:] if _is_superscript(m.group(0))),
+               None) if at is not None else None
+    plain = runs[at] if at is not None else None
+    grow = ""
     if plain is None:
-        raise AnchorError("the cell's line has no plain run for the number")
-    sup = next((m for m in runs if _is_superscript(m.group(0))), None)
+        if not runs:
+            raise AnchorError("the cell's line has no run to write into")
+        grow = _run_like(runs[0].group(0), number, raised=False)
     out, last = [], 0
     for m in runs:
         run = m.group(0)
         if m is plain:
-            new = set_run_text(run, number)
-            if sup is None and stars:
-                new += set_run_text(
-                    set_run_property(run, "vertAlign", _SUPERSCRIPT), stars)
+            new = set_run_text(run, number if sup or clone or not stars
+                               else number + stars)
+            if sup is None and stars and clone:
+                new += _run_like(run, stars, raised=True)
         elif m is sup:
             new = set_run_text(run, stars)
         else:
             new = set_run_text(run, "")
         out += [para_xml[last:m.start()], new]
         last = m.end()
+    if grow:
+        stars_run = _run_like(runs[0].group(0), stars, raised=True) \
+            if stars else ""
+        out.append(grow + stars_run)
     return "".join(out) + para_xml[last:]
 
 
+def _is_italic(run_xml: str) -> bool:
+    own = own_properties(run_xml, "rPr")
+    return own is not None and re.search(
+        r'<w:i(?:\s+w:val="(?:1|true|on)")?\s*/>',
+        live_properties(own[2])) is not None
+
+
 def _fill_se(para_xml: str, se: str) -> str:
-    """The standard error into its line: "(", se, ")" across three runs
-    — the house shape, with the SE italic in the middle one — or "(se)"
-    into the first and the rest blanked."""
+    """The standard error into its line, each run keeping its ROLE.
+
+    The house line is ``(`` upright, the SE italic, ``)`` upright, and
+    Word splits it into as many runs as it likes — ``['(', '0.0', '10',
+    ')']``, a trailing space. Choosing the shape by counting three runs
+    wrote ``(se)`` into the upright ``(`` run whenever the count was
+    anything else, and the SE lost its italic: 13 of 42 in Misconceptions
+    Table 6, copied from the paper's own `write_cell`. So: the first run
+    holding ``(`` keeps ``(``, the last holding ``)`` keeps ``)``, and the
+    SE goes into the first run between them — italic when one is. Any
+    other shape gets ``(se)`` in its first run, as before.
+    """
     runs = _text_runs(para_xml)
-    parts = ["(", se, ")"] if len(runs) == 3 else [f"({se})"]
+    texts = [visible_text(m.group(0)) for m in runs]
+    open_at = next((i for i, t in enumerate(texts) if "(" in t), None)
+    close_at = next((i for i in reversed(range(len(texts)))
+                     if ")" in texts[i]), None)
+    fill: dict[int, str]
+    if open_at is not None and close_at is not None \
+            and close_at - open_at > 1:
+        middle = range(open_at + 1, close_at)
+        se_at = next((i for i in middle if _is_italic(runs[i].group(0))),
+                     open_at + 1)
+        fill = {open_at: "(", se_at: se, close_at: ")"}
+    else:
+        fill = {0: f"({se})"}
     out, last = [], 0
     for i, m in enumerate(runs):
-        text = parts[i] if i < len(parts) else ""
-        out += [para_xml[last:m.start()], set_run_text(m.group(0), text)]
+        out += [para_xml[last:m.start()],
+                set_run_text(m.group(0), fill.get(i, ""))]
         last = m.end()
     return "".join(out) + para_xml[last:]
 
@@ -1021,11 +1144,19 @@ def set_result(xml: str, table: Table, row: int, col: int, number: str, *,
     Upstreamed from Misconceptions' `write_cell` (W7, 2026-09-24), which
     `set_cell` could not replace: it wrote Tables 4-6, B1 and B2 with the
     stars full size and the SE line emptied.
+
+    The lines are the paragraphs that PRINT something — an empty spacer
+    between coefficient and SE is not the SE line, and writing by raw
+    paragraph index left the old SE printing under the new one. Refused:
+    a cell of more than two lines, one whose lines are broken by
+    ``<w:br/>`` inside a paragraph (the SE would be blanked or stranded),
+    and a table with tracked changes (see :func:`set_cell`).
     """
     if stars.strip("*"):
         raise ValueError(f"set_result: stars are asterisks, not {stars!r}")
     table = _fresh(xml, table, "set_result")
     body = xml[table.start:table.end]
+    _refuse_revisions(body, table, "set_result")
     trs = list(rows_of(body))
     row = _row_at(table, len(trs), row, "set")
     tr = trs[row]
@@ -1035,25 +1166,34 @@ def set_result(xml: str, table: Table, row: int, col: int, number: str, *,
                           f"cannot set column {col}")
     tc = tcs[col]
     cell = tc.group(0)
-    lines = list(PARA_RE.finditer(cell))
-    if not lines or not _text_runs(lines[0].group(0)):
-        raise AnchorError(f"row {row} col {col} has no run to write into")
-    first = lines[0]
+    lines = _lines(cell)
+    where = f"row {row} col {col}"
+    if len(lines) > 2 or any(_broken(m.group(0)) for m in lines):
+        shown = " / ".join(visible_text(m.group(0)).strip()[:20]
+                           for m in lines)
+        raise AnchorError(
+            f"{where}: not a number over its standard error ({shown!r}) — "
+            f"lines broken inside a paragraph, or more than two")
+    first = lines[0] if lines else next(
+        (m for m in PARA_RE.finditer(cell) if _text_runs(m.group(0))), None)
+    if first is None:
+        raise AnchorError(f"{where} has no run to write into")
     new_first = _fill_result(first.group(0), number, stars)
     if se is None:
         new_tc = cell[:first.start()] + new_first + cell[first.end():]
-    elif len(lines) > 1 and _text_runs(lines[1].group(0)):
+    elif len(lines) > 1:
         second = lines[1]
         new_tc = (cell[:first.start()] + new_first
                   + cell[first.end():second.start()]
                   + _fill_se(second.group(0), se) + cell[second.end():])
     else:
-        plain = next(m for m in _text_runs(first.group(0))
-                     if not _is_superscript(m.group(0)))
+        runs = _text_runs(first.group(0))
+        plain = next((m for m in runs if not _is_superscript(m.group(0))),
+                     runs[0])
         ppr = own_properties(first.group(0), "pPr")
-        props = first.group(0)[ppr[0]:ppr[1]] if ppr else ""
-        line = (f"<w:p>{props}{set_run_text(plain.group(0), f'({se})')}"
-                "</w:p>")
+        props = f"<w:pPr>{live_properties(ppr[2])}</w:pPr>" if ppr else ""
+        line = (f"<w:p>{props}"
+                f"{_run_like(plain.group(0), f'({se})', raised=False)}</w:p>")
         new_tc = (cell[:first.start()] + new_first + line
                   + cell[first.end():])
     new_tr = tr.group(0)[:tc.start()] + new_tc + tr.group(0)[tc.end():]
@@ -1199,7 +1339,7 @@ def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
 
 
 def set_row(xml: str, table: Table, row: int,
-            values: Sequence[object]) -> str:
+            values: Sequence[object], *, flatten: bool = False) -> str:
     """Write a whole row's cells, keeping each cell's formatting.
 
     One call per ROW, not per cell, and deliberately: a cloned row holds
@@ -1212,12 +1352,15 @@ def set_row(xml: str, table: Table, row: int,
     sequence is refused rather than zipped off the end. Negative `row`
     counts from the bottom.
 
-    Each cell keeps its own run properties: the text goes into
-    the first ``w:t`` and any others are blanked, so a value split
-    across runs does not keep its old tail hanging off the new one.
+    Each cell is written as :func:`set_cell` writes one — its own run
+    properties kept, stars raised in a table that raises them, a
+    two-line cell refused unless `flatten` — so a value split across
+    runs does not keep its old tail hanging off the new one.
     """
     table = _fresh(xml, table, "set_row")
     body = xml[table.start:table.end]
+    _refuse_revisions(body, table, "set_row")
+    raises = _raises_stars(body)
     trs = list(rows_of(body))
     row = _row_at(table, len(trs), row, "set")
     tr = trs[row].group(0)
@@ -1236,10 +1379,13 @@ def set_row(xml: str, table: Table, row: int,
             f"row {row} has {len(tcs)} cells and only {len(values)} "
             f"value(s) were given — the rest would keep the values they "
             f"were cloned from. Pass None for the cells that stay.")
-    for tc, value in reversed(list(zip(tcs, values, strict=True))):
+    for col, (tc, value) in reversed(list(enumerate(
+            zip(tcs, values, strict=True)))):
         if value is None:
             continue
-        tr = (tr[:tc.start()] + set_run_text(tc.group(0), str(value))
+        tr = (tr[:tc.start()]
+              + _write_text(tc.group(0), str(value), flatten=flatten,
+                            raises=raises, where=f"row {row} col {col}")
               + tr[tc.end():])
     rows = [t.group(0) for t in trs]
     rows[row] = tr
@@ -1328,8 +1474,8 @@ def _render_value(old: str, value: object, *,
 
 
 def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
-           row0: int = 1, col0: int = 0, decimal: str | None = None
-           ) -> tuple[str, list[CellChange]]:
+           row0: int = 1, col0: int = 0, decimal: str | None = None,
+           flatten: bool = False) -> tuple[str, list[CellChange]]:
     """Rewrite a block of `table` from `rows`, preserving formatting.
 
     `rows` is anything rectangular — lists of lists, or a pandas
@@ -1351,6 +1497,13 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
     tracked changes (the first ``w:t`` of a revised cell can sit inside
     ``w:ins``, so the write would land inside the revision; update the
     clean build and rebuild the redline instead).
+
+    Each changed cell is written as :func:`set_cell` writes one, so
+    stars stay superscript in a table that raises them, and a two-line
+    cell — a coefficient over its SE — is REFUSED unless `flatten`:
+    its text is read as one string, so the old SE rode along as the
+    number's suffix onto line 1 and the SE line was emptied (review of
+    2026-09-24). Write those cells with :func:`set_result`.
 
     Returns the new XML and a :class:`CellChange` per cell whose text
     actually changed. An update you expected to be a no-op (same data,
@@ -1379,6 +1532,7 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
     _check_decimal(decimal)
     mark = decimal or decimal_mark(
         _cell_text(tc.group(0)) for tr in trs for tc in cells_of(tr.group(0)))
+    raises = _raises_stars(body)
     changes: list[CellChange] = []
     edits: list[tuple[int, int, str]] = []      # (start, end) within body
     for i, incoming in enumerate(grid):
@@ -1401,7 +1555,9 @@ def update(xml: str, table: Table, rows: Iterable[Sequence[object]], *,
                 else None
             changes.append(CellChange(row0 + i, col0 + j, old, new, moved))
             edits.append((tr.start() + tc.start(), tr.start() + tc.end(),
-                          set_run_text(tc.group(0), new)))
+                          _write_text(tc.group(0), new, flatten=flatten,
+                                      raises=raises,
+                                      where=f"row {row0 + i} col {col0 + j}")))
 
     for start, end, replacement in sorted(edits, reverse=True):
         body = body[:start] + replacement + body[end:]
