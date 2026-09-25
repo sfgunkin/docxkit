@@ -977,6 +977,8 @@ def _raises_stars(body: str) -> bool:
 
 
 _P_EMPTY_RE = re.compile(r"<w:p\b([^>]*)/>")
+#: An equation; `m:oMathPara` always holds one.
+_OMATH_OPEN_RE = re.compile(r"<m:oMath\b")
 
 
 def _ensure_run(cell: str) -> str:
@@ -992,7 +994,7 @@ def _ensure_run(cell: str) -> str:
     """
     if _T_OPEN_RE.search(cell):
         return cell
-    if "<m:oMath" in cell:
+    if _OMATH_OPEN_RE.search(cell):
         # Its text is in `m:t`, which is no `w:t`: the cell is an
         # EQUATION, not a blank one, and a grown run printed the formula's
         # characters again beside it as prose (HCW's equation tables —
