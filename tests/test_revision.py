@@ -3677,7 +3677,7 @@ def test_the_structure_gate_names_a_BOOKMARK_the_reject_dropped(tmp_path):
     assert report.structure_diff == ["bookmarkStart: lost 'Moran1950'"]
 
 
-def _anchored_batch(tmp_path, *names: str) -> Path:
+def _anchored_batch(tmp_path, *names: str) -> str:
     """A batch whose one sentence carries these bookmarks, no revisions."""
     starts = "".join(f'<w:bookmarkStart w:id="{i}" w:name="{n}"/>'
                      for i, n in enumerate(names, 1))
