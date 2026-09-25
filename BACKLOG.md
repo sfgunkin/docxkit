@@ -46,6 +46,44 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — `set_cell` into a cell with NO run writes nothing and reports success
+<!-- status: open -->
+
+Seen while fixing the table writers (2026-09-25), not measured on a real
+cell yet. `set_run_text` returns the fragment unchanged when it holds no
+`w:t` ("if not runs: return xml"), so `set_cell` / `set_row` / `update`
+on a cell whose paragraph has no run at all return the document as it
+was — no error, and `update` even records a `CellChange`. A cell Word
+emptied can be `<w:tc><w:tcPr/><w:p/></w:tc>`. **Fix:** grow a run in
+the paragraph's own properties (as `set_result` grows an SE line), or
+refuse; first count such cells across the corpus.
+
+### S4 — no tool closes a BACKLOG entry; every session hand-rolls the move
+<!-- status: open -->
+
+Moving an entry from `## Open` to the archive's `## Fixed` (strike the
+heading, `status: fixed`, a `Fixed in` note) has no command:
+`tools/backlog_status.py` gates the result and nothing produces it. Three
+hand-rolled copies in two days — `close_entry.py` and `close_s1.py`
+(2026-09-24) and `close_entries.py` (2026-09-25, a JSON spec of
+heading/stamp/note), all in session scratchpads. One of them wrote CRLF
+on Windows (`Path.write_text`), which git normalised silently.
+**Fix:** `tools/backlog_close.py HEADING --commit HASH --note FILE`.
+
+### S4 — no old-vs-new oracle for the WRITERS; each fix hand-rolls one
+<!-- status: open -->
+
+The readers have `tools/sweep.py`; a writer change has nothing that runs
+it across real manuscripts against the previous commit. The 24.09 review
+hand-rolled `real_insert.py` (insert before every hoisted head, count the
+stranded) and 2026-09-25 hand-rolled `cell_probe.py` (rewrite every cell
+of seven manuscripts with its own text under HEAD and under the fix,
+diff refusals, text and run signatures — 9,481 cells). Both found what
+the unit tests could not: the first fix to `insert_before` was verified
+on captions only. **Fix:** `tools/writer_oracle.py` — HEAD extracted by
+`git archive`, a registry of idempotent writes (`set_cell` own text,
+`insert_before` a probe paragraph, …), a diff of the two runs.
+
 ### S2 — `tracked.build` loses every cell-property change: Compare writes no `w:tcPrChange`
 <!-- status: open -->
 
