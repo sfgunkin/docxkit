@@ -348,6 +348,16 @@ def test_update_does_what_its_report_says_on_a_blank_cell():
     assert by_caption(out, "Table 4.").rows[1][1] == "0.5"
 
 
+def test_an_EQUATION_cell_is_refused_not_grown_a_run():
+    """Its text is in `m:t`, so it has no `w:t` — and a grown run printed
+    the formula again beside it as prose (HCW's equation tables, found by
+    `tools/writer_oracle.py`)."""
+    xml = results('<w:p><m:oMath><m:r><m:t>y=x</m:t></m:r></m:oMath></w:p>')
+
+    with pytest.raises(AnchorError, match="equation"):
+        set_cell(xml, by_caption(xml, "Table 4."), 1, 1, "y=x")
+
+
 def test_the_new_run_takes_the_paragraph_MARKs_properties():
     """What Word uses for text typed into an empty paragraph."""
     xml = results('<w:p><w:pPr><w:jc w:val="center"/>'

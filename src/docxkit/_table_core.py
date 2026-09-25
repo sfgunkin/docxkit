@@ -992,6 +992,15 @@ def _ensure_run(cell: str) -> str:
     """
     if _T_OPEN_RE.search(cell):
         return cell
+    if "<m:oMath" in cell:
+        # Its text is in `m:t`, which is no `w:t`: the cell is an
+        # EQUATION, not a blank one, and a grown run printed the formula's
+        # characters again beside it as prose (HCW's equation tables —
+        # caught by `tools/writer_oracle.py` on its first run). Before
+        # the grown run, the write vanished silently instead.
+        raise AnchorError(
+            "the cell holds an equation and no text run — set_cell writes "
+            "text; edit the formula through docxkit.equations")
     m = PARA_RE.search(cell)
     empty = _P_EMPTY_RE.search(cell)
     if empty is not None and (m is None or empty.start() < m.start()):
