@@ -12,7 +12,9 @@ toolkit has been bitten twice that way.
 **Done means:** fix + a test that fails without it + the per-paper
 workaround deleted + entry moved to `## Fixed` in
 [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) with its commit. Keep fixed
-entries; "did we ever fix that?" is a real question later.
+entries; "did we ever fix that?" is a real question later. The move is
+`python tools/backlog_close.py "<heading start>" --commit <hash>
+--note-file <note.md>` — not a hand-rolled script.
 
 **Every entry declares its own status**, on the line under its heading:
 
