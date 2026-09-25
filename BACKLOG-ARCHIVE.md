@@ -82,6 +82,11 @@ SE italic on its own line.
 in `revision/do/W7_mi_tables.py` do this by regex and can be replaced by
 `tables.set_result` — the paper's file, left for its session.
 
+**Incomplete — reopened 25.09.** A `/code-review max` of `c79bea3` found
+nine gaps (`update`/`set_row` not fixed, `flatten=True` keeping a stale
+SE, the three-run SE rule, …): BACKLOG.md, *"the result-aware table
+write … is incomplete"*.
+
 ### ~~S3 — the structure gate refuses bookmarks the CLEAN copy added, so a link repair cannot be built tracked~~ — FIXED 24.09, `506a89c`
 
 <!-- status: fixed -->
@@ -133,6 +138,11 @@ with `reject_check=False` and re-imposes both halves by hand (its
 `bookmark_names` block). With this fix it can build with the gate ON and
 drop that block — the paper's file, left for its session.
 
+**Regressed a gate — reopened 25.09.** The same `/code-review max` found
+`revision validate` passing the redline's OWN accepted view as `carried`,
+so its "gained" test cannot fire, and `_` names judged by count masking a
+lost `_Ref`: BACKLOG.md, the two S3 entries of 25.09.
+
 ### ~~S2 — `body.insert_before` strands the target's body-level bookmark on the new paragraph~~ — FIXED 24.09, `81a8be1`
 
 <!-- status: fixed -->
@@ -170,6 +180,12 @@ or the next, must carry the name's year). It is a separate check that
 would have caught `Sjöberg2000` and `USGS2023`, which name matching
 missed; with the stranding itself fixed it is a second line of defence,
 left for a batch that wants one.
+
+**Incomplete — reopened 25.09.** The 6/6 check covered caption
+bookmarks only; the COLLAPSED start+end pair before a reference entry —
+the common shape — is still stranded, 220 of 327 across six manuscripts:
+BACKLOG.md, *"`body.insert_before` still strands a COLLAPSED hoisted
+bookmark"*.
 
 ### ~~S1 — `citations` skips the first five paragraphs BY INDEX, so a short title block hides real prose~~ — FIXED 24.09, `e62d4ed`
 

@@ -46,6 +46,134 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S3 — `revision validate` can no longer refuse a GAINED bookmark: its "carried" set is the redline's own accepted view
+<!-- status: open -->
+
+Found by `/code-review max` over `origin/master..26ac6f5` (2026-09-24,
+independently verified). `506a89c` made `revision/_validate.py` (~444)
+call `bookmark_changes(base, rejected, carried=<the redline's accepted
+view>)`. `revisions._simulate` lifts EVERY bookmark into both views, so
+anything the rejected view gained is by construction in `carried`, and
+the "gained" test can never fire. Baseline has `Moran1950` once, the
+batch carries it twice (or a stray `Stray2001`, `_Ref999`) with no
+revision marks → `structure` True, `reject_matches_baseline` True,
+`structure_diff []`; before `506a89c` it refused `bookmarkStart: 1 -> 2`.
+Nothing else on the protocol path catches it: `revision/_build.py`
+builds with `reject_check=False`, the tracked refusal fires only under
+`reject_check`, `_refuse_accept_side` never reads `structure_diff`, and
+nothing prints it. **Fix:** judge the reject side against what the CLEAN
+copy (the batch's input) added — the build has it — not against the
+redline's own accepted view; and surface `structure_diff` in the verdict.
+
+### S3 — a LOST `_Ref` cross-reference target is masked by net count
+<!-- status: open -->
+
+Same review. `_tracked_gates.bookmark_changes` (~587) leaves Word's
+`_Ref`/`_Toc`/`_Hlk` names out of the by-name `lost` check and judges
+them by net COUNT, although its docstring says "anything LOST is refused
+on either side". Baseline `_Ref111` (target of `REF _Ref111 \h`); the
+clean copy adds two captions with `_Ref` targets; Compare drops
+`_Ref111` → `revision validate` and `tracked.build` both pass, and the
+document prints "Error! Reference source not found." once fields
+update. No test reaches the refusal side: replacing the condition with
+`if False:` leaves all tracked/revision tests green. **Fix:** a `_`
+name is Word-minted and may be RE-minted, so a lost one is refused when a
+field in the view still NAMES it (`REF`/`PAGEREF`/`HYPERLINK \l`); the
+count rule stays for the unreferenced rest.
+
+### S3 — the only test of the `(?<!/)>` guard on `equations.OMATH_RE` cannot fail
+<!-- status: open -->
+
+Same review. `test_an_EMPTY_equation_does_not_swallow_the_next_one`
+(`tests/test_compare.py` ~542) passes with the guard removed: `compare`
+reads one paragraph at a time, and a merged `<m:oMath/>`+next equation
+has the same tokens and skeleton. The guard DOES matter to whole-part
+readers nothing tests: on `<m:oMath/>` ¶ "Some prose." ¶ `y`,
+`_tracked_gates._math_texts` returns `["y"]` with it and
+`["Some prose.y"]` without (so `accepted_math` would refuse a clean
+build), `wordcount`'s prose count drops 3 → 0, `export` merges prose
+into `$…$`. **Fix:** test the guard where it bites — a whole-part reader.
+
+### S2 — `body.insert_before` still strands a COLLAPSED hoisted bookmark — the common case the S2 fix missed
+<!-- status: open -->
+
+Reopens the 24.09 S2 (archive, `81a8be1`). Same review, confirmed in
+Word COM on a copy of `mb1_house`. `_OPENERS_RE` steps back over openers
+only, and the dominant real shape before a reference entry is a
+COLLAPSED pair `<w:bookmarkStart w:name="Baker2002"/><w:bookmarkEnd/>`
+— what `link_all` writes and Word hoists; the END breaks the run, so
+the new entry is spliced after the pair and takes `Baker2002`. Across
+six real manuscripts HEAD still strands **220 of 327** reference-entry
+bookmarks (77 of 78 in `aw_house`); the closing 6/6 check was run on
+caption bookmarks only. Two more in the same function: the 2,048-char
+`_MARKER_WINDOW` — docxkit-built `API8_generated.docx` carries 71 head
+bookmarks of ~2,524 chars each (redeclared `xmlns`), so no tag fits and
+71/71 strand — and every `w:proofErr` counts as an opener, so a
+`spellEnd`/`gramEnd` (a closer) is stepped over. `paragraph._hoisted_head`
+(`drop`) has the same window. **Fix:** a tag-by-tag backward walk, no
+window: step over openers and complete start+end sets, stop at an END
+whose start is not in the run and at a proofing END.
+
+### S2 — the result-aware table write (`set_cell` / `set_result`) is incomplete — reopens the 24.09 S2
+<!-- status: open -->
+
+Reopens the 24.09 S2 (archive, `c79bea3`). Same review, each checked on
+real manuscripts unless marked PLAUSIBLE:
+
+1. **`update()` and `set_row()` were not fixed** (`_table_core` ~1404,
+   ~1242) — both still write through `set_run_text`: full-size stars,
+   and a coefficient-over-SE cell collapses to `0.017** (0.004)` (the OLD
+   SE) on line 1. `update` is the documented regenerate-from-data path.
+2. **`flatten=True` keeps a stale SE for number-shaped text** (~932) —
+   the star branch ignores `flatten`, although the refusal message
+   recommends it: `['9.876***','(5.432)']` → `['0.017***','(5.432)']`.
+3. **`_fill_se` needs exactly three runs** (~1000) — any other count
+   writes `(se)` into the upright `(` run and the SE loses its italic.
+   Copied from W7's `write_cell`, which already left 13 of 42 SEs upright
+   in Misconceptions Table 6; four-run SE lines are common (Misconceptions
+   213/265, CC_age_gap 58/298, SP_GDP 30/110).
+4. **No star-run clone from `set_cell`** — it routes only when line 1
+   already has a superscript run; a non-significant (bare) coefficient
+   that becomes significant, or a blanked cell, gets full-size stars.
+5. **The "line of text" test is wrong both ways** (~924) — `visible_text`
+   is not stripped, so an NBSP/space second paragraph counts as a line
+   and a one-line cell is REFUSED (141 in the corpus; following the
+   message's `set_result` advice corrupts them); a `<w:br/>`-stacked
+   coefficient/SE in ONE paragraph is not refused and loses its SE
+   (PLAUSIBLE — none in the corpus).
+6. **`set_result` ignores tracked changes** (~1027) — unlike `update()`
+   and `superscript_stars`. Writes inside a `w:ins`, so reject-all
+   gives `0.012*` for `0.012**`; clones copy revision marks with their
+   `w:id`, and lint then refuses duplicate ids.
+7. **`set_result` picks lines by raw paragraph index** (~1038), empty
+   paragraphs included, so an empty spacer leaves the old SE printing
+   (PLAUSIBLE in part).
+8. **`_fill_result` assumes `[number][stars]` order** (~974) — a leading
+   superscript marker takes the stars (`**0.017`, PLAUSIBLE); a line
+   whose only run is superscript RAISES (one real case, Job Tenure
+   Table 4, Moldova row).
+9. **Clones copy the whole run** (~984) — the star run and the grown SE
+   line keep the number run's `w:tab`/`w:br`/`w:noBreakHyphen`/note
+   reference (PLAUSIBLE — none in 818k cells).
+
+**Fix:** one line-aware writer the four entry points share —
+`set_cell`, `set_result`, `set_row`, `update` — that strips
+`visible_text`, locates lines by content, clones run PROPERTIES rather
+than runs, refuses revisions, and styles the SE by role rather than by
+run count.
+
+### S4 — stale docs: `equations.OMATH_RE` and the linking-pass refusal
+<!-- status: open -->
+
+Same review. `equations.py` ~104–108 still says `OMATH_RE` "stays local
+on purpose … two inputs, two patterns", but `0e3661f` made
+`_compare_read` import it and argue the opposite at ~73–80 — two files
+argue opposite sides, and one invites restoring the bare-tag regex that
+was the FORMULA bug. `revision/_verdict.py` ~75–78, `revision/_config.py`
+~130–134 and `_tracked_report.py` ~195–197 still say `tracked.build`
+refuses a linking pass (`bookmarkStart 132 -> 142`), which `506a89c`
+removed.
+
 ### S2 — `tracked.build` loses every cell-property change: Compare writes no `w:tcPrChange`
 <!-- status: open -->
 
