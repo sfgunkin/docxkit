@@ -218,6 +218,20 @@ corpus is on a sync-on-demand drive; the sample is STRIDED across the
 corpus, because a bounded sweep that reads the same alphabetical corner
 every time can never find anything it has not already found.
 
+The sweep runs the READERS. For a change to a WRITER — `set_cell`,
+`insert_before`, anything that edits a document — run the writers'
+oracle against the commit before it:
+
+```
+python tools/writer_oracle.py --base HEAD        # working tree vs HEAD
+```
+
+It runs idempotent writes over the same strided corpus under both
+versions and diffs the answers. Its first run found a regression
+committed that hour: a blank-cell fix that grew a run in EQUATION cells
+and printed the formula again as prose. A synthetic test of the reported
+case is not a measurement of the population it touches.
+
 For anything Word-backed, the real check is `docxkit verify` — does Word
 read the file back as written, or repair it on open?
 
