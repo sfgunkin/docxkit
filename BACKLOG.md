@@ -46,54 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S3 — `revision validate` can no longer refuse a GAINED bookmark: its "carried" set is the redline's own accepted view
-<!-- status: open -->
-
-Found by `/code-review max` over `origin/master..26ac6f5` (2026-09-24,
-independently verified). `506a89c` made `revision/_validate.py` (~444)
-call `bookmark_changes(base, rejected, carried=<the redline's accepted
-view>)`. `revisions._simulate` lifts EVERY bookmark into both views, so
-anything the rejected view gained is by construction in `carried`, and
-the "gained" test can never fire. Baseline has `Moran1950` once, the
-batch carries it twice (or a stray `Stray2001`, `_Ref999`) with no
-revision marks → `structure` True, `reject_matches_baseline` True,
-`structure_diff []`; before `506a89c` it refused `bookmarkStart: 1 -> 2`.
-Nothing else on the protocol path catches it: `revision/_build.py`
-builds with `reject_check=False`, the tracked refusal fires only under
-`reject_check`, `_refuse_accept_side` never reads `structure_diff`, and
-nothing prints it. **Fix:** judge the reject side against what the CLEAN
-copy (the batch's input) added — the build has it — not against the
-redline's own accepted view; and surface `structure_diff` in the verdict.
-
-### S3 — a LOST `_Ref` cross-reference target is masked by net count
-<!-- status: open -->
-
-Same review. `_tracked_gates.bookmark_changes` (~587) leaves Word's
-`_Ref`/`_Toc`/`_Hlk` names out of the by-name `lost` check and judges
-them by net COUNT, although its docstring says "anything LOST is refused
-on either side". Baseline `_Ref111` (target of `REF _Ref111 \h`); the
-clean copy adds two captions with `_Ref` targets; Compare drops
-`_Ref111` → `revision validate` and `tracked.build` both pass, and the
-document prints "Error! Reference source not found." once fields
-update. No test reaches the refusal side: replacing the condition with
-`if False:` leaves all tracked/revision tests green. **Fix:** a `_`
-name is Word-minted and may be RE-minted, so a lost one is refused when a
-field in the view still NAMES it (`REF`/`PAGEREF`/`HYPERLINK \l`); the
-count rule stays for the unreferenced rest.
-
-### S3 — the only test of the `(?<!/)>` guard on `equations.OMATH_RE` cannot fail
-<!-- status: open -->
-
-Same review. `test_an_EMPTY_equation_does_not_swallow_the_next_one`
-(`tests/test_compare.py` ~542) passes with the guard removed: `compare`
-reads one paragraph at a time, and a merged `<m:oMath/>`+next equation
-has the same tokens and skeleton. The guard DOES matter to whole-part
-readers nothing tests: on `<m:oMath/>` ¶ "Some prose." ¶ `y`,
-`_tracked_gates._math_texts` returns `["y"]` with it and
-`["Some prose.y"]` without (so `accepted_math` would refuse a clean
-build), `wordcount`'s prose count drops 3 → 0, `export` merges prose
-into `$…$`. **Fix:** test the guard where it bites — a whole-part reader.
-
 ### S2 — `body.insert_before` still strands a COLLAPSED hoisted bookmark — the common case the S2 fix missed
 <!-- status: open -->
 
@@ -161,18 +113,6 @@ real manuscripts unless marked PLAUSIBLE:
 `visible_text`, locates lines by content, clones run PROPERTIES rather
 than runs, refuses revisions, and styles the SE by role rather than by
 run count.
-
-### S4 — stale docs: `equations.OMATH_RE` and the linking-pass refusal
-<!-- status: open -->
-
-Same review. `equations.py` ~104–108 still says `OMATH_RE` "stays local
-on purpose … two inputs, two patterns", but `0e3661f` made
-`_compare_read` import it and argue the opposite at ~73–80 — two files
-argue opposite sides, and one invites restoring the bare-tag regex that
-was the FORMULA bug. `revision/_verdict.py` ~75–78, `revision/_config.py`
-~130–134 and `_tracked_report.py` ~195–197 still say `tracked.build`
-refuses a linking pass (`bookmarkStart 132 -> 142`), which `506a89c`
-removed.
 
 ### S2 — `tracked.build` loses every cell-property change: Compare writes no `w:tcPrChange`
 <!-- status: open -->

@@ -14,6 +14,78 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `revision validate` can no longer refuse a GAINED bookmark: its "carried" set is the redline's own accepted view~~ — FIXED 25.09, `320eda3`
+
+<!-- status: fixed -->
+
+Found by `/code-review max` over `origin/master..26ac6f5` (2026-09-24,
+independently verified). `506a89c` made `revision/_validate.py` (~444)
+call `bookmark_changes(base, rejected, carried=<the redline's accepted
+view>)`. `revisions._simulate` lifts EVERY bookmark into both views, so
+anything the rejected view gained is by construction in `carried`, and
+the "gained" test can never fire. Baseline has `Moran1950` once, the
+batch carries it twice (or a stray `Stray2001`, `_Ref999`) with no
+revision marks → `structure` True, `reject_matches_baseline` True,
+`structure_diff []`; before `506a89c` it refused `bookmarkStart: 1 -> 2`.
+Nothing else on the protocol path catches it: `revision/_build.py`
+builds with `reject_check=False`, the tracked refusal fires only under
+`reject_check`, `_refuse_accept_side` never reads `structure_diff`, and
+nothing prints it. **Fix:** judge the reject side against what the CLEAN
+copy (the batch's input) added — the build has it — not against the
+redline's own accepted view; and surface `structure_diff` in the verdict.
+
+**Fixed in `320eda3`.** `tracked.build` stamps what the clean copy added (`bookmarks_added`, one entry per extra occurrence; `guard.bookmarks_added`), and `validate` judges the rejected view against baseline + that. A stamp that predates the field is judged the old way and the report says so (`ValidateReport.bookmarks_judged`, printed by the CLI). Tests: a stray and a duplicated bookmark refused, a clean-copy addition allowed, the unjudged case reported — red on the unfixed source. **Not done:** `revision build` still builds with `reject_check=False` and prints none of `structure_diff`; with the stamp, gate 5 is where the verdict lands, which is the protocol's design.
+
+### ~~S3 — a LOST `_Ref` cross-reference target is masked by net count~~ — FIXED 25.09, `320eda3`
+
+<!-- status: fixed -->
+
+Same review. `_tracked_gates.bookmark_changes` (~587) leaves Word's
+`_Ref`/`_Toc`/`_Hlk` names out of the by-name `lost` check and judges
+them by net COUNT, although its docstring says "anything LOST is refused
+on either side". Baseline `_Ref111` (target of `REF _Ref111 \h`); the
+clean copy adds two captions with `_Ref` targets; Compare drops
+`_Ref111` → `revision validate` and `tracked.build` both pass, and the
+document prints "Error! Reference source not found." once fields
+update. No test reaches the refusal side: replacing the condition with
+`if False:` leaves all tracked/revision tests green. **Fix:** a `_`
+name is Word-minted and may be RE-minted, so a lost one is refused when a
+field in the view still NAMES it (`REF`/`PAGEREF`/`HYPERLINK \l`); the
+count rule stays for the unreferenced rest.
+
+**Fixed in `320eda3`.** A lost `_` name that a field or link in the view still names (`REF` with or without `\h`, `HYPERLINK \l`, element links, `PAGEREF`) is refused BY NAME; the unreferenced rest stays judged by count. Tests on both sides of that line; the refusal side was red on the unfixed source.
+
+### ~~S3 — the only test of the `(?<!/)>` guard on `equations.OMATH_RE` cannot fail~~ — FIXED 25.09, `320eda3`
+
+<!-- status: fixed -->
+
+Same review. `test_an_EMPTY_equation_does_not_swallow_the_next_one`
+(`tests/test_compare.py` ~542) passes with the guard removed: `compare`
+reads one paragraph at a time, and a merged `<m:oMath/>`+next equation
+has the same tokens and skeleton. The guard DOES matter to whole-part
+readers nothing tests: on `<m:oMath/>` ¶ "Some prose." ¶ `y`,
+`_tracked_gates._math_texts` returns `["y"]` with it and
+`["Some prose.y"]` without (so `accepted_math` would refuse a clean
+build), `wordcount`'s prose count drops 3 → 0, `export` merges prose
+into `$…$`. **Fix:** test the guard where it bites — a whole-part reader.
+
+**Fixed in `320eda3`.** `test_an_EMPTY_equation_does_not_swallow_the_PROSE_after_it` reads a whole part through `equations.equations`; removing the guard now fails it (mutant run, KILLED).
+
+### ~~S4 — stale docs: `equations.OMATH_RE` and the linking-pass refusal~~ — FIXED 25.09, `320eda3`
+
+<!-- status: fixed -->
+
+Same review. `equations.py` ~104–108 still says `OMATH_RE` "stays local
+on purpose … two inputs, two patterns", but `0e3661f` made
+`_compare_read` import it and argue the opposite at ~73–80 — two files
+argue opposite sides, and one invites restoring the bare-tag regex that
+was the FORMULA bug. `revision/_verdict.py` ~75–78, `revision/_config.py`
+~130–134 and `_tracked_report.py` ~195–197 still say `tracked.build`
+refuses a linking pass (`bookmarkStart 132 -> 142`), which `506a89c`
+removed.
+
+**Fixed in `320eda3`** — `equations.py`, `revision/_verdict.py`, `_tracked_report.py`. `revision/_config.py` ~130 was left: it says a rebuild across an untracked apparatus pass leaves anchors behind on reject, which is still true — a bookmark is not revisable.
+
 ### ~~S2 — `compare` FORMULA reports ten scripted equations as absent on the built side~~ — FIXED 24.09, `0e3661f`
 
 <!-- status: fixed -->
