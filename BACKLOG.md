@@ -46,54 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — the result-aware table write (`set_cell` / `set_result`) is incomplete — reopens the 24.09 S2
-<!-- status: open -->
-
-Reopens the 24.09 S2 (archive, `c79bea3`). Same review, each checked on
-real manuscripts unless marked PLAUSIBLE:
-
-1. **`update()` and `set_row()` were not fixed** (`_table_core` ~1404,
-   ~1242) — both still write through `set_run_text`: full-size stars,
-   and a coefficient-over-SE cell collapses to `0.017** (0.004)` (the OLD
-   SE) on line 1. `update` is the documented regenerate-from-data path.
-2. **`flatten=True` keeps a stale SE for number-shaped text** (~932) —
-   the star branch ignores `flatten`, although the refusal message
-   recommends it: `['9.876***','(5.432)']` → `['0.017***','(5.432)']`.
-3. **`_fill_se` needs exactly three runs** (~1000) — any other count
-   writes `(se)` into the upright `(` run and the SE loses its italic.
-   Copied from W7's `write_cell`, which already left 13 of 42 SEs upright
-   in Misconceptions Table 6; four-run SE lines are common (Misconceptions
-   213/265, CC_age_gap 58/298, SP_GDP 30/110).
-4. **No star-run clone from `set_cell`** — it routes only when line 1
-   already has a superscript run; a non-significant (bare) coefficient
-   that becomes significant, or a blanked cell, gets full-size stars.
-5. **The "line of text" test is wrong both ways** (~924) — `visible_text`
-   is not stripped, so an NBSP/space second paragraph counts as a line
-   and a one-line cell is REFUSED (141 in the corpus; following the
-   message's `set_result` advice corrupts them); a `<w:br/>`-stacked
-   coefficient/SE in ONE paragraph is not refused and loses its SE
-   (PLAUSIBLE — none in the corpus).
-6. **`set_result` ignores tracked changes** (~1027) — unlike `update()`
-   and `superscript_stars`. Writes inside a `w:ins`, so reject-all
-   gives `0.012*` for `0.012**`; clones copy revision marks with their
-   `w:id`, and lint then refuses duplicate ids.
-7. **`set_result` picks lines by raw paragraph index** (~1038), empty
-   paragraphs included, so an empty spacer leaves the old SE printing
-   (PLAUSIBLE in part).
-8. **`_fill_result` assumes `[number][stars]` order** (~974) — a leading
-   superscript marker takes the stars (`**0.017`, PLAUSIBLE); a line
-   whose only run is superscript RAISES (one real case, Job Tenure
-   Table 4, Moldova row).
-9. **Clones copy the whole run** (~984) — the star run and the grown SE
-   line keep the number run's `w:tab`/`w:br`/`w:noBreakHyphen`/note
-   reference (PLAUSIBLE — none in 818k cells).
-
-**Fix:** one line-aware writer the four entry points share —
-`set_cell`, `set_result`, `set_row`, `update` — that strips
-`visible_text`, locates lines by content, clones run PROPERTIES rather
-than runs, refuses revisions, and styles the SE by role rather than by
-run count.
-
 ### S2 — `tracked.build` loses every cell-property change: Compare writes no `w:tcPrChange`
 <!-- status: open -->
 
