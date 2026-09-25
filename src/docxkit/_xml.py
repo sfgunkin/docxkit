@@ -857,7 +857,8 @@ class Marker(NamedTuple):
 
 
 _MARKER_TAG_RE = re.compile(
-    r"<w:(bookmark|commentRange|perm)(Start|End)\b[^<>]*/>"
+    r"<w:(bookmarkStart|bookmarkEnd|commentRangeStart|commentRangeEnd"
+    r"|permStart|permEnd)\b[^<>]*/>"
     r"|<w:proofErr\b[^<>]*/>")
 _MARKER_ID_RE = re.compile(r'\bw:id="([^"]*)"')
 _PROOF_OPENS_RE = re.compile(r'\bw:type="(?:spell|gram)Start"')
@@ -889,9 +890,10 @@ def markers_before(xml: str, pos: int) -> list[Marker]:
             break
         tag = m.group(0)
         idm = _MARKER_ID_RE.search(tag)
-        if m.group(1):
-            out.append(Marker(lt, j, m.group(1), idm.group(1) if idm else None,
-                              m.group(2) == "Start"))
+        if name := m.group(1):
+            opens = name.endswith("Start")
+            out.append(Marker(lt, j, name[:-5] if opens else name[:-3],
+                              idm.group(1) if idm else None, opens))
         else:
             out.append(Marker(lt, j, "proofErr", None,
                               bool(_PROOF_OPENS_RE.search(tag))))
