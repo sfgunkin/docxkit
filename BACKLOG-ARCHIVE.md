@@ -14,6 +14,24 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `tracked.build` loses every cell-property change: Compare writes no `w:tcPrChange`~~ — PREMISE WRONG, the gap it found FIXED 25.09, `3f81c97`
+
+<!-- status: fixed -->
+
+A clean copy that changes a table cell's properties (here `w:vAlign` →
+`bottom` on ten Table 1 cells, Misconceptions edit protocol C31,
+2026-09-25) comes out of Word Compare with the NEW properties and no
+`w:tcPrChange` — the change is in the file untracked. No gate sees it:
+the text gates compare text, and the structure counts do not look inside
+`w:tcPr`. A protocol that requires every change to be refusable is quietly
+broken on this one class. The paper added the ten records after the build
+from r1's cells (`revision/tools/build_r2.py`), and Word reopened the file.
+**Fix:** after Compare, diff `w:tcPr` (and `w:trPr`, `w:tblPr`) cell by
+cell against the original and write the `…PrChange` records Compare left
+out — or at least report them as untracked.
+
+**The premise was wrong; measured 2026-09-25.** Word's Compare DOES track a cell property: a copy of Misconceptions r1 with one cell's `vAlign` changed, built through `tracked.build` (real Word), came back with `w:tcPrChange` records, and the rejected and accepted views reproduced the original and the clean copy cell for cell (1,898 cells). And C31 was no change at all: r1 and `build/clean_r2.docx` carry identical cell properties (264 `vAlign=bottom` in Table 1 each). **What the entry did expose is a gate gap**, and it bit: the paper's hand repair (`build_r2.py`, C31) added twelve records to the Word-built redline — ten recording no change, two recording `tcW 0/auto`, which neither r1 nor the clean copy has — and every gate passed. **Fixed in `3f81c97`:** `cell_property_changes(base, view)` compares every cell's live `tcPr` by position and joins the structure verdict (tracked.build both views, `revision validate` reject side). On the author's copy of r2 it names exactly Table 1 rows 27 and 32; on Word's own redline it is silent. **Paper-side, not done here:** delete `build_r2.py`'s C31 block, and the author's r2 copy still carries the two wrong records — the paper's session to decide.
+
 ### ~~S2 — `set_cell` into a cell with NO run writes nothing and reports success~~ — FIXED 25.09, `e08262a`
 
 <!-- status: fixed -->

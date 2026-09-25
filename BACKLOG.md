@@ -72,21 +72,6 @@ on captions only. **Fix:** `tools/writer_oracle.py` — HEAD extracted by
 `git archive`, a registry of idempotent writes (`set_cell` own text,
 `insert_before` a probe paragraph, …), a diff of the two runs.
 
-### S2 — `tracked.build` loses every cell-property change: Compare writes no `w:tcPrChange`
-<!-- status: open -->
-
-A clean copy that changes a table cell's properties (here `w:vAlign` →
-`bottom` on ten Table 1 cells, Misconceptions edit protocol C31,
-2026-09-25) comes out of Word Compare with the NEW properties and no
-`w:tcPrChange` — the change is in the file untracked. No gate sees it:
-the text gates compare text, and the structure counts do not look inside
-`w:tcPr`. A protocol that requires every change to be refusable is quietly
-broken on this one class. The paper added the ten records after the build
-from r1's cells (`revision/tools/build_r2.py`), and Word reopened the file.
-**Fix:** after Compare, diff `w:tcPr` (and `w:trPr`, `w:tblPr`) cell by
-cell against the original and write the `…PrChange` records Compare left
-out — or at least report them as untracked.
-
 ### S4 — Compare deletes ". " after a footnote mark when a full stop moves before it; the space is lost on accept
 <!-- status: open -->
 
