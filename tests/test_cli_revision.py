@@ -1606,6 +1606,30 @@ def test_validate_says_NOTHING_about_a_stamp_that_matches(monkeypatch,
     assert "== stamp ==" not in capsys.readouterr().out
 
 
+def test_validate_SAYS_when_gained_bookmarks_could_not_be_judged(
+        monkeypatch, project, capsys):
+    """A batch stamped before the build recorded what the clean copy
+    added: every gain looks explained, so a green structure gate would be
+    claiming a check it did not make (review of 2026-09-24)."""
+    from docxkit import guard, package
+
+    parts = package.read_parts(project.prev)
+    write(project.batch, parts)
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev))
+
+    run_cli(monkeypatch, "revision", "validate", "--no-word",
+            "--paper", str(project.root))
+    unjudged = capsys.readouterr().out
+
+    guard.stamp(project.batch, base_sha256=guard.sha256(project.prev),
+                bookmarks_added=[])
+    run_cli(monkeypatch, "revision", "validate", "--no-word",
+            "--paper", str(project.root))
+
+    assert "were not judged" in unjudged
+    assert "were not judged" not in capsys.readouterr().out
+
+
 def test_withdraw_puts_the_baseline_back_and_says_where_the_proposal_is(
         monkeypatch, project, capsys):
     from docxkit import guard
