@@ -46,26 +46,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `body.insert_before` still strands a COLLAPSED hoisted bookmark — the common case the S2 fix missed
-<!-- status: open -->
-
-Reopens the 24.09 S2 (archive, `81a8be1`). Same review, confirmed in
-Word COM on a copy of `mb1_house`. `_OPENERS_RE` steps back over openers
-only, and the dominant real shape before a reference entry is a
-COLLAPSED pair `<w:bookmarkStart w:name="Baker2002"/><w:bookmarkEnd/>`
-— what `link_all` writes and Word hoists; the END breaks the run, so
-the new entry is spliced after the pair and takes `Baker2002`. Across
-six real manuscripts HEAD still strands **220 of 327** reference-entry
-bookmarks (77 of 78 in `aw_house`); the closing 6/6 check was run on
-caption bookmarks only. Two more in the same function: the 2,048-char
-`_MARKER_WINDOW` — docxkit-built `API8_generated.docx` carries 71 head
-bookmarks of ~2,524 chars each (redeclared `xmlns`), so no tag fits and
-71/71 strand — and every `w:proofErr` counts as an opener, so a
-`spellEnd`/`gramEnd` (a closer) is stepped over. `paragraph._hoisted_head`
-(`drop`) has the same window. **Fix:** a tag-by-tag backward walk, no
-window: step over openers and complete start+end sets, stop at an END
-whose start is not in the run and at a proofing END.
-
 ### S2 — the result-aware table write (`set_cell` / `set_result`) is incomplete — reopens the 24.09 S2
 <!-- status: open -->
 

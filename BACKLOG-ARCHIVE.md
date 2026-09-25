@@ -14,6 +14,29 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `body.insert_before` still strands a COLLAPSED hoisted bookmark — the common case the S2 fix missed~~ — FIXED 25.09, `135aaf7`
+
+<!-- status: fixed -->
+
+Reopens the 24.09 S2 (archive, `81a8be1`). Same review, confirmed in
+Word COM on a copy of `mb1_house`. `_OPENERS_RE` steps back over openers
+only, and the dominant real shape before a reference entry is a
+COLLAPSED pair `<w:bookmarkStart w:name="Baker2002"/><w:bookmarkEnd/>`
+— what `link_all` writes and Word hoists; the END breaks the run, so
+the new entry is spliced after the pair and takes `Baker2002`. Across
+six real manuscripts HEAD still strands **220 of 327** reference-entry
+bookmarks (77 of 78 in `aw_house`); the closing 6/6 check was run on
+caption bookmarks only. Two more in the same function: the 2,048-char
+`_MARKER_WINDOW` — docxkit-built `API8_generated.docx` carries 71 head
+bookmarks of ~2,524 chars each (redeclared `xmlns`), so no tag fits and
+71/71 strand — and every `w:proofErr` counts as an opener, so a
+`spellEnd`/`gramEnd` (a closer) is stepped over. `paragraph._hoisted_head`
+(`drop`) has the same window. **Fix:** a tag-by-tag backward walk, no
+window: step over openers and complete start+end sets, stop at an END
+whose start is not in the run and at a proofing END.
+
+**Fixed in `135aaf7`.** The marker run is read tag by tag (`_xml.markers_before`, no window) and each marker judged (`_xml.owned`): a start, or an end whose start is in the run, is the target's. The run is one zero-width point, so `insert_before` splits it around the new block — which also handles a shape the review's count included without naming: Misconceptions writes `[start DeLuca2011][end 64]`, the target's start BEFORE the previous range's end, and either side of that pair strands one of them. `paragraph._hoisted_head` reads the same walker (window gone, rule unchanged). The review's own probe on its manuscript copies: aw_house 90/90, hcw_house 68/68, mb1_house 50/50, mis_results 45/45 kept; API8_generated 0 of 71 stranded; lint clean on the spliced files. **Still not done:** `linkfix` checking a link's landing by POSITION — the second line of defence the 24.09 entry left open.
+
 ### ~~S3 — `revision validate` can no longer refuse a GAINED bookmark: its "carried" set is the redline's own accepted view~~ — FIXED 25.09, `320eda3`
 
 <!-- status: fixed -->
