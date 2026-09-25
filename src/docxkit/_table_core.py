@@ -23,6 +23,7 @@ from typing import Any, Literal, NamedTuple, overload
 from ._xml import (
     PARA_RE,
     RUN_RE,
+    _own_children,
     element_spans,
     live_properties,
     normalize_glyphs,
@@ -975,6 +976,44 @@ def _raises_stars(body: str) -> bool:
                for m in RUN_RE.finditer(body))
 
 
+_P_EMPTY_RE = re.compile(r"<w:p\b([^>]*)/>")
+
+
+def _ensure_run(cell: str) -> str:
+    """`cell`, with a run to write into if it had no text node at all.
+
+    A blank cell is usually ``<w:tc><w:tcPr/><w:p/></w:tc>`` — 9,360 of
+    81,386 cells in a 150-manuscript sample — and `set_run_text` writes
+    into an existing ``w:t`` or nowhere. So filling a cloned blank row
+    returned the document unchanged, and `update` reported the cell as
+    CHANGED (BACKLOG S2, 2026-09-25). The new run goes at the end of the
+    first paragraph, in the paragraph MARK's run properties — what Word
+    itself uses for text typed into an empty paragraph.
+    """
+    if _T_OPEN_RE.search(cell):
+        return cell
+    m = PARA_RE.search(cell)
+    empty = _P_EMPTY_RE.search(cell)
+    if empty is not None and (m is None or empty.start() < m.start()):
+        cell = (cell[:empty.start()] + f"<w:p{empty.group(1)}></w:p>"
+                + cell[empty.end():])
+        m = PARA_RE.search(cell)
+    if m is None:
+        raise AnchorError("the cell has no paragraph to write into")
+    para_xml = m.group(0)
+    rpr = ""
+    if (ppr := own_properties(para_xml, "pPr")) is not None:
+        for name, lo, hi in _own_children(ppr[2]):
+            if name == "rPr":
+                mark = ppr[2][lo:hi]
+                inner = own_properties(f"<w:r>{mark}</w:r>", "rPr")
+                if inner is not None:
+                    rpr = f"<w:rPr>{live_properties(inner[2])}</w:rPr>"
+    run = f"<w:r>{rpr}<w:t></w:t></w:r>"
+    close = m.end() - len("</w:p>")
+    return cell[:close] + run + cell[close:]
+
+
 def _write_text(cell: str, text: str, *, flatten: bool, raises: bool,
                 where: str) -> str:
     """One cell rewritten to `text` — the writer `set_cell`, `set_row` and
@@ -984,6 +1023,8 @@ def _write_text(cell: str, text: str, *, flatten: bool, raises: bool,
     `raises`: the table prints its stars as superscript, so a star run is
     cloned where the cell has none. See :func:`set_cell` for the rules.
     """
+    if text:
+        cell = _ensure_run(cell)
     lines = _lines(cell)
     if (len(lines) > 1 or any(_broken(m.group(0)) for m in lines)) \
             and not flatten:
@@ -1165,7 +1206,7 @@ def set_result(xml: str, table: Table, row: int, col: int, number: str, *,
         raise AnchorError(f"row {row} has {len(tcs)} cells, "
                           f"cannot set column {col}")
     tc = tcs[col]
-    cell = tc.group(0)
+    cell = _ensure_run(tc.group(0))
     lines = _lines(cell)
     where = f"row {row} col {col}"
     if len(lines) > 2 or any(_broken(m.group(0)) for m in lines):

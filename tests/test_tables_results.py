@@ -323,6 +323,44 @@ def test_a_cloned_run_does_NOT_copy_the_number_runs_tab():
     assert line_texts(out) == ["0.017**", "(0.004)"]
 
 
+# --- a cell with NO run (BACKLOG S2, 2026-09-25) -------------------------
+# 9,360 of 81,386 cells in a 150-manuscript sample: every blank cell Word
+# writes. `set_run_text` writes into an existing `w:t` or nowhere, so the
+# write vanished — and `update` reported the cell CHANGED.
+
+
+def test_set_cell_WRITES_into_a_cell_with_no_run():
+    xml = results("<w:p/>")
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 1, "0.5")
+
+    assert line_texts(out) == ["0.5"]
+
+
+def test_update_does_what_its_report_says_on_a_blank_cell():
+    from docxkit.tables import update
+    xml = results("<w:p/>")
+
+    out, changes = update(xml, by_caption(xml, "Table 4."), [[0.5]],
+                          row0=1, col0=1)
+
+    assert [c.new for c in changes] == ["0.5"]
+    assert by_caption(out, "Table 4.").rows[1][1] == "0.5"
+
+
+def test_the_new_run_takes_the_paragraph_MARKs_properties():
+    """What Word uses for text typed into an empty paragraph."""
+    xml = results('<w:p><w:pPr><w:jc w:val="center"/>'
+                  "<w:rPr><w:b/></w:rPr></w:pPr></w:p>")
+
+    out = set_result(xml, by_caption(xml, "Table 4."), 1, 1, "0.5",
+                     stars="**")
+
+    assert re.search(r"<w:r><w:rPr><w:b/></w:rPr><w:t[^>]*>0\.5</w:t>",
+                     cell(out))
+    assert lines(out) == [[("0.5", False, False), ("**", True, False)]]
+
+
 def test_the_written_cell_LINTS_clean():
     xml = results(TWO_LINE)
     out = set_result(xml, by_caption(xml, "Table 4."), 1, 1, "0.017",
