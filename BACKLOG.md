@@ -48,20 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — no old-vs-new oracle for the WRITERS; each fix hand-rolls one
-<!-- status: open -->
-
-The readers have `tools/sweep.py`; a writer change has nothing that runs
-it across real manuscripts against the previous commit. The 24.09 review
-hand-rolled `real_insert.py` (insert before every hoisted head, count the
-stranded) and 2026-09-25 hand-rolled `cell_probe.py` (rewrite every cell
-of seven manuscripts with its own text under HEAD and under the fix,
-diff refusals, text and run signatures — 9,481 cells). Both found what
-the unit tests could not: the first fix to `insert_before` was verified
-on captions only. **Fix:** `tools/writer_oracle.py` — HEAD extracted by
-`git archive`, a registry of idempotent writes (`set_cell` own text,
-`insert_before` a probe paragraph, …), a diff of the two runs.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

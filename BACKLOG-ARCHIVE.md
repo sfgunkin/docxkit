@@ -14,6 +14,23 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — no old-vs-new oracle for the WRITERS; each fix hand-rolls one~~ — FIXED 25.09, `8246e4e`
+
+<!-- status: fixed -->
+
+The readers have `tools/sweep.py`; a writer change has nothing that runs
+it across real manuscripts against the previous commit. The 24.09 review
+hand-rolled `real_insert.py` (insert before every hoisted head, count the
+stranded) and 2026-09-25 hand-rolled `cell_probe.py` (rewrite every cell
+of seven manuscripts with its own text under HEAD and under the fix,
+diff refusals, text and run signatures — 9,481 cells). Both found what
+the unit tests could not: the first fix to `insert_before` was verified
+on captions only. **Fix:** `tools/writer_oracle.py` — HEAD extracted by
+`git archive`, a registry of idempotent writes (`set_cell` own text,
+`insert_before` a probe paragraph, …), a diff of the two runs.
+
+**Fixed in `8246e4e`** — `tools/writer_oracle.py` (probes `set_cell` and `insert_before`; `--base`, `--limit`, `--expect-same`), tests in `tests/test_writer_oracle.py`, named in CONTRIBUTING beside the sweep. Its first run found a regression committed that hour (`e08262a` grew a run in equation cells), fixed in `2ea8808`. **Not a gate:** it needs a corpus and minutes; the chain's sweep slot is the model if it should become one.
+
 ### ~~S4 — no tool closes a BACKLOG entry; every session hand-rolls the move~~ — FIXED 25.09, `83b6ffa`
 
 <!-- status: fixed -->
