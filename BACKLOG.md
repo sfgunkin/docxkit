@@ -72,17 +72,6 @@ on captions only. **Fix:** `tools/writer_oracle.py` — HEAD extracted by
 `git archive`, a registry of idempotent writes (`set_cell` own text,
 `insert_before` a probe paragraph, …), a diff of the two runs.
 
-### S4 — Compare deletes ". " after a footnote mark when a full stop moves before it; the space is lost on accept
-<!-- status: open -->
-
-"…2017)[mark]. Japan" → "…2017).[mark] Japan" (Misconceptions protocol
-C28): Compare inserts ")." before the mark and DELETES ". " after it, so
-the accepted text reads ".Japan". `accept_check` catches it (the refusal
-names the paragraph) — the gate works; the repair was by hand: shrink the
-deletion to "." and return the space, untracked, to the next run
-(`build_r2.py`, regex). **Fix:** a post-Compare pass for a deletion that
-ends in a space which the clean copy keeps, next to a note reference.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

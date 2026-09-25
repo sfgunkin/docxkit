@@ -14,6 +14,20 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — Compare deletes ". " after a footnote mark when a full stop moves before it; the space is lost on accept~~ — FIXED 25.09, `391bbaf`
+
+<!-- status: fixed -->
+
+"…2017)[mark]. Japan" → "…2017).[mark] Japan" (Misconceptions protocol
+C28): Compare inserts ")." before the mark and DELETES ". " after it, so
+the accepted text reads ".Japan". `accept_check` catches it (the refusal
+names the paragraph) — the gate works; the repair was by hand: shrink the
+deletion to "." and return the space, untracked, to the next run
+(`build_r2.py`, regex). **Fix:** a post-Compare pass for a deletion that
+ends in a space which the clean copy keeps, next to a note reference.
+
+**Reproduced, then fixed in `391bbaf`.** The edit alone came back from Word correct; rebuilding r1 against the real `clean_r2` (1,228 revisions) through `tracked.build` gave the entry's exact shape — `<w:del>. </w:del>` after the mark and the next run starting on "Japan". `tracked.return_note_spaces` shrinks the deletion to what the clean copy removed and returns the space, untracked, to the next run; each candidate is kept only if it lowers the count of paragraphs accept-all fails, so a document meaning `.[mark]Word` is left alone. `build` runs it before the gates (`BuildReport.returned_spaces`). On the real rebuild: unaccepted 1 → 0, unrejectable 0, lint clean. **Paper-side, not done here:** `build_r2.py`'s C28 regex repair can go.
+
 ### ~~S2 — `tracked.build` loses every cell-property change: Compare writes no `w:tcPrChange`~~ — PREMISE WRONG, the gap it found FIXED 25.09, `3f81c97`
 
 <!-- status: fixed -->
