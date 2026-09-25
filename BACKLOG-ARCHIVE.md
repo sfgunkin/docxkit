@@ -14,6 +14,21 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — no tool closes a BACKLOG entry; every session hand-rolls the move~~ — FIXED 25.09, `83b6ffa`
+
+<!-- status: fixed -->
+
+Moving an entry from `## Open` to the archive's `## Fixed` (strike the
+heading, `status: fixed`, a `Fixed in` note) has no command:
+`tools/backlog_status.py` gates the result and nothing produces it. Three
+hand-rolled copies in two days — `close_entry.py` and `close_s1.py`
+(2026-09-24) and `close_entries.py` (2026-09-25, a JSON spec of
+heading/stamp/note), all in session scratchpads. One of them wrote CRLF
+on Windows (`Path.write_text`), which git normalised silently.
+**Fix:** `tools/backlog_close.py HEADING --commit HASH --note FILE`.
+
+**Fixed in `83b6ffa`** — `tools/backlog_close.py`, with `tests/test_backlog_close.py`; named in this file's header. Closed with itself.
+
 ### ~~S4 — Compare deletes ". " after a footnote mark when a full stop moves before it; the space is lost on accept~~ — FIXED 25.09, `391bbaf`
 
 <!-- status: fixed -->

@@ -48,18 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — no tool closes a BACKLOG entry; every session hand-rolls the move
-<!-- status: open -->
-
-Moving an entry from `## Open` to the archive's `## Fixed` (strike the
-heading, `status: fixed`, a `Fixed in` note) has no command:
-`tools/backlog_status.py` gates the result and nothing produces it. Three
-hand-rolled copies in two days — `close_entry.py` and `close_s1.py`
-(2026-09-24) and `close_entries.py` (2026-09-25, a JSON spec of
-heading/stamp/note), all in session scratchpads. One of them wrote CRLF
-on Windows (`Path.write_text`), which git normalised silently.
-**Fix:** `tools/backlog_close.py HEADING --commit HASH --note FILE`.
-
 ### S4 — no old-vs-new oracle for the WRITERS; each fix hand-rolls one
 <!-- status: open -->
 
