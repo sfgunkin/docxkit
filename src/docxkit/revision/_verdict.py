@@ -72,11 +72,14 @@ class Verdict:
     def apparatus_only(self) -> bool:
         """A pass that moved the machinery and not one visible word.
 
-        The shape Word's Compare cannot carry: linking the citations
-        adds bookmarks, `tracked.build` refuses the batch
-        (`bookmarkStart 132 -> 142`), so the pass runs untracked and in
-        place. Nothing was left for the author to adjudicate and nothing
-        recorded that it happened — which is the point of naming it.
+        The shape Word's Compare cannot carry: a bookmark is not
+        revisable, so linking the citations leaves nothing for the author
+        to accept or reject. Such a pass used to run untracked and in
+        place because `tracked.build` refused it (`bookmarkStart 132 ->
+        142`); since 2026-09-24 it allows what the clean copy added, but
+        a pass run in place still leaves nothing to adjudicate and
+        nothing recording that it happened — which is the point of
+        naming it.
 
         **Requires that no batch was identified**, and that is a real
         condition rather than an implementation detail: with a PROMOTED

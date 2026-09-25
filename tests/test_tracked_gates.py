@@ -696,6 +696,61 @@ def test_Words_own_bookmarks_are_judged_by_COUNT(monkeypatch, tmp_path):
     assert report.structure_diff == []
 
 
+def _cross_referenced(*names: str) -> str:
+    """`_marked(*names)` with a `REF _Ref111 \\h` field after the sentence."""
+    field = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText xml:space="preserve"> REF _Ref111 \\h '
+             '</w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             '<w:r><w:t>Table 1</w:t></w:r>'
+             '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    return _marked(*names).replace("</w:p>", field + "</w:p>", 1)
+
+
+def test_a_LOST_Ref_a_field_still_names_is_refused_whatever_the_count(
+        monkeypatch, tmp_path):
+    """Review of 2026-09-24. `_` names are judged by count because Word
+    re-mints them — but a lost `_Ref111` that a REF field still names is
+    not re-minted, it is "Error! Reference source not found." on the next
+    field update. Counted, the two `_Ref` targets the clean copy added
+    hid it: 1 -> 2 sits inside the allowance."""
+    sources = _pair(tmp_path, _cross_referenced("_Ref111"),
+                    _cross_referenced("_Ref222", "_Ref333"))
+
+    report, _ = _build(monkeypatch, _cross_referenced("_Ref222", "_Ref333"),
+                       sources, reject_check=False, accept_check=False)
+
+    assert report.structure_diff == [
+        "rejected: bookmarkStart: lost '_Ref111'"]
+
+
+def test_a_lost_Ref_NOTHING_names_is_still_judged_by_count(monkeypatch,
+                                                           tmp_path):
+    """The allowance stays for what it was for: an unreferenced `_Ref`
+    under a new name is Word re-minting, not a loss."""
+    sources = _pair(tmp_path, _marked("_Ref111"),
+                    _marked("_Ref222", "_Ref333"))
+
+    report, _ = _build(monkeypatch, _marked("_Ref222", "_Ref333"), sources)
+
+    assert report.structure_diff == []
+
+
+def test_build_STAMPS_the_bookmarks_the_clean_copy_added(monkeypatch,
+                                                        tmp_path):
+    """What `revision validate` judges a gained bookmark against — it has
+    no clean copy, and this is the one call that does. One entry per
+    extra occurrence, so a duplicate is recorded as one."""
+    sources = _pair(tmp_path, _marked("Moran1950"),
+                    _marked("Moran1950", "Smith2020", "Smith2020txt"))
+
+    _build(monkeypatch, _marked("Moran1950", "Smith2020", "Smith2020txt"),
+           sources)
+
+    assert tracked._guard.bookmarks_added(sources[2]) == [
+        "Smith2020", "Smith2020txt"]
+
+
 def test_the_structure_refusal_can_be_turned_off_like_the_other_one(
         monkeypatch, sources):
     """`reject_check=False` builds the file anyway, which is what a

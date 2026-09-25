@@ -101,11 +101,10 @@ OMATH_RE = re.compile(r"<m:oMath\b[^>]*(?<!/)>.*?</m:oMath>",
 # equation was rewritten by comparing exactly this skeleton, and it kept
 # its own copy of the tuple until they were merged.
 #
-# `OMATH_RE` above stays local on purpose, and the difference is real:
-# this module reads HARVESTED elements, which carry xmlns:m when
-# serialized on their own, while compare reads document parts. Measured
-# 2026-08-11 over 282 manuscripts holding OMML: not one writes an
-# attribute on `m:oMath` inside a part. Two inputs, two patterns.
+# `OMATH_RE` above is `compare`'s too — ONE pattern, attributes allowed.
+# See `_compare_read` for why the bare-tag copy it used to keep was the
+# FORMULA bug (BACKLOG S2, 2026-09-24): docxkit's own builder writes
+# `xmlns:m` on the `m:oMath` it makes.
 _STRUCT = OMML_STRUCT
 _STRUCT_RE = OMML_STRUCT_RE
 # "(5)" / "(A.2)" — what a display equation carries besides its math;

@@ -37,7 +37,7 @@ from conftest import (
     write,
 )
 
-from docxkit import package, revision
+from docxkit import guard, package, revision
 from docxkit.errors import (
     BaselinePending,
     DocumentLocked,
@@ -3677,20 +3677,66 @@ def test_the_structure_gate_names_a_BOOKMARK_the_reject_dropped(tmp_path):
     assert report.structure_diff == ["bookmarkStart: lost 'Moran1950'"]
 
 
+def _anchored_batch(tmp_path, *names: str) -> Path:
+    """A batch whose one sentence carries these bookmarks, no revisions."""
+    starts = "".join(f'<w:bookmarkStart w:id="{i}" w:name="{n}"/>'
+                     for i, n in enumerate(names, 1))
+    ends = "".join(f'<w:bookmarkEnd w:id="{i}"/>'
+                   for i in range(1, len(names) + 1))
+    return write(tmp_path / "batch.docx", make_parts(
+        para(starts, run("As Moran (1950) showed."), ends)))
+
+
 def test_validate_ALLOWS_a_bookmark_the_clean_copy_added(tmp_path):
     """BACKLOG S3, the validate half. A batch that links a citation adds
-    a bookmark no rejection can remove — Compare carries it — and its
-    accepted view says the clean copy added it. That is not a loss."""
+    a bookmark no rejection can remove — Compare carries it — and the
+    build stamped that the clean copy added it. That is not a loss."""
     baseline_path = write(tmp_path / "prev.docx", make_parts(
         para(run("As Moran (1950) showed."))))
-    linked = write(tmp_path / "batch.docx", make_parts(
-        para('<w:bookmarkStart w:id="9" w:name="Moran1950txt"/>',
-             run("As Moran (1950) showed."), '<w:bookmarkEnd w:id="9"/>')))
+    linked = _anchored_batch(tmp_path, "Moran1950txt")
+    guard.stamp(linked, bookmarks_added=["Moran1950txt"])
 
     report = revision.validate(linked, baseline_path, use_word=False)
 
     assert report.reject_detail["structure"] is True
     assert report.structure_diff == []
+    assert report.bookmarks_judged is True
+
+
+@pytest.mark.parametrize("names, gained", [
+    (("Stray2001",), "'Stray2001'"),
+    (("Moran1950", "Moran1950"), "'Moran1950'"),
+])
+def test_validate_REFUSES_a_bookmark_the_clean_copy_did_not_add(
+        tmp_path, names, gained):
+    """Review of 2026-09-24. Judged against the redline's OWN accepted
+    view, a gain was always explained — both views carry every bookmark
+    — so a stray or duplicated one passed gate 5, which the count check
+    before it had refused. Judged against what the build stamped, it is
+    refused again."""
+    baseline_path = write(tmp_path / "prev.docx", make_parts(para(
+        '<w:bookmarkStart w:id="9" w:name="Moran1950"/>',
+        run("As Moran (1950) showed."), '<w:bookmarkEnd w:id="9"/>')))
+    batch = _anchored_batch(tmp_path, *names)
+    guard.stamp(batch, bookmarks_added=[])
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.reject_detail["structure"] is False
+    assert any(f"gained {gained}" in d for d in report.structure_diff)
+
+
+def test_validate_SAYS_when_a_batch_cannot_have_its_gains_judged(tmp_path):
+    """A batch built before the stamp recorded the clean copy's additions
+    is judged the old way, which cannot refuse a gain — and the report
+    says so rather than letting a green gate claim the check."""
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        para(run("As Moran (1950) showed."))))
+    batch = _anchored_batch(tmp_path, "Stray2001")
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.bookmarks_judged is False
 
 
 def test_the_structure_gate_is_blind_to_which_FORM_a_link_takes(tmp_path):

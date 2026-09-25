@@ -36,6 +36,8 @@ from ._xml import (
     FOOTNOTES,
     TEXT_PARTS,
     Parts,
+    field_anchors,
+    fields,
     internal_links,
     text_parts,
     visible_text,
@@ -538,12 +540,42 @@ def structure_diff(was: dict[str, int], now: dict[str, int], *,
             if tag not in skip and was.get(tag, 0) != now.get(tag, 0)]
 
 
-def _bookmark_names(parts: Parts) -> Counter[str]:
+def bookmark_names(parts: Parts) -> Counter[str]:
+    """How many times each bookmark name is defined, across the text parts."""
     return Counter(name for _part, xml in text_parts(parts)
                    for name in BOOKMARK_NAME_RE.findall(xml))
 
 
-def bookmark_changes(base: Parts, view: Parts, carried: Parts) -> list[str]:
+#: A TOC entry's page number: ``PAGEREF _Toc123 \h``. `field_anchors`
+#: reads ``REF`` and ``HYPERLINK \l``; this is the third field that
+#: prints "Error! Bookmark not defined." when its target goes.
+_PAGEREF_RE = re.compile(r"\bPAGEREF\s+(?:\"([^\"]+)\"|([^\s\\\"]+))")
+
+
+def _depended_on(parts: Parts) -> set[str]:
+    """Every bookmark name something in `parts` still points at: a link
+    in either form, a cross-reference with or without ``\\h``, a TOC's
+    page reference."""
+    names: set[str] = set()
+    for _part, xml in text_parts(parts):
+        names.update(a for a, _ in internal_links(xml))
+        names.update(a for a, _ in field_anchors(xml, clickable=False))
+        for f in fields(xml):
+            names.update(m.group(1) or m.group(2)
+                         for m in _PAGEREF_RE.finditer(f.instr))
+    return names
+
+
+def bookmark_additions(original: Parts, clean: Parts) -> list[str]:
+    """The bookmark names `clean` has more of than `original`, one entry
+    per extra occurrence — what `tracked.build` stamps for `validate`
+    (:func:`docxkit.guard.bookmarks_added`)."""
+    return sorted((bookmark_names(clean) - bookmark_names(original))
+                  .elements())
+
+
+def bookmark_changes(base: Parts, view: Parts,
+                     carried: Parts | Counter[str]) -> list[str]:
     """What `view` does to `base`'s bookmarks that `carried` does not explain.
 
     A bookmark is not revisable. Compare carries the clean copy's bookmark
@@ -563,15 +595,31 @@ def bookmark_changes(base: Parts, view: Parts, carried: Parts) -> list[str]:
     * the ACCEPTED view against the clean copy, where anything gained must
       be a deletion — ``carried`` is the original.
 
+    ``carried`` may also be the witness's bookmark COUNTS, which is how
+    `revision validate` passes the baseline plus what the build stamped
+    as the clean copy's additions — it has no clean copy of its own, and
+    the redline's accepted view is no witness: a bookmark is not
+    revisable, so that view holds every name the rejected one does and
+    the "gained" test could never fire (review of 2026-09-24).
+
     Anything LOST is refused on either side: that is the DSI class, three
     citation bookmarks a move dropped on reject. Word's own `_Ref`/`_Toc`
     /`_Hlk` names are re-minted on every save (:func:`_xml.word_minted`),
-    so they are judged by COUNT, with the same allowance.
+    so they are judged by COUNT, with the same allowance — EXCEPT a lost
+    one that a field or link in `view` still names. That is not a
+    re-minted name; it is a cross-reference that will print "Error!
+    Reference source not found." on the next field update, and a count
+    let any `_Ref` the clean copy added hide it.
     """
-    was, now, other = (_bookmark_names(p) for p in (base, view, carried))
+    other = carried if isinstance(carried, Counter) \
+        else bookmark_names(carried)
+    was, now = bookmark_names(base), bookmark_names(view)
     out: list[str] = []
     named = [n for n in (was | now | other) if not word_minted(n)]
     lost = sorted(n for n in named if now[n] < was[n])
+    if orphaned := sorted(n for n in was if word_minted(n)
+                          and now[n] < was[n] and n in _depended_on(view)):
+        lost = sorted(lost + orphaned)
     gained = sorted(n for n in named
                     if now[n] > was[n] + max(0, other[n] - was[n]))
     if lost:

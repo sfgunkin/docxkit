@@ -22,6 +22,7 @@ from .package import backup as _backup
 __all__ = [
     "DeliverableModified",
     "base_of",
+    "bookmarks_added",
     "carry",
     "check",
     "describes",
@@ -121,7 +122,7 @@ def restamp(out: str | Path, *, why: str) -> Path:
     return path
 
 
-def stamp(out: str | Path, **provenance: str) -> Path:
+def stamp(out: str | Path, **provenance: str | list[str]) -> Path:
     """Record what the build just produced, so :func:`check` can tell."""
     out = Path(out)
     path = stamp_path(out)
@@ -232,12 +233,39 @@ def base_of(out: str | Path) -> str | None:
     caller cannot then tell stale from fresh, and should say so rather
     than assume either.
     """
+    got = _recorded(out).get("base_sha256")
+    return got if isinstance(got, str) and got else None
+
+
+def bookmarks_added(out: str | Path) -> list[str] | None:
+    """The bookmark names the CLEAN copy added to the original, if stamped.
+
+    What `revision validate` needs to judge a bookmark the rejected view
+    gained, and cannot compute: a bookmark is not revisable, so the
+    redline's two views carry the same ones and neither can say which
+    the clean copy added. Before this was recorded, validate used the
+    redline's own accepted view as that witness — which holds every
+    bookmark the rejected view does, so the "gained" test could never
+    fire and a stray or duplicated bookmark passed gate 5 (review of
+    2026-09-24). `tracked.build` has the clean copy and writes the answer
+    here, once per name per occurrence.
+
+    It describes the build's INPUTS, not the output's bytes, so it stays
+    true across a `restamp`. None when the stamp predates the field.
+    """
+    got = _recorded(out).get("bookmarks_added")
+    if not isinstance(got, list):
+        return None
+    return [n for n in got if isinstance(n, str)]
+
+
+def _recorded(out: str | Path) -> dict[str, object]:
+    """The stamp beside `out`, or {} when there is none that parses."""
     path = stamp_path(out)
     if not path.exists():
-        return None
+        return {}
     try:
         recorded = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
-        return None
-    got = recorded.get("base_sha256")
-    return got if isinstance(got, str) and got else None
+        return {}
+    return recorded if isinstance(recorded, dict) else {}

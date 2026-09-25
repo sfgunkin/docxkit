@@ -192,9 +192,10 @@ class BuildReport:
         #: to `unrejectable`, because rejecting deletes the insertion
         #: before that comparison happens. See :func:`unaccepted`.
         self.unaccepted: list[Unaccepted] = []
-        #: Counts of the glyph-less carriers — tables, rows, bookmarks,
-        #: section breaks — that the built redline does not resolve back
-        #: to the documents it came from. See :func:`structure_counts`.
+        #: The glyph-less carriers — tables, rows, section breaks by
+        #: count, bookmarks by NAME — that the built redline does not
+        #: resolve back to the documents it came from. See
+        #: :func:`structure_counts` and :func:`bookmark_changes`.
         self.structure_diff: list[str] = []
         #: Equations the ACCEPTED view does not reproduce from the
         #: clean copy. Refused with `accept_check`. See

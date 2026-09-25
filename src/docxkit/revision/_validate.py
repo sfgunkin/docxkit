@@ -8,6 +8,7 @@ from __future__ import annotations
 import html
 import shutil
 import tempfile
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,7 @@ from ..tracked import (
     _root,
     _simulate,
     bookmark_changes,
+    bookmark_names,
     structure_counts,
     structure_diff,
     untracked,
@@ -96,6 +98,12 @@ class ValidateReport:
     #: is a character, so the other four comparisons here are blind to
     #: all of them. See :func:`docxkit.tracked.structure_counts`.
     structure_diff: list[str] = field(default_factory=list)
+    #: Could a bookmark the rejected view GAINED be judged? Only against
+    #: what the clean copy added, which the build stamps; a batch whose
+    #: stamp predates that field is judged against its own accepted
+    #: view, which explains every gain. False says so, rather than
+    #: letting a green structure gate claim a check it could not make.
+    bookmarks_judged: bool | None = None
     #: Whole PARTS the baseline has and the batch does not. See
     #: :func:`docxkit.package.missing_parts`.
     lost_parts: list[str] = field(default_factory=list)
@@ -434,14 +442,21 @@ def validate(path: str | Path, baseline: str | Path | None = None,
         body_now, body_was = _glyph(_root(rejected)), _glyph(_root(base))
         notes_now = _glyph(_root(rejected, FOOTNOTES))
         notes_was = _glyph(_root(base, FOOTNOTES))
-        # Bookmarks by NAME: the batch's accepted view adds to the
-        # baseline exactly what the clean copy added, and Compare carries
-        # those additions into the rejected view too (`bookmark_changes`).
+        # Bookmarks by NAME: Compare carries the clean copy's additions
+        # into the rejected view, so a gain is judged against what the
+        # clean copy ADDED — which only the build knew, and stamped. The
+        # redline's own accepted view is no witness: a bookmark is not
+        # revisable, both views carry the same ones, and with it as the
+        # witness no gain could ever be refused (review of 2026-09-24).
+        added = _guard.bookmarks_added(path)
+        report.bookmarks_judged = added is not None
+        witness = (bookmark_names(base) + Counter(added)
+                   if added is not None else bookmark_names(accepted))
         struct_moved = (
             structure_diff(structure_counts(base),
                            structure_counts(rejected),
                            skip=("bookmarkStart",))
-            + bookmark_changes(base, rejected, accepted))
+            + bookmark_changes(base, rejected, witness))
         detail = {
             "paragraphs": _paras(_root(rejected)) == _paras(_root(base)),
             "glyphs": body_now == body_was,

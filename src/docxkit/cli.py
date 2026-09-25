@@ -2177,6 +2177,11 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
         verdict = "OK" if report.reject_matches_baseline else "MISMATCH"
         print(f"== reject-all == baseline ?  {report.reject_detail} "
               f"-> {verdict}")
+        if report.bookmarks_judged is False:
+            print("   bookmarks the rejected batch GAINED were not judged: "
+                  "its stamp predates the record of what the clean copy "
+                  "added, and without it every gain looks explained. "
+                  "Rebuild to judge them.")
         if not report.reject_matches_baseline:
             print("   the batch is NOT fully reviewable: rejecting "
                   "everything does not restore the baseline")

@@ -64,7 +64,9 @@ from ._tracked_gates import _root as _root
 from ._tracked_gates import _simulate as _simulate
 from ._tracked_gates import accepted_losses as accepted_losses
 from ._tracked_gates import accepted_math as accepted_math
+from ._tracked_gates import bookmark_additions as bookmark_additions
 from ._tracked_gates import bookmark_changes as bookmark_changes
+from ._tracked_gates import bookmark_names as bookmark_names
 from ._tracked_gates import compare_collateral as compare_collateral
 from ._tracked_gates import package_counts as package_counts
 from ._tracked_gates import revisions_by_part as revisions_by_part
@@ -116,7 +118,9 @@ __all__ = [
     "Untracked",
     "accepted_losses",
     "accepted_math",
+    "bookmark_additions",
     "bookmark_changes",
+    "bookmark_names",
     "build",
     "compare_collateral",
     "package_counts",
@@ -824,8 +828,12 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # on every `baseline` — and without it a refused build left the
         # PREVIOUS redline in place for `validate` and `promote` to take
         # as this one (Aging_Well R5). See `guard.base_of`.
+        # `bookmarks_added` is what `revision validate` judges a gained
+        # bookmark against: it has no clean copy, and only this call does.
         _guard.stamp(out, original=original.name, revised=revised.name,
-                     base_sha256=_guard.sha256(original))
+                     base_sha256=_guard.sha256(original),
+                     bookmarks_added=bookmark_additions(base_parts,
+                                                        revised_parts))
         return report
     finally:
         _clear_staging(staging, building, published, say)

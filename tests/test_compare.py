@@ -550,6 +550,24 @@ def test_an_EMPTY_equation_does_not_swallow_the_next_one(tmp_path):
     assert report["formula"] == []
 
 
+def test_an_EMPTY_equation_does_not_swallow_the_PROSE_after_it():
+    """Where the `(?<!/)>` guard actually bites. The test above cannot
+    fail — `compare` reads one paragraph at a time, and a merged pair has
+    the same tokens — so it passed with the guard removed (review of
+    2026-09-24). A WHOLE-PART reader is where a bare `<m:oMath/>` pairs
+    with the next paragraph's close: `_math_texts` read the prose between
+    as maths, and `accepted_math` would then refuse a clean build."""
+    from docxkit.equations import equations
+    xml = ("<w:body><w:p><m:oMath/></w:p>"
+           "<w:p><w:r><w:t>Some prose.</w:t></w:r></w:p>"
+           f"<w:p><m:oMath>{mrun('y')}</m:oMath></w:p></w:body>")
+
+    found = equations(xml)
+
+    assert [e.xml.count("Some prose.") for e in found] == [0]
+    assert len(found) == 1
+
+
 def test_a_SIGN_FLIP_inside_a_fence_is_a_finding(tmp_path):
     """The character Word draws between a delimiter's arguments lives in
     an ATTRIBUTE — `m:sepChr` — and in no `m:t`, so the token stream
