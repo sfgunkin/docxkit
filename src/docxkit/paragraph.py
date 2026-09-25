@@ -49,6 +49,7 @@ import re
 from ._xml import (
     PARA_OPEN_RE,
     escape,
+    markers_before,
     own_properties,
     set_para_property,
     split_run,
@@ -457,12 +458,6 @@ def merge(xml: str, first: str, second: str, *, sep: str = " ",
 # ---------------------------------------------------------------- drop --
 
 
-#: Bookmark markers standing immediately before a position, at body level.
-_HOISTED_RE = re.compile(r"(?:\s*<w:bookmark(?:Start|End)\b[^>]*/>)+\s*\Z")
-#: How far back to look for them: a hoisted pair is two short tags.
-_HOISTED_WINDOW = 2048
-
-
 def _hoisted_head(xml: str, start: int) -> int:
     """Where the paragraph at `start` really begins, its hoisted marker in.
 
@@ -470,13 +465,22 @@ def _hoisted_head(xml: str, start: int) -> int:
     gap just before it. A COMPLETE set there — every start with its end —
     belongs to this paragraph; a lone end is somebody else's, and then
     the gap is left alone.
+
+    Read tag by tag (:func:`_xml.markers_before`), not through a 2,048-
+    character lookback: a docxkit-built head bookmark redeclares its
+    namespaces and runs to ~2,500 characters, so none fitted and the
+    marker stayed behind when its paragraph was dropped.
     """
-    lo = max(0, start - _HOISTED_WINDOW)
-    m = _HOISTED_RE.search(xml, lo, start)
-    if m is None:
+    markers = markers_before(xml, start)
+    k = len(markers)
+    while k > 0 and markers[k - 1].family == "bookmark":
+        k -= 1
+    run = markers[k:]
+    if not run:
         return start
-    starts, ends = _bookmarks(m.group(0))
-    return lo + (m.start() - lo) if set(starts) == ends else start
+    starts = {m.id for m in run if m.opens}
+    ends = {m.id for m in run if not m.opens}
+    return run[0].start if starts == ends else start
 
 
 def drop(xml: str, sig: str, *, also: str | None = None,

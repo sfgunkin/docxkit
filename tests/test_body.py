@@ -158,6 +158,82 @@ def test_insert_before_never_steps_over_an_END():
     assert out.index('<w:bookmarkEnd w:id="1"/>') < out.index("Baker")
 
 
+def test_insert_before_steps_back_over_a_COLLAPSED_head_bookmark():
+    """Review of 2026-09-24 — the shape the first fix missed. `link_all`
+    writes an entry's marker as a start+end PAIR, and Word hoists the
+    pair; the END broke the opener run, so the new entry took
+    `Baker2002`. 220 of 327 entry bookmarks in six real manuscripts."""
+    xml = document(para(run("Allen (2001).")) +
+                   '<w:bookmarkStart w:id="5" w:name="Baker2002"/>'
+                   '<w:bookmarkEnd w:id="5"/>'
+                   + para(run("Baker (2002).")))
+
+    out = insert_before(xml, "Baker (2002)", para(run("Bacon (2002).")))
+
+    assert out.index("Bacon (2002)") < out.index("Baker2002")
+    assert out.index("Allen (2001)") < out.index("Bacon (2002)")
+
+
+def test_insert_before_takes_the_PAIR_but_not_an_END_before_it():
+    """Someone else's END, then the target's own pair: the new block goes
+    between them — the END closes the previous entry's range."""
+    xml = document('<w:bookmarkStart w:id="1" w:name="Allen2001"/>'
+                   + para(run("Allen (2001).")) + '<w:bookmarkEnd w:id="1"/>'
+                   '<w:bookmarkStart w:id="5" w:name="Baker2002"/>'
+                   '<w:bookmarkEnd w:id="5"/>' + para(run("Baker (2002).")))
+
+    out = insert_before(xml, "Baker (2002)", para(run("Bacon (2002).")))
+
+    assert (out.index('<w:bookmarkEnd w:id="1"/>') < out.index("Bacon")
+            < out.index("Baker2002"))
+
+
+def test_insert_before_SEPARATES_a_start_written_before_a_foreign_END():
+    """Misconceptions writes `[start DeLuca2011][end 64]`: the target's
+    start comes FIRST, and the end closes the previous entry's range.
+    Splicing either side of the pair strands one of them; the run is one
+    zero-width point, so the end goes in front of the new block and the
+    start stays with its paragraph."""
+    xml = document('<w:bookmarkStart w:id="64" w:name="DeFelice2010"/>'
+                   + para(run("De Felice (2010).")) +
+                   '<w:bookmarkStart w:id="67" w:name="DeLuca2011"/>'
+                   '<w:bookmarkEnd w:id="64"/>'
+                   + para(run("De Luca (2011).")))
+
+    out = insert_before(xml, "De Luca (2011)", para(run("De Lucia (2011).")))
+
+    assert (out.index('<w:bookmarkEnd w:id="64"/>') < out.index("De Lucia")
+            < out.index("DeLuca2011") < out.index("De Luca (2011)"))
+
+
+def test_insert_before_reaches_a_head_bookmark_LONGER_than_2048_chars():
+    """API8_generated.docx: a docxkit-built head bookmark redeclares its
+    namespaces and runs to ~2,524 characters. The 2,048-character
+    lookback fitted none of them — 71 of 71 stranded."""
+    ns = " ".join(f'xmlns:n{i}="urn:example:namespace:{i:04d}"'
+                  for i in range(80))
+    head = f'<w:bookmarkStart {ns} w:id="5" w:name="Baker2002"/>'
+    assert len(head) > 2048
+    xml = document(para(run("Allen (2001).")) + head
+                   + '<w:bookmarkEnd w:id="5"/>' + para(run("Baker (2002).")))
+
+    out = insert_before(xml, "Baker (2002)", para(run("Bacon (2002).")))
+
+    assert out.index("Bacon (2002)") < out.index("Baker2002")
+
+
+def test_insert_before_never_steps_over_a_PROOFING_end():
+    """`spellEnd` closes a proofing range before the target; only the
+    START marks were ever openers."""
+    xml = document(para(run("Allen (2001).")) +
+                   '<w:proofErr w:type="spellEnd"/>'
+                   + para(run("Baker (2002).")))
+
+    out = insert_before(xml, "Baker (2002)", para(run("Bacon (2002).")))
+
+    assert out.index('w:type="spellEnd"') < out.index("Bacon")
+
+
 def test_insert_after_steps_past_a_range_CLOSING_on_the_target():
     """The mirror: a bookmark or comment range wrapping the target ends
     after its `</w:p>`, and content spliced before that END joins it."""

@@ -389,6 +389,22 @@ def test_the_HOISTED_head_bookmark_goes_with_its_paragraph():
     clean(out)
 
 
+def test_a_hoisted_head_bookmark_LONGER_than_2048_chars_goes_too():
+    """Review of 2026-09-24: a docxkit-built head bookmark redeclares its
+    namespaces (~2,524 characters on API8), and the 2,048-character
+    lookback never reached its start — the marker stayed behind."""
+    ns = " ".join(f'xmlns:n{i}="urn:example:namespace:{i:04d}"'
+                  for i in range(80))
+    start = f'<w:bookmarkStart {ns} w:id="6" w:name="Brewer2007"/>'
+    assert len(start) > 2048
+    xml = doc(para(run("Keep.")), start + '<w:bookmarkEnd w:id="6"/>',
+              para(run("Brewer (2007).")))
+
+    out = paragraph.drop(xml, "Brewer", allow_bookmarks=True)
+
+    assert "Brewer2007" not in out and "bookmarkEnd" not in out
+
+
 def test_a_lone_END_in_the_gap_is_somebody_elses_and_stays():
     start, end = bookmark(8, "Span")
     xml = doc(para(start, run("Keep.")), end, para(run("Drop me.")))

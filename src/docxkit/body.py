@@ -33,7 +33,9 @@ from ._xml import (
     RUN_RE,
     escape,
     field_spans,
+    markers_before,
     own_properties,
+    owned,
     visible_text,
 )
 from .errors import AnchorError
@@ -232,28 +234,42 @@ def insert_before(xml: str, sig: str, content: str, *,
     never stepped over — it closes something before the target.
     """
     start, _ = para_slice(xml, sig, normalize=normalize)
-    start = _before_openers(xml, start)
-    return xml[:start] + content + xml[start:]
+    lo, before, after = _split_markers(xml, start)
+    return xml[:lo] + before + content + after + xml[start:]
 
 
-#: Zero-width markers that OPEN what follows them, written between
-#: paragraphs: a head bookmark, a comment range, a permission range, and
-#: Word's proofing mark.
-_OPENERS_RE = re.compile(
-    r"(?:<w:(?:bookmarkStart|commentRangeStart|permStart|proofErr)\b"
-    r"[^>]*/>\s*)+\Z")
-#: ...and those that CLOSE what precedes them.
+#: Zero-width markers that CLOSE what precedes them.
 _CLOSERS_RE = re.compile(
     r"(?:\s*<w:(?:bookmarkEnd|commentRangeEnd|permEnd)\b[^>]*/>)+")
-#: How far back an opener run can reach: a few short tags.
-_MARKER_WINDOW = 2048
 
 
-def _before_openers(xml: str, start: int) -> int:
-    """`start`, moved back over the openers standing right before it."""
-    lo = max(0, start - _MARKER_WINDOW)
-    m = _OPENERS_RE.search(xml, lo, start)
-    return m.start() if m else start
+def _split_markers(xml: str, start: int) -> tuple[int, str, str]:
+    """The marker run before `start`, split for a splice between: where
+    the run begins, the markers that close what PRECEDES, and those that
+    belong to the target.
+
+    Openers, and a start WITH its end: the collapsed head bookmark
+    `link_all` writes and Word hoists is the commonest shape before a
+    reference entry, and stepping over openers only left 220 of 327 entry
+    bookmarks in six manuscripts on the new paragraph (review of
+    2026-09-24) — the first fix was checked on captions, whose hoisted
+    marker is a lone start. And the target's start may come BEFORE the
+    previous range's end; the run is one zero-width point, so the end is
+    moved in front of the new block rather than either being stranded.
+    See :func:`_xml.owned`.
+    """
+    markers = markers_before(xml, start)
+    mine = owned(markers)
+    if not any(mine):
+        return start, "", ""
+    first = mine.index(True)
+    lo = markers[first].start
+    run = markers[first:]
+    before = "".join(xml[m.start:m.end] for m, own in zip(
+        run, mine[first:], strict=True) if not own)
+    after = "".join(xml[m.start:m.end] for m, own in zip(
+        run, mine[first:], strict=True) if own)
+    return lo, before, after
 
 
 def _past_closers(xml: str, end: int) -> int:

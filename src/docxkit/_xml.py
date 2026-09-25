@@ -841,6 +841,91 @@ def run_open_before(xml: str, pos: int) -> int:
     return starts[-1] if starts else -1
 
 
+class Marker(NamedTuple):
+    """One zero-width range marker, as :func:`markers_before` reads it.
+
+    ``family`` pairs a start with its end — ``bookmark``, ``commentRange``,
+    ``perm`` — or is ``proofErr``, whose marks carry no id and pair with
+    nothing a caller can check. ``opens`` is True for a start (and a
+    ``spellStart``/``gramStart``), False for an end.
+    """
+    start: int
+    end: int
+    family: str
+    id: str | None
+    opens: bool
+
+
+_MARKER_TAG_RE = re.compile(
+    r"<w:(bookmark|commentRange|perm)(Start|End)\b[^<>]*/>"
+    r"|<w:proofErr\b[^<>]*/>")
+_MARKER_ID_RE = re.compile(r'\bw:id="([^"]*)"')
+_PROOF_OPENS_RE = re.compile(r'\bw:type="(?:spell|gram)Start"')
+
+
+def markers_before(xml: str, pos: int) -> list[Marker]:
+    """The zero-width markers standing right before `pos`, in document order.
+
+    Walked back ONE TAG AT A TIME, over whitespace, and stopped by the
+    first thing that is not a self-closing range marker. There is no
+    window: the regex-with-a-lookback it replaces read 2,048 characters,
+    and a docxkit-built manuscript (API8) carries head bookmarks of about
+    2,524 characters each — redeclared namespaces — so not one fitted
+    and every one was stranded (review of 2026-09-24). An attribute
+    value cannot hold a raw ``<``, so the tag's own ``<`` is the last one
+    before its ``/>``.
+    """
+    out: list[Marker] = []
+    i = pos
+    while True:
+        j = i
+        while j > 0 and xml[j - 1] in XML_WS:
+            j -= 1
+        if j < 2 or xml[j - 2:j] != "/>":
+            break
+        lt = xml.rfind("<", 0, j)
+        m = _MARKER_TAG_RE.fullmatch(xml, lt, j) if lt >= 0 else None
+        if m is None:
+            break
+        tag = m.group(0)
+        idm = _MARKER_ID_RE.search(tag)
+        if m.group(1):
+            out.append(Marker(lt, j, m.group(1), idm.group(1) if idm else None,
+                              m.group(2) == "Start"))
+        else:
+            out.append(Marker(lt, j, "proofErr", None,
+                              bool(_PROOF_OPENS_RE.search(tag))))
+        i = lt
+    out.reverse()
+    return out
+
+
+def owned(markers: list[Marker]) -> list[bool]:
+    """For each marker in a run, does it belong to what FOLLOWS the run?
+
+    A start opens something after it, and an end whose start is earlier
+    in the same run — the collapsed pair `link_all` writes and Word
+    hoists out of an entry's head — is that paragraph's own too. An END
+    whose start is not in the run closes something before it, and a
+    proofing end has nothing to pair with: those belong to what precedes.
+
+    The run is zero-width — one point between two paragraphs — so the
+    two groups can be separated without moving either range's extent:
+    Word writes `[start X][end Y]` as readily as `[end Y][start X]`
+    (Misconceptions: `DeLuca2011` over the previous entry's end).
+    """
+    opened: set[tuple[str, str | None]] = set()
+    out: list[bool] = []
+    for m in markers:
+        if m.opens:
+            opened.add((m.family, m.id))
+            out.append(True)
+        else:
+            out.append(m.family != "proofErr"
+                       and (m.family, m.id) in opened)
+    return out
+
+
 class Field(NamedTuple):
     """One fldChar field, its markers paired by DEPTH.
 
