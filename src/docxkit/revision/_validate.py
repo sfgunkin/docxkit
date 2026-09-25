@@ -35,6 +35,7 @@ from ..tracked import (
     _simulate,
     bookmark_changes,
     bookmark_names,
+    cell_property_changes,
     structure_counts,
     structure_diff,
     untracked,
@@ -456,7 +457,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             structure_diff(structure_counts(base),
                            structure_counts(rejected),
                            skip=("bookmarkStart",))
-            + bookmark_changes(base, rejected, witness))
+            + bookmark_changes(base, rejected, witness)
+            + cell_property_changes(base, rejected))
         detail = {
             "paragraphs": _paras(_root(rejected)) == _paras(_root(base)),
             "glyphs": body_now == body_was,

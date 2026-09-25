@@ -67,6 +67,7 @@ from ._tracked_gates import accepted_math as accepted_math
 from ._tracked_gates import bookmark_additions as bookmark_additions
 from ._tracked_gates import bookmark_changes as bookmark_changes
 from ._tracked_gates import bookmark_names as bookmark_names
+from ._tracked_gates import cell_property_changes as cell_property_changes
 from ._tracked_gates import compare_collateral as compare_collateral
 from ._tracked_gates import package_counts as package_counts
 from ._tracked_gates import revisions_by_part as revisions_by_part
@@ -122,6 +123,7 @@ __all__ = [
     "bookmark_changes",
     "bookmark_names",
     "build",
+    "cell_property_changes",
     "compare_collateral",
     "package_counts",
     "revisions_by_part",
@@ -721,6 +723,10 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 structure_counts(rejected_view), skip=skip)]
             + [f"rejected: {d}" for d in bookmark_changes(
                 base_parts, rejected_view, revised_parts)]
+            + [f"rejected: {d}" for d in cell_property_changes(
+                base_parts, rejected_view)]
+            + [f"accepted: {d}" for d in cell_property_changes(
+                revised_parts, accepted_view)]
             + [f"accepted: {d}" for d in structure_diff(
                 structure_counts(revised_parts),
                 structure_counts(accepted_view), skip=skip)]

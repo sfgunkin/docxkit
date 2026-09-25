@@ -3726,6 +3726,28 @@ def test_validate_REFUSES_a_bookmark_the_clean_copy_did_not_add(
     assert any(f"gained {gained}" in d for d in report.structure_diff)
 
 
+def test_validate_REFUSES_a_cell_property_the_reject_does_not_restore(
+        tmp_path):
+    """Gate 5 read no `w:tcPr`: a record whose snapshot the baseline never
+    had — what a hand repair shipped in Misconceptions r2 — rejected to
+    a width from nowhere, and every comparison agreed (2026-09-25)."""
+    def cell(tcpr: str) -> str:
+        return (f"<w:tbl><w:tr><w:tc>{tcpr}" + para(run("cell"))
+                + "</w:tc></w:tr></w:tbl>")
+
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        cell('<w:tcPr><w:vAlign w:val="bottom"/></w:tcPr>')))
+    batch = write(tmp_path / "batch.docx", make_parts(cell(
+        '<w:tcPr><w:vAlign w:val="bottom"/><w:tcPrChange w:id="9" '
+        'w:author="W" w:date="2026-09-25T00:00:00Z"><w:tcPr>'
+        '<w:tcW w:w="0" w:type="auto"/></w:tcPr></w:tcPrChange></w:tcPr>')))
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.reject_detail["structure"] is False
+    assert any("cell properties" in d for d in report.structure_diff)
+
+
 def test_validate_SAYS_when_a_batch_cannot_have_its_gains_judged(tmp_path):
     """A batch built before the stamp recorded the clean copy's additions
     is judged the old way, which cannot refuse a gain — and the report

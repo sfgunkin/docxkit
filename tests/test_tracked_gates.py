@@ -751,6 +751,67 @@ def test_build_STAMPS_the_bookmarks_the_clean_copy_added(monkeypatch,
         "Smith2020", "Smith2020txt"]
 
 
+# --- cell properties (2026-09-25) ------------------------------------------
+# No gate looked inside `w:tcPr`. A paper's hand repair added twelve
+# `w:tcPrChange` records to a Word-built redline — ten recorded nothing,
+# two recorded widths the original never had — and every gate passed.
+
+
+def _one_cell(tcpr: str) -> str:
+    """The clean document with its sentence in a one-cell table."""
+    return clean_document().replace(
+        "<w:body>", f"<w:body><w:tbl><w:tr><w:tc>{tcpr}"
+        "<w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>", 1)
+
+
+TOP = '<w:tcPr><w:vAlign w:val="top"/></w:tcPr>'
+BOTTOM = '<w:tcPr><w:vAlign w:val="bottom"/></w:tcPr>'
+
+
+def test_an_UNTRACKED_cell_property_change_is_refused(monkeypatch,
+                                                      tmp_path):
+    sources = _pair(tmp_path, _one_cell(TOP), _one_cell(TOP))
+
+    report, _ = _build(monkeypatch, _one_cell(BOTTOM), sources,
+                       reject_check=False, accept_check=False)
+
+    assert [d for d in report.structure_diff if "cell properties" in d] == [
+        "rejected: cell properties: 1 cell(s) differ — table 1 row 1 cell 1",
+        "accepted: cell properties: 1 cell(s) differ — table 1 row 1 cell 1"]
+
+
+def test_a_TRACKED_cell_property_change_passes_both_views(monkeypatch,
+                                                          tmp_path):
+    """What Word's Compare writes: the new properties, and the old ones
+    in a `w:tcPrChange` — reject gives the original, accept the clean."""
+    tracked_ = ('<w:tcPr><w:vAlign w:val="bottom"/><w:tcPrChange w:id="9" '
+                'w:author="W" w:date="2026-09-25T00:00:00Z"><w:tcPr>'
+                '<w:vAlign w:val="top"/></w:tcPr></w:tcPrChange></w:tcPr>')
+    sources = _pair(tmp_path, _one_cell(TOP), _one_cell(BOTTOM))
+
+    report, _ = _build(monkeypatch, _one_cell(tracked_), sources,
+                       reject_check=False, accept_check=False)
+
+    assert not [d for d in report.structure_diff if "cell properties" in d]
+
+
+def test_a_record_holding_the_WRONG_old_properties_is_refused(monkeypatch,
+                                                              tmp_path):
+    """The paper's shape: a `w:tcPrChange` whose snapshot the original
+    never had, so reject-all puts a width back from nowhere."""
+    wrong = ('<w:tcPr><w:vAlign w:val="bottom"/><w:tcPrChange w:id="9" '
+             'w:author="W" w:date="2026-09-25T00:00:00Z"><w:tcPr>'
+             '<w:tcW w:w="0" w:type="auto"/></w:tcPr></w:tcPrChange>'
+             "</w:tcPr>")
+    sources = _pair(tmp_path, _one_cell(BOTTOM), _one_cell(BOTTOM))
+
+    report, _ = _build(monkeypatch, _one_cell(wrong), sources,
+                       reject_check=False, accept_check=False)
+
+    assert [d for d in report.structure_diff if "cell properties" in d] == [
+        "rejected: cell properties: 1 cell(s) differ — table 1 row 1 cell 1"]
+
+
 def test_the_structure_refusal_can_be_turned_off_like_the_other_one(
         monkeypatch, sources):
     """`reject_check=False` builds the file anyway, which is what a

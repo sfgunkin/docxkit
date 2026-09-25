@@ -36,9 +36,12 @@ from ._xml import (
     FOOTNOTES,
     TEXT_PARTS,
     Parts,
+    element_spans,
     field_anchors,
     fields,
     internal_links,
+    live_properties,
+    own_properties,
     text_parts,
     visible_text,
     word_minted,
@@ -393,6 +396,83 @@ def unaccepted(parts: Parts, revised: Parts, *,
     return _mismatched_paras(
         _simulate(parts, _accept), revised, Unaccepted, limit,
         (lambda t: " ".join(t.split())) if fold_space else None)
+
+
+_INTERTAG_WS_RE = re.compile(r">\s+<")
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _same_props(a: str, b: str) -> bool:
+    """Two property contents equal as XML: attribute order and the
+    whitespace between tags are not properties."""
+    if a == b:
+        return True
+    from lxml import etree
+
+    def canon(inner: str) -> bytes:
+        wrapped = (f'<w:tcPr xmlns:w="{W_NS}">'
+                   f"{_INTERTAG_WS_RE.sub('><', inner.strip())}</w:tcPr>")
+        return etree.tostring(etree.fromstring(wrapped), method="c14n")
+
+    try:
+        return canon(a) == canon(b)
+    except etree.XMLSyntaxError:        # a prefix we did not declare
+        return False
+
+
+def _cell_props(xml: str) -> list[list[list[str]]]:
+    """Every table's rows' cells' LIVE ``w:tcPr`` content, outermost
+    tables only (a nested table rides inside its cell)."""
+    out: list[list[list[str]]] = []
+    for s, e in element_spans(xml, "tbl"):
+        tbl = xml[s:e]
+        rows: list[list[str]] = []
+        for a, b in element_spans(tbl, "tr"):
+            tr = tbl[a:b]
+            cells: list[str] = []
+            for c, d in element_spans(tr, "tc"):
+                pr = own_properties(tr[c:d], "tcPr")
+                cells.append(live_properties(pr[2]) if pr else "")
+            rows.append(cells)
+        out.append(rows)
+    return out
+
+
+def cell_property_changes(base: Parts, view: Parts) -> list[str]:
+    """Cells whose properties `view` does not reproduce from `base`.
+
+    The structure counts do not look inside ``w:tcPr``, and neither do
+    the text gates, so a cell's vertical alignment, shading or borders
+    could change in either view of a redline with nothing refusing it.
+    What exposed the gap: a paper's hand-written repair added twelve
+    ``w:tcPrChange`` records to a redline Word had built, ten of which
+    recorded no change and two of which recorded widths the original
+    never had — reject-all put them back, and every gate passed
+    (Misconceptions r2, 2026-09-25). Word's own Compare DOES track a cell
+    property: measured on a copy of that manuscript, one changed
+    ``w:vAlign`` came back as ``w:tcPrChange`` records, and both views
+    reproduced their documents cell for cell.
+
+    Compared by position, table by table; a view whose tables, rows or
+    cells do not line up with `base` is left to the structure counts,
+    which already report it.
+    """
+    was = _cell_props(base[DOCUMENT].decode("utf-8"))
+    now = _cell_props(view[DOCUMENT].decode("utf-8"))
+    if [[len(r) for r in t] for t in was] != [[len(r) for r in t]
+                                             for t in now]:
+        return []
+    moved = [(t, r, c)
+             for t, (ta, tb) in enumerate(zip(was, now, strict=True))
+             for r, (ra, rb) in enumerate(zip(ta, tb, strict=True))
+             for c, (ca, cb) in enumerate(zip(ra, rb, strict=True))
+             if not _same_props(ca, cb)]
+    if not moved:
+        return []
+    where = ", ".join(f"table {t + 1} row {r + 1} cell {c + 1}"
+                      for t, r, c in moved[:4])
+    more = f" and {len(moved) - 4} more" if len(moved) > 4 else ""
+    return [f"cell properties: {len(moved)} cell(s) differ — {where}{more}"]
 
 
 def untracked(parts: Parts, baseline: Parts, *,
