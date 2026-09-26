@@ -48,20 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — testing what Word's Compare does takes a hand-rolled scratch build every time
-<!-- status: open -->
-
-Two BACKLOG entries on 2026-09-25 rested on a claim about Compare, and
-settling each took a throwaway script (`compare_tcpr.py`,
-`compare_notemark.py`, `compare_r2.py`): copy a manuscript to scratch,
-make ONE edit in a clean copy, run `tracked.build` with every gate off,
-then read the rejected and accepted views against the two inputs. One
-claim was false (Compare does track cell properties), the other true
-only with the whole edit set (the note-mark space). **Fix:** `docxkit
-compare-probe ORIGINAL CLEAN [--moves]` — build into a temp dir with
-gates reporting, print `unaccepted` / `untracked` / `structure_diff` and
-the revision kinds, never write beside the inputs.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

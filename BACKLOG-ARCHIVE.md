@@ -14,6 +14,23 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — testing what Word's Compare does takes a hand-rolled scratch build every time~~ — FIXED 26.09, `c3d4f8f`
+
+<!-- status: fixed -->
+
+Two BACKLOG entries on 2026-09-25 rested on a claim about Compare, and
+settling each took a throwaway script (`compare_tcpr.py`,
+`compare_notemark.py`, `compare_r2.py`): copy a manuscript to scratch,
+make ONE edit in a clean copy, run `tracked.build` with every gate off,
+then read the rejected and accepted views against the two inputs. One
+claim was false (Compare does track cell properties), the other true
+only with the whole edit set (the note-mark space). **Fix:** `docxkit
+compare-probe ORIGINAL CLEAN [--moves]` — build into a temp dir with
+gates reporting, print `unaccepted` / `untracked` / `structure_diff` and
+the revision kinds, never write beside the inputs.
+
+**Fixed in `c3d4f8f`** — `docxkit compare-probe ORIG CLEAN [--moves] [--keep-math] [--keep OUT]`; tests in `tests/test_cli_compare_probe.py`. First real run, on the cell-property pair: 9 revisions, tcPrChange 6, both views reproduce.
+
 ### ~~S4 — no old-vs-new oracle for the WRITERS; each fix hand-rolls one~~ — FIXED 25.09, `8246e4e`
 
 <!-- status: fixed -->
