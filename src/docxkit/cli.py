@@ -24,6 +24,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit probe PAPER.docx [ANCHOR...]
     docxkit math PAPER.docx [--check]
     docxkit verify PAPER.docx
+    docxkit compare-probe ORIG.docx CLEAN.docx [--moves] [--keep-math]
     docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
     docxkit fit PAPER.docx [--render] [--check]
     docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
@@ -1323,6 +1324,57 @@ def cmd_verify(args: argparse.Namespace) -> int:
     print("  VERDICT : clean - Word reads back every comment the package "
           "holds")
     return 0
+
+
+def cmd_compare_probe(args: argparse.Namespace) -> int:
+    """What Word's Compare makes of an edit — measured on COPIES.
+
+    Three BACKLOG claims about Compare were settled on 2026-09-25, each by
+    a throwaway script (copy, build with every gate off, read both views),
+    and one of the three was false. This is that script: the two inputs
+    are copied to a temporary directory, the redline is built there with
+    the gates REPORTING rather than refusing, and nothing is written
+    beside the inputs unless ``--keep`` names a file. Exit 1 when either
+    view fails to reproduce its document.
+    """
+    import shutil
+    import tempfile
+
+    from . import tracked
+    from ._xml import DOCUMENT
+    from .package import read_parts
+    from .revisions import revision_kinds
+    with tempfile.TemporaryDirectory() as tmp:
+        orig, clean = Path(tmp) / "original.docx", Path(tmp) / "clean.docx"
+        out = Path(tmp) / "redline.docx"
+        shutil.copyfile(args.original, orig)
+        shutil.copyfile(args.clean, clean)
+        report = tracked.build(
+            orig, clean, out, None, author="compare-probe",
+            verify_in_word=False, reject_check=False, accept_check=False,
+            lint_check=False, force=True, moves=args.moves,
+            resolve_math=not args.keep_math)
+        kinds = revision_kinds(read_parts(out)[DOCUMENT].decode("utf-8"))
+        if args.keep:
+            shutil.copyfile(out, args.keep)
+    print(f"{Path(args.original).name} -> {Path(args.clean).name}")
+    print(f"  revisions: {report.revisions}  "
+          f"{', '.join(f'{k} {n}' for k, n in sorted(kinds.items()))}")
+    for note in report.returned_spaces + report.restored_glyphs:
+        print(f"  repaired: {note}")
+    findings = ([f"UNREJECTABLE {u}" for u in report.unrejectable]
+                + [f"UNACCEPTED {u}" for u in report.unaccepted]
+                + [f"STRUCTURE {d}" for d in report.structure_diff]
+                + [f"MATH {m}" for m in report.accepted_math]
+                + [f"LINT {problem}" for problem in report.lint])
+    for line in findings:
+        print(f"  {line}")
+    if args.keep:
+        print(f"  redline kept: {args.keep}")
+    print("  VERDICT : " + ("both views reproduce their documents"
+                            if not findings else
+                            f"{len(findings)} finding(s)"))
+    return 1 if findings else 0
 
 
 def cmd_pdf(args: argparse.Namespace) -> int:
@@ -2775,6 +2827,21 @@ def build_parser() -> argparse.ArgumentParser:
                        help="does Word read this back unchanged? (needs Word)")
     p.add_argument("docx")
     p.set_defaults(fn=cmd_verify)
+
+    p = sub.add_parser(
+        "compare-probe",
+        help="what Word's Compare makes of an edit, built on COPIES with "
+             "the gates reporting (needs Word)")
+    p.add_argument("original")
+    p.add_argument("clean")
+    p.add_argument("--moves", action="store_true",
+                   help="let Compare detect moves (the protocol builds "
+                        "without)")
+    p.add_argument("--keep-math", action="store_true",
+                   help="leave math revisions tracked (resolve_math=False)")
+    p.add_argument("--keep", metavar="REDLINE.docx",
+                   help="also save the redline here")
+    p.set_defaults(fn=cmd_compare_probe)
 
     p = sub.add_parser("pdf", help="render to PDF via Word")
     p.add_argument("docx")

@@ -2101,7 +2101,9 @@ def _command_names(monkeypatch, capsys, *argv: str) -> list[str]:
     import re
     monkeypatch.setenv("COLUMNS", "400")     # or argparse wraps the list
     run_cli(monkeypatch, *argv, "--help")
-    block = re.search(r"\{([a-z,\s]+)\}", capsys.readouterr().out)
+    # hyphens too: `compare-probe` (2026-09-26) is the first command with
+    # one, and `_NAMED` below already reads them
+    block = re.search(r"\{([a-z,\s-]+)\}", capsys.readouterr().out)
     assert block, "argparse stopped printing its choices"
     names = "".join(block.group(1).split()).split(",")
     return [n for n in names if n]

@@ -491,6 +491,10 @@ LOCK_EXEMPT = {
     "verify": "opens the document in Word, which is the question rather "
               "than an obstacle to it — `verify` asks what Word reads "
               "back, and Word already has this file open",
+    "compare-probe": "two paths, copied to a temporary directory before "
+                     "anything reads them, and the question is Word's "
+                     "Compare, which runs on the copies — never on the "
+                     "file the author has open",
     "pdf": "renders through Word; a snapshot would answer about a "
            "generation the author cannot see on their screen",
     "pages": "renders through Word, same as `pdf` — but its CAPTION "

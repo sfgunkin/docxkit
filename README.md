@@ -120,6 +120,8 @@ docxkit fit PAPER.docx [--render] [--check]
 docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
 docxkit sections PAPER.docx               # headings 1..N, every mention resolves; exit 1 on a breach
 docxkit verify PAPER.docx                  # does Word read this back unchanged?
+docxkit compare-probe ORIG.docx CLEAN.docx [--moves] [--keep-math] [--keep OUT.docx]
+                                           # what Word's Compare makes of an edit, on copies
 ```
 
 The single-file protocol has a family of its own — one manuscript, two
