@@ -830,6 +830,41 @@ backtick is optional now.
 
 ---
 
+### S2 — `link_all(only=…)` bookmarks an entry that already has a key, leaving a marker nothing targets
+<!-- status: open -->
+
+Found 2026-09-26 on Misconceptions (W12, D14/D16). The call was
+`link_all(parts, only={"World Bank", "World Nuclear Association"})`, which
+was meant to link two NEW entries. It also added a bookmark named from the
+visible head to two entries in the same author block that were ALREADY
+linked under the paper's own keys:
+- `WorldNuclearAssociation2023` beside the existing `WNA2023`;
+- `WorldBank2026` beside `WorldBank2024`, the entry's key from before its
+  year was edited.
+
+Nothing points at either new bookmark, so the citations audit reports
+"REF WITHOUT CITE". No other gate sees it. `only=` narrows by author, not by
+"entries without a key".
+
+**Fix:** skip an entry that already carries a bookmark which some link or
+`\l` field targets. At minimum, report the names it created, so the caller
+can check them.
+
+**Per-paper workaround:** after linking,
+`Misconceptions/revision/do/W12_full36.py` deletes every named bookmark
+that no `w:anchor` or `\l "…"` targets. Delete that loop when this is fixed.
+
+A related trap, same script, not a docxkit call: inserting a paragraph
+BEFORE an entry at `para_slice`'s start puts it after Word's
+between-paragraph `bookmarkStart`. The new paragraph then sits inside the
+old entry's bookmark, and a citation of the old entry jumps to the new one.
+This is the same shape as the old S2 "inserting reference entries strands
+between-paragraph bookmarks". If `body.insert_before` has the same
+behaviour, it should step outside a bookmark that opens the anchor
+paragraph.
+
+---
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
