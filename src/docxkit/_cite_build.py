@@ -38,6 +38,7 @@ from ._cite_repair import (
     wrap_link_in_bookmark,
 )
 from ._xml import (
+    BOOKMARK_END_ID_RE,
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
@@ -306,6 +307,11 @@ class LinkAllReport:
     #: be followed back again.
     repaired: list[str] = field(default_factory=list)
     suspect: list[str] = field(default_factory=list)     # entry reads as prose
+    #: Entry bookmarks this pass WROTE. A caller that expected to link
+    #: two new works can see a third name here — which is how the
+    #: Misconceptions run should have shown its two strays (BACKLOG S2,
+    #: 2026-09-26), rather than an audit reporting them later.
+    marked: list[str] = field(default_factory=list)
 
     def format(self) -> str:
         more = f", suspect {len(self.suspect)}" if self.suspect else ""
@@ -313,6 +319,9 @@ class LinkAllReport:
                   f"{len(self.already)}, back-links added "
                   f"{len(self.backlinked)}, unmatched "
                   f"{len(self.unmatched)}, skipped {len(self.skipped)}{more}")]
+        if self.marked:
+            lines.append(f"  entry bookmarks written: "
+                         f"{', '.join(self.marked)}")
         if self.repaired:
             lines.append(f"  half-linked, bookmark rebuilt under the "
                          f"surviving link: {', '.join(self.repaired)}")
@@ -370,6 +379,7 @@ def _named(r: Reference, convention: Callable[[str, str], str] | None,
 
 def _own_name_map(entries: list[Reference],
                   where: Callable[[Reference], tuple[str, str]],
+                  targeted: set[str] | None = None,
                   ) -> dict[int, str]:
     """Each entry's own bookmark, by paragraph index; absent if none.
 
@@ -388,6 +398,9 @@ def _own_name_map(entries: list[Reference],
     other entry's. Two works by one author in one year is precisely when
     a wrong guess is undetectable, and the letter is the discriminator
     the fold throws away.
+
+    And a third, given the names some link `targeted`: see
+    :func:`_targeted_heads`.
     """
     out: dict[int, str] = {}
     lettered: list[Reference] = []
@@ -406,6 +419,64 @@ def _own_name_map(entries: list[Reference],
             relaxed[r.index] = got
     reached = Counter(relaxed.values())
     out.update({i: n for i, n in relaxed.items() if reached[n] == 1})
+    if targeted:
+        out.update(_targeted_heads(entries, where, targeted,
+                                   claimed=set(out.values()), done=out))
+    return out
+
+
+def _confined(name: str, xml: str) -> bool:
+    """Do `name`'s start AND end both sit in `xml` — a bookmark that marks
+    this stretch and nothing beyond it?"""
+    for start in _BM_START_TAG_RE.finditer(xml):
+        tag = start.group(0)
+        named = _BOOKMARK_NAME_RE.search(tag)
+        if named is None or named.group(1) != name:
+            continue
+        bid = _BM_ID_ATTR_RE.search(tag)
+        return bid is not None and bid.group(1) in \
+            BOOKMARK_END_ID_RE.findall(xml, start.end())
+    return False
+
+
+_BM_START_TAG_RE = re.compile(r"<w:bookmarkStart\b[^>]*/>")
+_BM_ID_ATTR_RE = re.compile(r'\bw:id="(\d+)"')
+
+
+def _targeted_heads(entries: list[Reference],
+                    where: Callable[[Reference], tuple[str, str]],
+                    targeted: set[str], *, claimed: set[str],
+                    done: dict[int, str]) -> dict[int, str]:
+    """The third pass: a bookmark a LINK already targets, on this entry.
+
+    Both passes above read the NAME, and a paper's own key need not spell
+    the work: `WNA2023` for the World Nuclear Association, `WorldBank2024`
+    on an entry whose year was later corrected to 2026. Neither matched,
+    so `link_all(only=…)` minted `WorldNuclearAssociation2023` and
+    `WorldBank2026` beside them — markers nothing targets, which the audit
+    then reported as REF WITHOUT CITE (Misconceptions W12, BACKLOG S2
+    2026-09-26). A link pointing at the entry's head is stronger evidence
+    than any name: the text already reaches this work by it.
+
+    Adopted only when it is unambiguous — exactly one such bookmark, start
+    AND end inside the entry's paragraph or the gap Word hoists a head
+    marker into (so a bookmark spanning the whole reference list is not
+    one entry's), not Word's own `_` names, not an in-text `txt` twin, and
+    not a name another entry already owns.
+    """
+    out: dict[int, str] = {}
+    for r in entries:
+        if r.index in done:
+            continue
+        para, before = where(r)
+        xml = before + para
+        found = [n for n in dict.fromkeys(_BOOKMARK_NAME_RE.findall(xml))
+                 if n in targeted and not n.endswith("txt")
+                 and not n.startswith("_") and n not in claimed
+                 and _confined(n, xml)]
+        if len(found) == 1:
+            out[r.index] = found[0]
+            claimed.add(found[0])
     return out
 
 
@@ -415,6 +486,7 @@ def _bookmark_names(entries: list[Reference],
                     taken: set[str],
                     naming: Callable[[str, str], str] | None,
                     report: LinkAllReport,
+                    targeted: set[str] | None = None,
                     ) -> tuple[dict[int, str], dict[str, str], set[str]]:
     """Each entry's bookmark name, and the in-text twin it pairs with.
 
@@ -449,7 +521,8 @@ def _bookmark_names(entries: list[Reference],
     are still whole, so one damaged pair cannot teach the wrong shape.
     """
     own_names = _own_name_map(
-        entries, lambda r: (paras[r.index].group(0), gaps[r.index]))
+        entries, lambda r: (paras[r.index].group(0), gaps[r.index]),
+        targeted)
     twins: dict[int, str] = {}
     for r in entries:
         stems = _stems(r)
@@ -784,7 +857,8 @@ def link_all(parts: Parts, *,
             for i, m in enumerate(paras)}
 
     names, twin_name, demanded = _bookmark_names(
-        entries, paras, gaps, taken=taken, naming=naming, report=report)
+        entries, paras, gaps, taken=taken, naming=naming, report=report,
+        targeted=linked_anchors)
     answers: dict[str, str] = {}
     by_key: dict[str, list[Reference]] = {}
     for r in entries:
@@ -834,6 +908,7 @@ def link_all(parts: Parts, *,
             # one inside would leave two bookmarks of the same name
             if name not in set(_BOOKMARK_NAME_RE.findall(gaps[i] + para)):
                 para = _mark_para_head(para, name, next(bids))
+                report.marked.append(name)
             # Back-link only entries whose in-text end exists or is being
             # built: back-linking an UNCITED entry writes a dangling
             # <name>txt target — 19 of them on the Missing Market dry
@@ -1006,7 +1081,8 @@ def _own_bookmarks(doc: str, entries: list[Reference],
         return m.group(0), doc[(paras[r.index - 1].end()
                                 if r.index else 0):m.start()]
 
-    own = _own_name_map(entries, where)
+    own = _own_name_map(entries, where,
+                        {a for a, _ in internal_links(doc)})
     return [(r, own[r.index]) for r in entries if r.index in own]
 
 

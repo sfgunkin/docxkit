@@ -416,3 +416,83 @@ def test_a_TRUNCATED_own_bookmark_is_found_BEHIND_one_that_is_not_key_shaped():
 
     assert sorted(_names(parts)) == ["Kanb2007", "Kanb2007txt", "_Toc12345"]
     assert report.linked == ["Kanb2007 @ ¶1"], report.linked
+
+
+# --- a bookmark a LINK already targets is the entry's own (BACKLOG S2,
+# 2026-09-26). Misconceptions keys the World Nuclear Association as
+# `WNA2023`, and kept `WorldBank2024` after correcting the entry's year to
+# 2026; neither NAME spells its work, so `link_all(only=...)` minted
+# `WorldNuclearAssociation2023` and `WorldBank2026` beside them, and the
+# audit reported both as REF WITHOUT CITE.
+
+WNA = "World Nuclear Association (2023). Fukushima Daiichi accident. WNA."
+WB = "World Bank (2026). World Development Indicators. World Bank."
+WHO = "World Health Organization (2025). Radiation and health. WHO."
+
+
+def _cited(anchor: str, label: str) -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}">' + run(label)
+            + "</w:hyperlink>")
+
+
+def _keyed_paper() -> dict[str, bytes]:
+    return make_parts(
+        para(run("As reported ("), _cited("WNA2023", "WNA 2023"),
+             run("; "), _cited("WorldBank2024", "World Bank 2026"),
+             run("; World Health Organization 2025)."))
+        + para(run("References"))
+        + _marked("WorldBank2024", WB, 11)
+        + _marked("WNA2023", WNA, 12)
+        + para(run(WHO)))
+
+
+def test_a_TARGETED_head_bookmark_is_reused_whatever_its_name():
+    parts = _keyed_paper()
+
+    report = link_all(parts, only={"World Bank", "World Nuclear Association",
+                                   "World Health Organization"})
+
+    names = _names(parts)
+    assert "WorldNuclearAssociation2023" not in names, report.format()
+    assert "WorldBank2026" not in names, report.format()
+    assert names.count("WNA2023") == names.count("WorldBank2024") == 1
+    assert report.marked == ["WorldHealthOrganization2025"], report.format()
+
+
+def test_what_link_all_WROTE_is_in_its_report():
+    parts = _keyed_paper()
+
+    report = link_all(parts)
+
+    written = "entry bookmarks written: WorldHealthOrganization2025"
+    assert written in report.format()
+
+
+def test_a_bookmark_spanning_the_WHOLE_list_is_no_entry_s_own():
+    """Targeted, but it opens before the first entry and closes after the
+    last: it marks the list, and adopting it would send every citation of
+    the first work to the list as a whole."""
+    parts = make_parts(
+        para(run("See the list ("), _cited("RefList", "references"),
+             run(") and (World Health Organization 2025)."))
+        + para(run("References"))
+        + '<w:bookmarkStart w:id="20" w:name="RefList"/>'
+        + para(run(WHO)) + para(run(WB))
+        + '<w:bookmarkEnd w:id="20"/>')
+
+    link_all(parts)
+
+    assert "WorldHealthOrganization2025" in _names(parts)
+
+
+def test_an_UNTARGETED_stray_is_still_not_adopted():
+    """The name rules stand where no link speaks: `Kanbur2005` on a 2007
+    entry, targeted by nothing, is still some other work's."""
+    parts = make_parts(
+        para(run("A point (Kanbur 2007)."))
+        + para(run("References")) + _marked("Kanbur2005", ENTRY))
+
+    report = link_all(parts)
+
+    assert "Kanbur2007" in _names(parts)
+    assert report.marked == ["Kanbur2007"]
