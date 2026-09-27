@@ -30,6 +30,11 @@ one", its header said, and it lived in that paper's scripts.
   :func:`docxkit.equations.numbered_grid` — see
   :func:`~docxkit.equations.number_displays` for why a tab stop is not
   enough.
+* **The paragraph that leads into a display equation**: 4 pt after —
+  the author's rule, 2026-09-26 (Misconceptions). Only `w:after` is
+  written; the paragraph keeps its own line spacing and space before.
+  A caption, a note or another equation above an equation is not a
+  lead-in and keeps its own rule.
 
 Each face goes on the paragraph MARK as well as the runs: the mark's size
 sets the height of an empty trailing line, and a note that looks right can
@@ -143,6 +148,9 @@ class Rules:
     figure_note_indent: int = 720        # twips: 0.5"
     abstract_indent: int = 720
     number_equations: bool = True
+    #: twips after the prose paragraph leading into a display equation
+    #: (4 pt); None leaves those paragraphs alone.
+    equation_lead_after: int | None = 80
 
 
 HOUSE = Rules()
@@ -160,12 +168,15 @@ class HouseReport:
     #: reading "Abstract" and the one after it), or "" — none found.
     abstract: str
     equations: int
+    #: prose paragraphs leading into a display equation, spacing set
+    lead_ins: int = 0
 
     def format(self) -> str:
         return (f"captions {self.captions}, notes {self.notes} "
                 f"({self.figure_notes} under a figure), runs restyled "
                 f"{self.runs}, abstract {self.abstract or 'not found'}, "
-                f"numbered equations set {self.equations}")
+                f"numbered equations set {self.equations}, equation "
+                f"lead-ins {self.lead_ins}")
 
 
 # ---------------------------------------------------------------- apply --
@@ -247,6 +258,53 @@ def _after_of(para: str) -> int:
     return 0
 
 
+#: Between a lead-in and its equation only these may sit: whitespace,
+#: bookmarks, proofing marks. Anything else — an empty paragraph, the
+#: end of a table — means the paragraph above is not the lead-in.
+_ADJACENT_RE = re.compile(
+    r"(?:\s|<w:(?:bookmarkStart|bookmarkEnd|proofErr|permStart|permEnd)"
+    r"\b[^>]*/>)*")
+
+
+def _lead_ins(xml: str) -> list[re.Match[str]]:
+    """The prose paragraph directly above each display equation, in
+    document order. A numbered equation sits in its grid, so "above" is
+    above the TABLE; an equation whose paragraph above is a caption, a
+    note or another equation has no lead-in."""
+    tables = element_spans(xml, "tbl")
+    paras = list(PARA_RE.finditer(xml))
+    cap_re = caption_re()
+    found: dict[int, re.Match[str]] = {}
+    for eq in display_equations(xml):
+        top = min((lo for lo, hi in tables if lo <= eq.start() < hi),
+                  default=eq.start())
+        above = [p for p in paras if p.end() <= top]
+        if not above:
+            continue
+        lead = above[-1]
+        if not _ADJACENT_RE.fullmatch(xml, lead.end(), top):
+            continue
+        text = visible_text(OMATH_RE.sub("", lead.group(0))).strip()
+        if (not text or cap_re.match(text) or NOTE.match(text)
+                or EQ_NUMBER_RE.fullmatch(text)):
+            continue
+        found[lead.start()] = lead
+    return [found[k] for k in sorted(found)]
+
+
+def _with_after(para: str, after: int) -> str:
+    """`after` twips after; every other spacing attribute kept. `afterLines`
+    and `afterAutospacing` go, because Word lets either override `after`."""
+    ppr = own_properties(para, "pPr")
+    keep = ""
+    if ppr is not None and (m := re.search(
+            r"<w:spacing\b([^>]*?)/>", live_properties(ppr[2]))):
+        keep = re.sub(r'\s*\bw:after(?:Lines|Autospacing)?="[^"]*"', "",
+                      m.group(1))
+    return set_para_property(para, "spacing",
+                             f'<w:spacing{keep} w:after="{after}"/>')
+
+
 def apply(parts: Parts, rules: Rules = HOUSE) -> HouseReport:
     """Set the house typography on the whole document. Edits `parts`.
 
@@ -282,10 +340,19 @@ def apply(parts: Parts, rules: Rules = HOUSE) -> HouseReport:
     equations = 0
     if rules.number_equations:
         xml, equations = number_displays(xml)
+    lead_ins = 0
+    if rules.equation_lead_after is not None:
+        # AFTER the numbering: it moves each equation into a table, and
+        # the lead-in is whatever sits above the table then.
+        for m in reversed(_lead_ins(xml)):
+            para = _with_after(m.group(0), rules.equation_lead_after)
+            xml = xml[:m.start()] + para + xml[m.end():]
+            lead_ins += 1
     parts[DOCUMENT] = xml.encode("utf-8")
     return HouseReport(captions=captions, notes=notes,
                        figure_notes=figure_notes, runs=runs,
-                       abstract=abstract, equations=equations)
+                       abstract=abstract, equations=equations,
+                       lead_ins=lead_ins)
 
 
 # ---------------------------------------------------------------- audit --
@@ -449,4 +516,21 @@ def audit(parts: Parts, rules: Rules = HOUSE) -> list[str]:
             out.append(f"equation {number.group(0)} "
                        f"carries its number in its own paragraph — Word "
                        f"demotes that display to inline on save")
+    if rules.equation_lead_after is not None:
+        lead_after = rules.equation_lead_after
+        for m in _lead_ins(xml):
+            para = m.group(0)
+            ppr = own_properties(para, "pPr")
+            inner = live_properties(ppr[2]) if ppr else None
+            pstyle = Cascade.paragraph_style(para)
+            got = cascade.para_attr("spacing", "after", ppr=inner,
+                                    pstyle=pstyle)
+            lines = cascade.para_attr("spacing", "afterLines", ppr=inner,
+                                      pstyle=pstyle)
+            if (got or "0") != str(lead_after) or lines not in (None, "0"):
+                shown = (f"{int(lines) / 100:g} lines" if lines not in
+                         (None, "0") else f"{int(got or 0) / 20:g} pt")
+                text = visible_text(para).strip()
+                out.append(f"equation lead-in {text[:30]!r}: {shown} "
+                           f"after, not {lead_after / 20:g} pt")
     return out

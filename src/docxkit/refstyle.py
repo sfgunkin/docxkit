@@ -104,10 +104,16 @@ class Style:
     year_parens: bool = True   # "(2020)." after the authors, not "2020."
     initials: bool = True      # given names as initials: "D.", not "Daron"
     etal_from: int = 3         # in text, this many authors is "et al."
+    #: A comma between the journal and its volume: "Economy, 128(6): 1–2".
+    #: The house rule, stated by the author 2026-09-26 on Misconceptions,
+    #: where two entries of forty ran "Sciences 114(36): 9587–9592".
+    #: Chicago author-date writes it bare ("Economy 128 (6): 1–2").
+    journal_comma: bool = True
 
 
 HOUSE = Style()
-CHICAGO = Style(year_parens=False, initials=False, etal_from=4)
+CHICAGO = Style(year_parens=False, initials=False, etal_from=4,
+                journal_comma=False)
 
 
 @dataclass(frozen=True)
@@ -169,6 +175,14 @@ _NO_ITALICS_MARKERS = ("http", "www.", "retrieved", "published online",
 # 4"), and exempting that would suppress the finding this check exists
 # for. So the series word before it must be capitalised too.
 _SERIES_NO_RE = re.compile(r"\b[A-ZÀ-ÿĀ-ſ][\w-]*\s+Nos?\.?\s*\d")
+# A journal name running straight into its locator with no comma: the
+# word before ends in a LETTER, then "volume(issue): pages" — the colon
+# and the digit after it are what make it a locator, so a report title
+# ("World Development Report 2020: Trading for Development") and a year
+# range ("2012–2013.") never match. An article number ("72: 101528") and
+# an e-page ("117(3): e2004") do.
+_JOURNAL_COMMA_RE = re.compile(
+    r"(\S*[^\W\d_])\s+(\d{1,4}(?:\s*\([^()]{1,12}\))?\s*:\s*[A-Za-z]?\d)")
 
 
 def _snippet(text: str, start: int, end: int, margin: int = 20) -> str:
@@ -312,6 +326,14 @@ def check_entry(text: str, style: Style = HOUSE) -> list[Issue]:
                 'comma before the final "and": "..., F., and F. Last"',
                 snippet=authors[:70]))
 
+    if style.journal_comma and (
+            j := _JOURNAL_COMMA_RE.search(text, m.end())) is not None:
+        issues.append(Issue(
+            "journal-comma",
+            f'a comma between the journal and its volume: '
+            f'"{j.group(1)}, {j.group(2)}"',
+            snippet=_snippet(text, j.start(), j.end())))
+
     for token in text.split():
         low = token.lower()
         if "http" in low or "doi" in low or token.startswith("10."):
@@ -412,6 +434,18 @@ def convert_entry(text: str, style: Style = HOUSE) -> list[Fix]:
             fixed = _expanded(r.group(1), r.group(2))
             if fixed != r.group(0):
                 fixes.append(Fix("en-dash", r.group(0), fixed))
+    if style.journal_comma:
+        # The fragment STARTS at the space after the journal, not on the
+        # journal's last word: `replace_in_para` writes the new text into
+        # the run the match starts in, and the journal is the entry's
+        # italic outlet — "Sciences 114(36): 9" as the fragment put ", 114(36):
+        # 9" in italics. The space normally sits in the roman run that
+        # carries the locator, so the comma lands roman, as the journal's
+        # trailing punctuation does in every entry already written right.
+        for j in _JOURNAL_COMMA_RE.finditer(text, m.end()):
+            gap = text[j.end(1):j.start(2)]
+            fixes.append(Fix("journal-comma", gap + j.group(2),
+                             "," + gap + j.group(2)))
     for sp in _PAGE_SPACE_RE.finditer(text):
         fixes.append(Fix("page-space", text[sp.start():sp.end() + 3],
                          text[sp.start():sp.end()] + " "

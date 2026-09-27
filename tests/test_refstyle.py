@@ -8,6 +8,7 @@ from conftest import NS, make_parts, note, notes, para, run
 
 from docxkit import refstyle
 from docxkit._cite_grammar import Reference
+from docxkit._xml import visible_text
 from docxkit.citations import find_citations
 from docxkit.errors import ConversionRefused
 from docxkit.refstyle import (
@@ -3032,3 +3033,74 @@ def test_a_NESTED_table_still_gets_a_header_of_its_own():
     spans = _header_rows(doc)
 
     assert len(spans) == 2, spans
+
+
+# ---- a comma between the journal and its volume (author, 2026-09-26)
+
+NO_JOURNAL_COMMA = ("Drummond, C., and B. Fischhoff. (2017). \u201cIndividuals"
+                    " with greater science literacy.\u201d Proceedings of the "
+                    "National Academy of Sciences 114(36): 9587\u20139592.")
+
+
+def test_a_journal_running_into_its_VOLUME_is_a_finding():
+    named, = [i for i in check_entry(NO_JOURNAL_COMMA)
+              if i.code == "journal-comma"]
+
+    assert '"Sciences, 114(36): 9"' in named.message
+    assert "journal-comma" not in _codes(check_entry(CLEAN_ARTICLE))
+
+
+@pytest.mark.parametrize("tail", [
+    "Journal of Environmental Psychology 72: 101528.",     # article number
+    "PNAS 117(3): e2004.",                                  # e-page
+    "Climatic Change 77(1\u20132): 103\u2013120.",
+])
+def test_the_locator_forms_all_read_as_a_volume(tail):
+    entry = f"Smith, J. (2020). \u201cA title.\u201d {tail}"
+
+    assert "journal-comma" in _codes(check_entry(entry))
+
+
+@pytest.mark.parametrize("tail", [
+    "World Development Report 2020: Trading for Development. Washington.",
+    "Russian Public Opinion 2012\u20132013. Moscow: Levada-Center.",
+    "Journal of Political Economy, 128(6): 2188\u20132244.",
+])
+def test_a_REPORT_title_a_YEAR_range_and_a_comma_already_there_are_not(tail):
+    entry = f"Smith, J. (2020). {tail}"
+
+    assert "journal-comma" not in _codes(check_entry(entry))
+
+
+def test_CHICAGO_writes_the_volume_bare_and_is_not_flagged():
+    entry = 'Smith, J. 2020. "A title." Journal of Finance 75 (2): 1\u201330.'
+
+    assert "journal-comma" not in _codes(check_entry(entry, CHICAGO))
+    assert convert_text(entry, CHICAGO)[1] == []
+
+
+def test_convert_puts_the_comma_in_and_nothing_else():
+    out, fixes = convert_text(NO_JOURNAL_COMMA)
+
+    assert out.endswith("Sciences, 114(36): 9587\u20139592.")
+    assert [f.code for f in fixes] == ["journal-comma"]
+    assert "journal-comma" not in _codes(check_entry(out))
+
+
+def test_the_comma_lands_ROMAN_after_an_ITALIC_journal():
+    """The fragment starts at the space: `replace_in_para` writes into the
+    run the match starts in, and starting on the journal's last word put
+    the comma AND the volume into the italic outlet."""
+    body = (para(run("References"))
+            + "<w:p>" + run("Smith, J. (2020). \u201cT.\u201d ", preserve=True)
+            + irun("Climatic Change")
+            + run(" 114(2): 169\u2013188.", preserve=True) + "</w:p>")
+    parts = make_parts(body)
+
+    convert(parts)
+
+    doc = parts["word/document.xml"].decode()
+    assert "<w:t>Climatic Change</w:t>" in doc
+    assert ", 114(2): 169\u2013188." in doc
+    italic = re.findall(r"<w:r><w:rPr><w:i/>.*?</w:r>", doc)
+    assert [visible_text(r) for r in italic] == ["Climatic Change"]

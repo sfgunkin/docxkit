@@ -254,3 +254,75 @@ def test_a_FACE_writes_half_points(size, want):
 
     assert face.props()["sz"] == f'<w:sz w:val="{want}"/>'
     assert "i" not in face.props()
+
+
+# ---- the equation lead-in: 4 pt after (author, 2026-09-26, Misconceptions)
+
+LEAD = ('<w:p><w:pPr><w:spacing w:before="60" w:after="160" w:line="480" '
+        'w:lineRule="auto"/></w:pPr>'
+        + run("The index is defined as follows:") + "</w:p>")
+
+
+def test_an_equation_LEAD_IN_gets_4pt_after_and_keeps_the_rest():
+    parts = paper(para(run("Prose.")), LEAD,
+                  para(M, run(" (3)", preserve=True)))
+
+    before = house.audit(parts)
+    got = house.apply(parts)
+
+    lead = holding(parts, "defined as follows")
+    assert got.lead_ins == 1
+    assert ('<w:spacing w:before="60" w:line="480" w:lineRule="auto" '
+            'w:after="80"/>') in lead
+    assert 'w:after="80"' not in holding(parts, "Prose.")
+    assert ("equation lead-in 'The index is defined as follow': 8 pt "
+            "after, not 4 pt") in before
+    assert house.audit(parts) == []
+    well_formed(parts)
+
+
+def test_an_UNNUMBERED_display_equation_has_a_lead_in_too():
+    parts = paper(para(run("Where:")), para(M))
+
+    assert house.apply(parts).lead_ins == 1
+    assert 'w:after="80"' in holding(parts, "Where:")
+
+
+def test_afterLines_would_override_after_and_is_dropped():
+    lead = ('<w:p><w:pPr><w:spacing w:afterLines="100" w:after="200"/>'
+            f'</w:pPr>{run("Consider:")}</w:p>')
+    parts = paper(lead, para(M))
+
+    assert any("1 lines after" in f for f in house.audit(parts))
+    house.apply(parts)
+
+    assert "afterLines" not in holding(parts, "Consider:")
+    assert house.audit(parts) == []
+
+
+@pytest.mark.parametrize("above", [
+    para(run("Note: Standard errors in parentheses.")),
+    para(LINK, run(". Wages by region", preserve=True)),
+    para(M),
+])
+def test_a_NOTE_a_CAPTION_or_another_EQUATION_above_is_not_a_lead_in(above):
+    parts = paper(above, para(M))
+
+    assert house.apply(parts).lead_ins == 0
+
+
+def test_an_EMPTY_paragraph_between_breaks_the_lead_in():
+    """PARA_RE skips a self-closing `<w:p/>`; the paragraph above it is not
+    the one that sits over the equation on the page."""
+    parts = paper(para(run("Far above.")), "<w:p/>", para(M))
+
+    assert house.apply(parts).lead_ins == 0
+
+
+def test_a_paper_that_spaces_its_own_way_turns_the_lead_in_rule_off():
+    parts = paper(LEAD, para(M))
+    rules = house.Rules(equation_lead_after=None)
+
+    assert house.apply(parts, rules).lead_ins == 0
+    assert house.audit(parts, rules) == []
+    assert 'w:after="160"' in holding(parts, "defined as follows")
