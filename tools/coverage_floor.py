@@ -90,10 +90,10 @@ FLOORS = {
     "revision/_registry.py": 100,
     "revision/_validate.py": 100,
     "revision/_doctor.py": 100,
-    "revision/_state.py": 99,
-    "revision/_losses.py": 97,
-    "revision/_verdict.py": 97,
-    "revision/_init.py": 94,
+    "revision/_state.py": 100,
+    "revision/_losses.py": 98,
+    "revision/_verdict.py": 98,
+    "revision/_init.py": 97,
     # Was 73, described as "the branches are for a machine with no
     # console attached, which pytest always has". They are not: a real
     # `io.TextIOWrapper` over a `BytesIO` IS what a console stream is,
@@ -107,9 +107,9 @@ FLOORS = {
     # so the split cannot hand back points in silence — the reason the
     # `revision/` block above restates fourteen floors. The Word pipeline
     # stayed in the facade; the halves are the XML gates and the report.
-    "tracked.py": 97,
-    "_tracked_gates.py": 94,
-    "_tracked_report.py": 97,
+    "tracked.py": 99,
+    "_tracked_gates.py": 97,
+    "_tracked_report.py": 100,
     # Report renderers: every branch prints, and pinning the exact
     # wording of 11 sections would test the prose, not the logic.
     "_compare_render.py": 97,
@@ -118,9 +118,9 @@ FLOORS = {
     # the climb out of that cannot be given back quietly; the one
     # statement short of 100 is `_caption_of`'s empty return, which no
     # block can reach — a block always holds the caption that found it.
-    "placement.py": 97,
+    "placement.py": 98,
     "_cite_build.py": 98,
-    "_compare_diff.py": 98,
+    "_compare_diff.py": 99,
 }
 
 
