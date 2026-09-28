@@ -240,14 +240,15 @@ def main() -> None:
     args = ap.parse_args()
     rep = compare(args.built, args.edited)
     if args.json:
-        # Through cli._write_json, which carries the last-resort encoder:
+        # Through console.write_json, which carries the last-resort
+        # encoder:
         # a value json cannot serialise would otherwise lose a finished
         # comparison at the final step. That guard was added to the
         # `docxkit compare` path and NOT to this one, which is the
         # module's own entry point — the same bug, in the file the fix
         # was written for.
-        from .cli import _write_json
-        _write_json(args.json, rep)
+        from .console import write_json
+        write_json(args.json, rep)
     sys.exit(render(rep, args.expect_clean))
 
 

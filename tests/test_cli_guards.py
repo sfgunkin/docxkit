@@ -367,22 +367,25 @@ def test_every_json_report_goes_through_the_resilient_encoder():
     anywhere in the file. Both were demonstrated. A walk has no region
     and no spelling: it sees the call.
     """
-    tree = ast.parse(SRC.read_text(encoding="utf-8"))
-    writer = next((n for n in ast.walk(tree)
+    console = SRC.parent / "console.py"
+    home = ast.parse(console.read_text(encoding="utf-8"))
+    writer = next((n for n in ast.walk(home)
                    if isinstance(n, ast.FunctionDef)
-                   and n.name == "_write_json"), None)
+                   and n.name == "write_json"), None)
     assert writer is not None, "the one place allowed to call it is gone"
-    allowed = {c.lineno for c in _json_dumps(writer)}
-    assert allowed, (
-        "the walk found no json call inside _write_json — it would find "
+    assert _json_dumps(writer), (
+        "the walk found no json call inside write_json — it would find "
         "none anywhere else either, and pass")
+    # The writer moved to `console` on 2026-09-29, which untied the
+    # package's one import cycle; the two entry points that write a
+    # report must still go through it.
+    for entry in ("cli.py", "compare.py"):
+        tree = ast.parse((SRC.parent / entry).read_text(encoding="utf-8"))
+        stray = sorted(c.lineno for c in _json_dumps(tree))
 
-    stray = sorted(c.lineno for c in _json_dumps(tree)
-                   if c.lineno not in allowed)
-
-    assert not stray, (
-        f"cli.py:{stray} calls json.dump(s) outside _write_json — write "
-        f"reports through it, because it carries _json_default")
+        assert not stray, (
+            f"{entry}:{stray} calls json.dump(s) directly — write reports "
+            f"through console.write_json, because it carries json_default")
 
 
 def test_the_encoder_cannot_be_SIDESTEPPED_by_importing_the_name():
@@ -403,13 +406,15 @@ def test_the_encoder_cannot_be_SIDESTEPPED_by_importing_the_name():
 def test_the_resilient_encoder_copes_with_what_a_report_may_hold(tmp_path):
     from dataclasses import dataclass
 
+    from docxkit.console import write_json
+
     @dataclass
     class Row:
         name: str
 
     dest = tmp_path / "r.json"
-    cli._write_json(str(dest), {"seen": {"b", "a"}, "where": Path("x/y"),
-                                "row": Row("n")})
+    write_json(str(dest), {"seen": {"b", "a"}, "where": Path("x/y"),
+                           "row": Row("n")})
     got = json.loads(dest.read_text(encoding="utf-8"))
     # str(Path(...)), not the literal: the separator is the platform's
     assert got == {"seen": ["a", "b"], "where": str(Path("x/y")),

@@ -439,7 +439,7 @@ def test_a_report_with_an_unencodable_value_is_still_written(tmp_path):
     worst moment to fail: the work is done and the report is gone."""
     import json
 
-    from docxkit.cli import _write_json
+    from docxkit.console import write_json as _write_json
     target = tmp_path / "r.json"
     _write_json(str(target), {"anchors": {"b", "a"}, "where": tmp_path})
     back = json.loads(target.read_text(encoding="utf-8"))
@@ -1210,7 +1210,7 @@ def test_json_default_serialises_a_dataclass_and_refuses_the_rest():
     report grows a field nobody can read back."""
     from dataclasses import dataclass
 
-    from docxkit.cli import _json_default
+    from docxkit.console import json_default as _json_default
 
     @dataclass
     class Row:

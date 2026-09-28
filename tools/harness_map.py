@@ -439,6 +439,9 @@ HARNESS: dict[str, list[str]] = {
                 "tests/test_cli.py", "tests/test_cli_guards.py",
                 "tests/test_snapshot.py", "tests/test_note_parts.py"],
     "guard.py": ["tests/test_tracked_guard.py", "tests/test_cli_guards.py"],
+    # the CLI's save path came here (2026-09-29): its refusal tests in
+    # test_cli_guards drive it through every writing command
+    "save.py": ["tests/test_save.py", "tests/test_cli_guards.py"],
     "hygiene.py": ["tests/test_smarten.py", "tests/test_properties.py",
                    "tests/test_parts_gaps.py", "tests/test_pathological.py",
                    "tests/test_table_spacing.py"],

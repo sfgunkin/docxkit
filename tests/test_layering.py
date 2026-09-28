@@ -28,10 +28,15 @@ from conftest import PACKAGE as SRC
 from conftest import source_files
 
 #: Top first. A module may import anything BELOW it and nothing above.
-#: Names on one line are siblings and must not import each other, with
-#: one exception, `_CYCLE` below.
+#: Names on one line are siblings and must not import each other — no
+#: exception since 2026-09-29, when the one knot was untied (see
+#: `test_the_package_has_NO_import_cycle`).
 LAYERS: tuple[tuple[str, ...], ...] = (
-    ("cli", "compare", "revision"),
+    ("cli",),
+    # the protocol: its `ingest` compares with `compare`, and only `cli`
+    # imports it
+    ("revision",),
+    ("compare",),
     # reads the ACCEPTED view through `tracked`, and nothing imports it
     # but `cli`
     ("snapshot",),
@@ -40,19 +45,11 @@ LAYERS: tuple[tuple[str, ...], ...] = (
     ("tables", "crossrefs", "equations", "footnotes", "figures", "ingest",
      "placement"),
     ("citations", "exhibits", "sections"),
-    ("comments", "body", "paragraph", "guard", "hygiene", "authors",
+    ("comments", "body", "paragraph", "guard", "hygiene", "authors", "save",
      "batch"),
     ("edit", "find", "revisions", "styles", "package", "lint", "word"),
     ("_xml", "errors", "console", "timings"),
 )
-
-#: The one place the layering is genuinely circular, and it is
-#: deliberate: `compare` exposes a `main`, `cli` dispatches to it, and
-#: `revision.ingest` uses the comparison for its content layers. Each
-#: edge is a function-level import for that reason. Pinned as a SET so a
-#: fourth module joining the knot fails this test rather than joining
-#: quietly.
-_CYCLE = frozenset({"cli", "compare", "revision"})
 
 #: A facade and the private modules only it may reach into. The halves
 #: exist to keep one file readable, not to widen the surface.
@@ -80,8 +77,8 @@ FACADE_HALVES = {
 #: be stated here, because `SRC.glob("*.py")` does not see a directory
 #: and the whole module would otherwise have dropped out of every check
 #: in this file the day it was split. It did: the cycle test was the
-#: only thing that noticed, and only because `revision` is named in
-#: `_CYCLE`.
+#: only thing that noticed, and only because `revision` was named in
+#: the declared knot that cycle test then held.
 #:
 #: BOTTOM FIRST, like FACADE_HALVES.
 SUBPACKAGE_HALVES = {
@@ -165,8 +162,6 @@ def test_a_module_imports_only_what_is_BELOW_it(module):
     for dep in sorted(GRAPH.get(module, ())):
         if dep.startswith("_") and not dep.startswith("_xml"):
             continue                      # facade halves: see below
-        if {module, dep} <= _CYCLE:
-            continue                      # the declared knot
         assert _LAYER_OF[dep] > here, (
             f"docxkit.{module} imports docxkit.{dep}, which is at or "
             f"above its layer. Either it belongs lower, or the import "
@@ -190,13 +185,14 @@ def _tangled() -> set[str]:
     return {m for m in GRAPH if m in reach[m]}
 
 
-def test_the_import_CYCLE_is_still_exactly_the_declared_one():
-    """cli -> revision -> compare -> cli is deliberate, and every edge
-    of it is a deferred import. A fourth module joining would be an
-    accident, and invisible."""
-    assert _tangled() == _CYCLE, (
-        f"the modules on an import cycle are {sorted(_tangled())}, not "
-        f"{sorted(_CYCLE)}")
+def test_the_package_has_NO_import_cycle():
+    """There was one knot, cli -> revision -> compare -> cli, held here as
+    a declared set. Its one upward edge was `compare.main` importing
+    `cli._write_json`; the writer moved to `console` (2026-09-29,
+    REVIEW_2026-09-28 §3) and the knot is gone. A cycle now is an
+    accident."""
+    assert _tangled() == set(), (
+        f"the modules on an import cycle are {sorted(_tangled())}")
 
 
 @pytest.mark.parametrize("facade,halves", sorted(FACADE_HALVES.items()))

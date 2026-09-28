@@ -51,12 +51,10 @@ and the single-file revision protocol, which finds its own paths in
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from ._xml import (
@@ -69,7 +67,7 @@ from ._xml import (
     FOOTNOTES,
     Parts,
 )
-from .console import utf8_console
+from .console import utf8_console, write_json
 from .errors import (
     DocxKitError,
     HandbackLoss,
@@ -77,31 +75,6 @@ from .errors import (
     ProtocolError,
 )
 from .find import P_RE, text_of
-
-
-def _json_default(value: object) -> object:
-    """Last-resort encoder, so a finished comparison is never lost.
-
-    The reports here sort their sets before storing them, but the cost
-    of one that does not is losing the whole run at the final step —
-    the comparison already done, the report never written. In CI that
-    is the worst possible moment to fail.
-    """
-    if isinstance(value, (set, frozenset)):
-        return sorted(value, key=str)
-    if isinstance(value, Path):
-        return str(value)
-    if is_dataclass(value) and not isinstance(value, type):
-        return asdict(value)
-    raise TypeError(f"not JSON serializable: {type(value).__name__}")
-
-
-def _write_json(path: str, payload: object) -> None:
-    Path(path).write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2,
-                   default=_json_default),
-        encoding="utf-8")
-
 
 # --- argument types -------------------------------------------------
 #
@@ -163,7 +136,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
              for side in (args.built, args.edited)]
     rep = compare_docs(*sides)
     if args.json:
-        _write_json(args.json, rep)
+        write_json(args.json, rep)
     # compare is a verbatim port and untyped; render returns the exit code
     return int(render(rep, args.expect_clean))
 
@@ -283,7 +256,7 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
                    ignore=_ignore(args))
     print("  " + report.format().replace("\n", "\n  "))
     if args.json:
-        _write_json(args.json, report.as_rows())
+        write_json(args.json, report.as_rows())
     return 1 if report.issues else 0
 
 
@@ -542,7 +515,7 @@ def cmd_locate(args: argparse.Namespace) -> int:
                  "searches the laid-out text (try `docxkit citations` or "
                  "`docxkit probe`)" if phrase in marks else ""))
     if args.json:
-        _write_json(args.json, rows)
+        write_json(args.json, rows)
     return 1 if missing else 0
 
 
@@ -631,7 +604,7 @@ def cmd_anchors(args: argparse.Namespace) -> int:
     stops = sum(not r.ok for r in results)
     print(f"{len(results)} anchors: {len(results) - stops} OK, {stops} STOP")
     if args.json:
-        _write_json(args.json, results)
+        write_json(args.json, results)
     return 1 if stops else 0
 
 
@@ -774,23 +747,6 @@ def _package(path: str, *, read_only: bool = False) -> Parts:
     return parts
 
 
-def _write_back(path: str, parts: Parts, tag: str) -> str:
-    """Backup, then save — the one way an in-place command writes.
-
-    Where the backup lands is decided by :func:`_prior_generations`, and
-    it is one fix rather than four: `link --write`, `crossrefs --write`,
-    `authors --set --write`, `refstyle --fix`, `tasks --done` and
-    `smarten --write` all come through here.
-    """
-    from .package import backup, write_docx
-    kept = backup(path, tag=tag, into=_prior_generations(path))
-    write_docx(path, parts)
-    # Relative to the manuscript, because that is what makes the
-    # DIFFERENCE legible: a bare name reads as "beside your file"
-    # wherever it actually went.
-    return os.path.relpath(kept, Path(path).resolve().parent)
-
-
 def _prior_generations(path: str) -> Path | None:
     """Where this paper keeps prior generations, or None for beside it.
 
@@ -832,72 +788,9 @@ def _writes_the_file(p: argparse.ArgumentParser) -> None:
                         "INTRODUCES is still refused")
 
 
-def _already_carried(path: str, problems: list[str]) -> set[str]:
-    """Which of these findings the file on disk ALREADY had.
-
-    Read again rather than remembered: `_save` is handed parts a command
-    has edited, and the file is still exactly what it was read from —
-    nothing is written until every gate has passed. Only ever on a
-    refusal, so an ordinary write pays nothing for it.
-
-    Matched on the finding TEXT, which quotes its specimen, so a finding
-    whose specimen this edit rewrote reads as a new one. That is the
-    conservative direction: the file is refused rather than written.
-    """
-    from .lint import lint_parts
-    from .package import read_parts
-    try:
-        return set(lint_parts(read_parts(path))) & set(problems)
-    except (PackageError, OSError):
-        return set()              # cannot tell; every finding counts as new
-
-
-def _refused_by_lint(path: str, problems: list[str], *,
-                     allow_existing: bool) -> bool:
-    """Say what was found, whose doing it is, and what to do about it.
-
-    The refusal audit of 2026-09-18 found this one stuck: "the package
-    would not open cleanly in Word; nothing was written" names no
-    action, and it is printed one line under the command's report of
-    its own work, so it reads as the edit having broken the file. It
-    usually has not — over 400 real manuscripts here, 20 already carry
-    a finding of a class `preserve_space` does not clear and no docxkit
-    verb repairs, and on those every one of the six commands that write
-    refused, whatever it was asked to do.
-
-    So the two cases are told apart. A finding this EDIT introduced is
-    refused as before and `--allow-existing-lint` does not cover it —
-    that distinction is what makes the flag safe, since the most it can
-    do is leave a file as damaged as it already was.
-    """
-    existing = _already_carried(path, problems)
-    fresh = [p for p in problems if p not in existing]
-    for problem in problems:
-        print(f"  - {problem}"
-              f"{'' if problem in fresh else '   (already in the file)'}")
-    if fresh:
-        print("REFUSED: this edit would leave markup Word will not open; "
-              "nothing was written")
-        return True
-    name = Path(path).name
-    if allow_existing:
-        print(f"  {len(existing)} finding(s) above were already in {name} "
-              f"and are left as they are (--allow-existing-lint)")
-        return False
-    print(f"REFUSED: {name} already carried the finding(s) above before "
-          f"this run, and nothing was written. This edit did not cause "
-          f"them and no docxkit verb repairs these classes, so Word is "
-          f"the repair: open {name}, resolve what the finding names — "
-          f"accepting or deleting the thing it points at — and save; "
-          f"`docxkit lint {name}` then says whether it is clear. To "
-          f"write this edit and leave the findings as they are, pass "
-          f"--allow-existing-lint.")
-    return True
-
-
 def _save(path: str, parts: Parts, tag: str, *,
           allow_existing: bool = False) -> bool:
-    """THE save path: preserve_space, lint, back up, write.
+    """THE save path, printed: :func:`docxkit.save.save` does the work.
 
     Every mutating command lands here, because the three that did not
     each guaranteed something different and a document accepted by one
@@ -912,26 +805,39 @@ def _save(path: str, parts: Parts, tag: str, *,
       for ``link`` and did not notice here. Lint is the only thing that
       catches spliced markup Word will not open, offline.
 
-    Returns False when the lint refused, in which case nothing was
-    written and the previous file stands. `allow_existing` is
-    ``--allow-existing-lint``: see :func:`_refused_by_lint`, which is
-    where it is decided and where the refusal's wording lives.
+    The policy moved into the library on 2026-09-29, so the papers'
+    `edit_in_place` saves the same way; what stays here is the printing
+    and where the backup goes (:func:`_prior_generations`). Returns False
+    when the lint refused, in which case nothing was written and the
+    previous file stands. `allow_existing` is ``--allow-existing-lint``.
     """
-    from .edit import preserve_space
-    from .lint import lint_parts
-    # Indexed, not `.get`: every command reads its manuscript through
-    # `_package`, which refuses a package without this part, so an
-    # absent one is a broken caller and should say so rather than
-    # silently skip the whitespace pass.
-    fixed, protected = preserve_space(parts[DOCUMENT].decode("utf-8"))
-    if protected:
-        print(f"  protected {protected} edge-whitespace run(s) "
+    from .save import save
+    report = save(path, parts, backup_tag=tag,
+                  backup_into=_prior_generations(path),
+                  allow_existing_lint=allow_existing)
+    if report.protected:
+        print(f"  protected {report.protected} edge-whitespace run(s) "
               f"(preserve_space)")
-    parts[DOCUMENT] = fixed.encode("utf-8")
-    if (problems := lint_parts(parts)) and _refused_by_lint(
-            path, problems, allow_existing=allow_existing):
+    # The refusal audit of 2026-09-18: a refusal printed one line under
+    # the command's report of its own work reads as the edit having
+    # broken the file. It usually has not, so each finding says whose it
+    # is.
+    for problem in report.fresh:
+        print(f"  - {problem}")
+    for problem in report.existing:
+        print(f"  - {problem}   (already in the file)")
+    if not report.written:
+        print(report.refusal(flag="--allow-existing-lint"))
         return False
-    kept = _write_back(path, parts, tag)
+    if report.existing:
+        print(f"  {len(report.existing)} finding(s) above were already in "
+              f"{Path(path).name} and are left as they are "
+              f"(--allow-existing-lint)")
+    assert report.backup is not None       # a tag always asks for one
+    # Relative to the manuscript, because that is what makes the
+    # DIFFERENCE legible: a bare name reads as "beside your file"
+    # wherever it actually went.
+    kept = os.path.relpath(report.backup, Path(path).resolve().parent)
     print(f"  written; previous version kept at {kept}")
     return True
 
@@ -983,7 +889,7 @@ def cmd_tasks(args: argparse.Namespace) -> int:
             "replies": [{"cid": r.cid, "author": r.author, "text": r.text}
                         for r in t.replies],
         } for t in found]
-        _write_json(args.json, rows)
+        write_json(args.json, rows)
     if args.check and open_threads:
         print(f"CHECK FAILED: {len(open_threads)} open comment thread(s) - "
               f"a submission should carry none")
@@ -1007,10 +913,10 @@ def cmd_count(args: argparse.Namespace) -> int:
     # Written BEFORE the verdict: the report used to sit after the
     # over-limit `return 1`, so the one run whose numbers a caller most
     # wants to read — the failing one — was the run that produced no
-    # file. That is the failure `_json_default` exists to prevent, in
+    # file. That is the failure `console.json_default` exists to prevent, in
     # another form: the work all done and the record never written.
     if args.json:
-        _write_json(args.json, counts.as_dict())
+        write_json(args.json, counts.as_dict())
     # the cap applies to whatever is being counted: the exclusion set if
     # one was given, the full total otherwise
     if args.limit is not None and counted > args.limit:
@@ -1883,7 +1789,7 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
         print("\n   The author has accepted everything. Record it as the "
               "new truth:\n     docxkit revision baseline")
     if args.json:
-        _write_json(args.json, {
+        write_json(args.json, {
             "content": report.content,
             "changed_parts": report.changed_parts,
             "working_pending": report.working_state.pending,

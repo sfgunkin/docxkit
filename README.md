@@ -41,6 +41,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 |---|---|
 | `batch` | a set of edits as ONE gated unit of work: preflight every anchor at once, apply, hold the carriers (bookmarks, links, footnote marks, math, rows, drawings) unless the batch declares what it moves |
 | `package` | read/write/edit the .docx package; lock checks; numbered backups |
+| `save` | THE save: protect edge spaces, lint, back up, write — `edit_in_place` for paper scripts, and every CLI command that writes |
 | `find` | locate paragraphs, tables, captions **by visible text**; the linear body walk; `site` surveys an edit anchor before you write the edit |
 | `edit` | anchor-asserting replace, run-aware replace and INSERT, link relabel, span italics, `xml:space` repair |
 | `body` | build new content: paragraphs, grouped-header tables, guarded insertion; `prose_props` clones a paragraph's style without a link's |

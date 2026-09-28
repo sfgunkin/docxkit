@@ -38,11 +38,16 @@ from .package import (
     Parts,
     assert_unlocked,
     backup,
-    edit_in_place,
     is_locked,
     read_parts,
     write_docx,
 )
+
+# The SAFE one since 2026-09-29: edge spaces protected and the lint run
+# before the write, as every CLI command already saved.
+# `docxkit.package.edit_in_place` stays the raw write for the scripts
+# that import it from there.
+from .save import edit_in_place
 
 __version__ = "1.0.0"
 

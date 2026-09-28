@@ -34,9 +34,13 @@ import pytest
 #: them — and a sixth arriving is a decision somebody should have to
 #: make in this file. It is the same reason `test_layering` states its
 #: layers as data rather than deriving a number.
+#: `lint` and `save` joined 2026-09-29, when `docxkit.edit_in_place`
+#: became the safe save (edge spaces protected, lint before the write).
+#: Measured: 2.3 ms of a 68 ms import, and `lint` imports `_xml` alone.
 BASE_CHAIN = {
     "docxkit", "docxkit._xml", "docxkit.console", "docxkit.edit",
-    "docxkit.errors", "docxkit.find", "docxkit.package",
+    "docxkit.errors", "docxkit.find", "docxkit.lint", "docxkit.package",
+    "docxkit.save",
 }
 
 #: Third-party imports the base chain must not pay for, and what each

@@ -18,9 +18,43 @@ one message whose job is to explain what went wrong.
 from __future__ import annotations
 
 import io
+import json
 import sys
+from dataclasses import asdict, is_dataclass
+from pathlib import Path
 
-__all__ = ["utf8_console", "utf8_stdout"]
+__all__ = ["json_default", "utf8_console", "utf8_stdout", "write_json"]
+
+
+def json_default(value: object) -> object:
+    """Last-resort encoder, so a finished comparison is never lost.
+
+    The reports here sort their sets before storing them, but the cost
+    of one that does not is losing the whole run at the final step —
+    the comparison already done, the report never written. In CI that
+    is the worst possible moment to fail.
+    """
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=str)
+    if isinstance(value, Path):
+        return str(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    raise TypeError(f"not JSON serializable: {type(value).__name__}")
+
+
+def write_json(path: str | Path, payload: object) -> None:
+    """A report as JSON, through :func:`json_default` — the one writer.
+
+    It lived in ``cli`` as ``_write_json`` until 2026-09-29, and that
+    was the package's only import cycle: ``compare.main``, a second entry
+    point, reached UP into the CLI for it (REVIEW_2026-09-28 §3). Output
+    for a terminal or a file belongs in this bottom layer.
+    """
+    Path(path).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2,
+                   default=json_default),
+        encoding="utf-8")
 
 
 def _reconfigure(stream: object, line_buffering: bool | None) -> bool:
