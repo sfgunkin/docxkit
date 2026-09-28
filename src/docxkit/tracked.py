@@ -48,28 +48,27 @@ from . import footnotes as _footnotes
 from . import guard as _guard
 from . import hygiene as _hygiene
 from . import word as _word
-from ._tracked_gates import _EQ_QUOTE as _EQ_QUOTE
 from ._tracked_gates import _PART_LABELS as _PART_LABELS
 from ._tracked_gates import STRUCTURE_TAGS as STRUCTURE_TAGS
 from ._tracked_gates import Unaccepted as Unaccepted
 from ._tracked_gates import Untracked as Untracked
 from ._tracked_gates import W as W
 from ._tracked_gates import _anchors as _anchors
-from ._tracked_gates import _first_difference as _first_difference
 from ._tracked_gates import _math_texts as _math_texts
-from ._tracked_gates import _mismatched_paras as _mismatched_paras
 from ._tracked_gates import _paras as _paras
 from ._tracked_gates import _revision_gap as _revision_gap
 from ._tracked_gates import _root as _root
 from ._tracked_gates import _simulate as _simulate
 from ._tracked_gates import accepted_losses as accepted_losses
 from ._tracked_gates import accepted_math as accepted_math
+from ._tracked_gates import accepted_view as accepted_view
 from ._tracked_gates import bookmark_additions as bookmark_additions
 from ._tracked_gates import bookmark_changes as bookmark_changes
 from ._tracked_gates import bookmark_names as bookmark_names
 from ._tracked_gates import cell_property_changes as cell_property_changes
 from ._tracked_gates import compare_collateral as compare_collateral
 from ._tracked_gates import package_counts as package_counts
+from ._tracked_gates import rejected_view as rejected_view
 from ._tracked_gates import return_note_spaces as return_note_spaces
 from ._tracked_gates import revisions_by_part as revisions_by_part
 from ._tracked_gates import structure_counts as structure_counts
@@ -80,15 +79,19 @@ from ._tracked_report import _ACCEPT_ESCAPE as _ACCEPT_ESCAPE
 from ._tracked_report import _LINT_ESCAPE as _LINT_ESCAPE
 from ._tracked_report import BuildReport as BuildReport
 from ._tracked_report import MathOutcome as MathOutcome
-from ._tracked_report import _also_unaccepted as _also_unaccepted
 from ._tracked_report import _refuse_accept_side as _refuse_accept_side
 from ._xml import Parts
 from .comments import RevisionContext
 from .errors import PackageError
 from .lint import lint_parts
 from .package import USER_PROPERTIES, read_parts, write_docx
-from .revisions import accept as _accept
-from .revisions import reject as _reject
+
+# Kept for the papers, which import `tracked._accept`, `_reject` and
+# `_simulate` (tools/consumers.txt) to build a view by hand; `build` asks
+# `accepted_view` / `rejected_view` since 2026-09-29, which are the
+# public spelling of the same thing.
+from .revisions import accept as _accept  # noqa: F401
+from .revisions import reject as _reject  # noqa: F401
 
 # Bound directly, NOT reached through `_word`: tests replace that
 # module attribute with a COM fake, and a fake has no reason to
@@ -120,6 +123,7 @@ __all__ = [
     "Untracked",
     "accepted_losses",
     "accepted_math",
+    "accepted_view",
     "bookmark_additions",
     "bookmark_changes",
     "bookmark_names",
@@ -127,6 +131,7 @@ __all__ = [
     "cell_property_changes",
     "compare_collateral",
     "package_counts",
+    "rejected_view",
     "return_note_spaces",
     "revisions_by_part",
     "structure_counts",
@@ -726,8 +731,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # handled — `revisions._row_flag` reads `w:trPr` — and this is
         # the shape it cannot: an unmarked copy is not a revision, so it
         # is refused rather than resolved.
-        accepted_view = _simulate(parts, _accept)
-        rejected_view = _simulate(parts, _reject)
+        accepted = accepted_view(parts)
+        rejected = rejected_view(parts)
         # Bookmarks by NAME, each view against the one it reproduces:
         # Compare carries the clean copy's bookmark additions into both
         # views and its deletions into neither (`bookmark_changes`).
@@ -735,25 +740,25 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         report.structure_diff = (
             [f"rejected: {d}" for d in structure_diff(
                 structure_counts(base_parts),
-                structure_counts(rejected_view), skip=skip)]
+                structure_counts(rejected), skip=skip)]
             + [f"rejected: {d}" for d in bookmark_changes(
-                base_parts, rejected_view, revised_parts)]
+                base_parts, rejected, revised_parts)]
             + [f"rejected: {d}" for d in cell_property_changes(
-                base_parts, rejected_view)]
+                base_parts, rejected)]
             + [f"accepted: {d}" for d in cell_property_changes(
-                revised_parts, accepted_view)]
+                revised_parts, accepted)]
             + [f"accepted: {d}" for d in structure_diff(
                 structure_counts(revised_parts),
-                structure_counts(accepted_view), skip=skip)]
+                structure_counts(accepted), skip=skip)]
             + [f"accepted: {d}" for d in bookmark_changes(
-                revised_parts, accepted_view, base_parts)])
+                revised_parts, accepted, base_parts)])
         # The carriers those counts do not hold: a hyperlink is not in
         # STRUCTURE_TAGS, because Word legitimately re-represents a
         # field-form link as an element and counting the tag would
         # refuse that. Anchors are compared by NAME instead, which is
         # blind to which form carries them.
         report.accepted_losses = accepted_losses(revised_parts,
-                                                 accepted_view)
+                                                 accepted)
         # And the carrier neither of those reads: a definition whose
         # only reference the accept removed. `_simulate` has already
         # dropped the empty shells, so what is left here has words in
@@ -761,7 +766,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # the CLEAN copy rather than reported outright, because a
         # manuscript that already carries one is not this build's doing.
         report.orphan_notes = [
-            o for o in _footnotes.orphans(accepted_view)
+            o for o in _footnotes.orphans(accepted)
             if o not in set(_footnotes.orphans(revised_parts))]
         # And the same question of the OTHER view. `revised_parts` is
         # the clean document this redline claims to reproduce; what an
@@ -818,7 +823,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # the other accept-side gate, because a wrong number in the
         # deliverable is not something to report and continue past.
         report.accepted_math = accepted_math(
-            revised_parts, _simulate(parts, _accept))
+            revised_parts, accepted_view(parts))
         if accept_check:
             _refuse_accept_side(report, revised.name, math_only=True)
 

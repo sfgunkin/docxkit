@@ -227,6 +227,14 @@ GATES: list[Gate] = [
     # to nothing, and an unrun gate is invisible in a way an unrunnable
     # one is not. Every chain now prints a line asking for a corpus.
     ("sweep", [sys.executable, "tools/sweep.py"], False),
+    # What the papers import, against the committed snapshot the `api`
+    # gate and `test_consumers` read. The same corpus, and the same skip
+    # without one. It was a tool nothing ran: on 2026-09-28 the
+    # snapshot was 26 days old and 50 imported pairs short, so the `api`
+    # gate had been deciding "breaking or not" against a photograph
+    # (REVIEW_2026-09-28 §5).
+    ("consumers", [sys.executable, "tools/consumers.py", "--check"],
+     False),
     # Last on purpose. It reports on HEAD rather than on the work
     # in hand, and a broken HEAD must not stand between the author
     # and the lint error they are actually here to fix.

@@ -184,10 +184,15 @@ def test_the_real_list_is_the_eleven_CONTRIBUTING_names():
     it is in the list precisely because of that: an unrun gate is
     invisible, an unrunnable one prints a line asking to be given a
     corpus on every single chain.
+
+    `consumers` joined on 2026-09-29, beside `sweep` and skipping as it
+    does: what the papers import, against the snapshot the `api` gate
+    judges breakage by. It had been a tool nothing ran, and the
+    snapshot was 50 pairs short when it was.
     """
     assert [name for name, _argv, _reads in gates.GATES] == [
         "ruff", "mypy", "pyright", "optionals", "pytest", "floors", "unrun",
-        "claims", "api", "deps", "sweep", "committed"]
+        "claims", "api", "deps", "sweep", "consumers", "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
 

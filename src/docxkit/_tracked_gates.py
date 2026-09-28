@@ -292,6 +292,25 @@ def _simulate(parts: Parts, how: Callable[[str], str]) -> Parts:
     return out
 
 
+def accepted_view(parts: Parts) -> Parts:
+    """The package as its reader sees it with every revision ACCEPTED.
+
+    Every text-bearing part, notes included, with the shells a deleted
+    note leaves pruned — see :func:`_simulate`. A copy: `parts` is not
+    touched. Public since 2026-09-29; papers had been importing
+    `tracked._simulate` and passing `revisions.accept` themselves
+    (REVIEW_2026-09-28 §5), and `revisions._simulate` is another thing
+    with the same name.
+    """
+    return _simulate(parts, _accept)
+
+
+def rejected_view(parts: Parts) -> Parts:
+    """The package with every revision REJECTED — what a reject-all gives
+    back, which a redline must reproduce as its original. A copy."""
+    return _simulate(parts, _reject)
+
+
 @dataclass(frozen=True)
 class Untracked:
     """A paragraph the batch changed with NO revision mark on it."""

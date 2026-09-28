@@ -412,6 +412,27 @@ write the hostile .docx first and check what the current code does with
 it — the answer is in `tests/test_lint.py`'s territory, not in a
 CVE checklist.
 
+## Releases: a tag on every change a paper can see
+
+Nine papers import this package from an editable install, so every
+commit to master is a release to all of them at once. The gates are the
+only contract that has, and the one that speaks for the consumer — `api`
+— diffs against the LATEST TAG. For four weeks that was `v1.0.0`, 548
+commits old, so every addition since read as new and the baseline was a
+photograph (REVIEW_2026-09-28 §5).
+
+So: **calendar versions, and a tag whenever a change is visible to a
+paper** — a public name added, changed or removed, a default that moves,
+a refusal a script will now meet. `2026.9.29` is year.month.day, and a
+second release the same day is `2026.9.29.1`. Bump `version` in
+`pyproject.toml` and `__version__` in `src/docxkit/__init__.py`
+together, commit, then `git tag -a v2026.9.29 -m "..."` and push the
+tag. Before tagging, refresh the consumer snapshot (`python
+tools/consumers.py` with `DOCXKIT_CORPUS` set) — the `consumers` gate
+fails the chain when it is stale — and run the curated mutations by
+hand (`gh workflow run mutations.yml`), which no longer run on every
+push.
+
 ## The revision protocol lives here, the paper keeps paper.toml
 
 `docxkit.revision` is the single-file protocol every paper on this

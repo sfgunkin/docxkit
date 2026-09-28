@@ -829,7 +829,13 @@ def run_holds_content(run_xml: str) -> bool:
 
 
 def run_open_before(xml: str, pos: int) -> int:
-    """Where the run CONTAINING `pos` opens, or -1.
+    """Where the last run that OPENS before `pos` opens, or -1.
+
+    Not "the run containing `pos`", which this said until 2026-09-28
+    (REVIEW_2026-09-28 §1): when `pos` sits between two runs, or past a
+    run's close, the answer is the NEIGHBOUR before it, not an enclosing
+    run — there is none. A caller that needs containment checks that
+    `pos` falls before that run's close.
 
     Public and here rather than in a citation module because three
     of them need it and the fourth (`edit`) is where it was reached

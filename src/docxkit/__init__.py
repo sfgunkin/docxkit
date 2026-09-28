@@ -23,7 +23,26 @@ Windows and ``pip install docxkit[word]``.
 # those names as hard as any. Exported here so a paper can import them
 # through a public path; `_xml` keeps its name, since 41 modules import
 # it and it IS internal-shaped.
-from ._xml import DOCUMENT, PARA_RE, RUN_RE, visible_text
+#
+# Nine more on 2026-09-29, the plain-named primitives the refreshed
+# consumer snapshot shows papers importing from `_xml` (REVIEW_2026-09-28
+# §5): the note parts, the property writers, the field and link readers.
+# The raw field regexes stay private — `field_spans` is their reading.
+from ._xml import (
+    DOCUMENT,
+    ENDNOTES,
+    FOOTNOTES,
+    PARA_RE,
+    RUN_RE,
+    field_spans,
+    internal_links,
+    own_properties,
+    run_open_before,
+    set_para_property,
+    set_run_property,
+    set_run_text,
+    visible_text,
+)
 from .console import utf8_stdout
 from .edit import preserve_space, rep, replace_in_para
 from .find import (
@@ -49,10 +68,12 @@ from .package import (
 # that import it from there.
 from .save import edit_in_place
 
-__version__ = "1.0.0"
+__version__ = "2026.9.29"
 
 __all__ = [
     "DOCUMENT",
+    "ENDNOTES",
+    "FOOTNOTES",
     "PARA_RE",
     "RUN_RE",
     "Parts",
@@ -60,7 +81,10 @@ __all__ = [
     "backup",
     "edit_in_place",
     "edit_para",
+    "field_spans",
+    "internal_links",
     "is_locked",
+    "own_properties",
     "para_slice",
     "para_text_at",
     "paragraphs",
@@ -68,6 +92,10 @@ __all__ = [
     "read_parts",
     "rep",
     "replace_in_para",
+    "run_open_before",
+    "set_para_property",
+    "set_run_property",
+    "set_run_text",
     "table_spans",
     "text_of",
     "utf8_stdout",

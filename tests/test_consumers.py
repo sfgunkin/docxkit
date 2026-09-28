@@ -60,9 +60,13 @@ PRIVATE = {
     ("docxkit._cite_repair", "field_spans"),
     ("docxkit._cite_repair", "next_bookmark_id"),
     ("docxkit._cite_repair", "wrap_link_in_bookmark"),
+    ("docxkit._table_layout", "_column_needs"),
+    ("docxkit._table_layout", "_side_margins"),
     ("docxkit._table_layout", "booktabs"),
     ("docxkit._table_layout", "plan_booktabs"),
     ("docxkit._xml", "DOCUMENT"),
+    ("docxkit._xml", "ENDNOTES"),
+    ("docxkit._xml", "FOOTNOTES"),
     ("docxkit._xml", "INSTR_ANCHOR_RE"),
     ("docxkit._xml", "INSTR_RE"),
     ("docxkit._xml", "PARA_RE"),
@@ -73,6 +77,8 @@ PRIVATE = {
     ("docxkit._xml", "internal_links"),
     ("docxkit._xml", "own_properties"),
     ("docxkit._xml", "run_open_before"),
+    ("docxkit._xml", "set_para_property"),
+    ("docxkit._xml", "set_run_property"),
     ("docxkit._xml", "set_run_text"),
     ("docxkit._xml", "visible_text"),
 }
@@ -80,8 +86,16 @@ PRIVATE = {
 #: The four promoted on 2026-09-01, with the public path they now have.
 #: `_xml` is 41 of 58 modules' bottom layer and keeps its name; what
 #: changed is that a paper no longer HAS to spell the underscore.
+#: Nine more on 2026-09-29, from the refreshed snapshot (the six
+#: private pairs it added are recorded above: the papers still spell the
+#: old path, and a promotion gives them the public one to move to).
 PROMOTED = {"DOCUMENT": "docxkit", "PARA_RE": "docxkit",
-            "RUN_RE": "docxkit", "visible_text": "docxkit"}
+            "RUN_RE": "docxkit", "visible_text": "docxkit",
+            "ENDNOTES": "docxkit", "FOOTNOTES": "docxkit",
+            "field_spans": "docxkit", "internal_links": "docxkit",
+            "own_properties": "docxkit", "run_open_before": "docxkit",
+            "set_para_property": "docxkit", "set_run_property": "docxkit",
+            "set_run_text": "docxkit"}
 
 
 def test_the_snapshot_is_not_empty():

@@ -28,10 +28,8 @@ from pathlib import Path
 # re-exported from _cite_audit: `as` form marks it deliberate
 from ._cite_audit import _BOOKMARK_NAME_RE as _BOOKMARK_NAME_RE
 from ._cite_audit import _KEY_SHAPE_RE as _KEY_SHAPE_RE
-from ._cite_audit import _LINK_TOKEN_RE as _LINK_TOKEN_RE
 from ._cite_audit import _audit_findings as _audit_findings
 from ._cite_audit import _doubled_links as _doubled_links
-from ._cite_audit import _Finding as _Finding
 from ._cite_audit import audit_links as audit_links
 from ._cite_audit import balanced_span as balanced_span
 from ._cite_audit import unbalanced_span as unbalanced_span
@@ -40,7 +38,6 @@ from ._cite_build import _ACRONYM_RE as _ACRONYM_RE
 # re-exported from _cite_build: `as` form marks it deliberate
 from ._cite_build import LinkAllReport as LinkAllReport
 from ._cite_build import LinkRestReport as LinkRestReport
-from ._cite_build import _dedup_name as _dedup_name
 from ._cite_build import _entry_keys as _entry_keys
 from ._cite_build import (
     _entry_names_from_document as _entry_names_from_document,
@@ -50,25 +47,6 @@ from ._cite_build import _own_bookmarks as _own_bookmarks
 from ._cite_build import link_all as link_all
 from ._cite_build import link_rest as link_rest
 from ._cite_build import unlink_by_anchor as unlink_by_anchor
-from ._cite_grammar import _AUTHORS as _AUTHORS
-from ._cite_grammar import _CAPTION_START_RE as _CAPTION_START_RE
-from ._cite_grammar import _CONTINUATION_RE as _CONTINUATION_RE
-from ._cite_grammar import _DEFAULT_HEADINGS as _DEFAULT_HEADINGS
-from ._cite_grammar import _DEFAULT_STOPS as _DEFAULT_STOPS
-from ._cite_grammar import _LEAD as _LEAD
-from ._cite_grammar import _LEAD_ADVERB_RE as _LEAD_ADVERB_RE
-from ._cite_grammar import _NAME as _NAME
-from ._cite_grammar import _NAME_CHAR as _NAME_CHAR
-from ._cite_grammar import _NARRATIVE_RE as _NARRATIVE_RE
-from ._cite_grammar import _PAREN_RE as _PAREN_RE
-from ._cite_grammar import _PARTICLE as _PARTICLE
-from ._cite_grammar import _PREFIX as _PREFIX
-from ._cite_grammar import _REF_YEAR_RE as _REF_YEAR_RE
-from ._cite_grammar import _SEGMENT_RE as _SEGMENT_RE
-from ._cite_grammar import _SURNAME as _SURNAME
-from ._cite_grammar import _YEAR as _YEAR
-from ._cite_grammar import _YEAR_HINT_RE as _YEAR_HINT_RE
-from ._cite_grammar import _ZOTERO_RE as _ZOTERO_RE
 
 # re-exported from _cite_grammar: `as` form marks it deliberate
 from ._cite_grammar import AUTHORS_PATTERN as AUTHORS_PATTERN
@@ -79,8 +57,6 @@ from ._cite_grammar import REF_STOPS as REF_STOPS
 from ._cite_grammar import YEAR_PATTERN as YEAR_PATTERN
 from ._cite_grammar import Citation as Citation
 from ._cite_grammar import Reference as Reference
-from ._cite_grammar import _add_style as _add_style
-from ._cite_grammar import _styled_run as _styled_run
 from ._cite_grammar import anchor_names as anchor_names
 from ._cite_grammar import bookmark as bookmark
 from ._cite_grammar import citation_shape as citation_shape
@@ -102,8 +78,6 @@ from ._cite_grammar import strip_lead as strip_lead
 from ._cite_grammar import wrap_visible_span as wrap_visible_span
 
 # re-exported from _cite_repair: `as` form marks it deliberate
-from ._cite_repair import _BOOKMARK_ID_RE as _BOOKMARK_ID_RE
-from ._cite_repair import _mark_para_head as _mark_para_head
 from ._cite_repair import delete_bookmark as delete_bookmark
 from ._cite_repair import marker_bookmark as marker_bookmark
 from ._cite_repair import next_bookmark_id as next_bookmark_id
