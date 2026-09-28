@@ -117,14 +117,12 @@ _HYPERLINK_RE = HYPERLINK_ANY_RE
 # did both (18 anchors in 18 of 2,954 corpus packages are reached by
 # nothing else, 2026-09-17).
 _LINK_OPEN_RE = HYPERLINK_OPEN_RE
-_PPR_RE = re.compile(r"<w:pPr>.*?</w:pPr>", re.DOTALL)
 # `(?<!/)>`: the pre-fix PARA_RE spelling, which reads a self-closing
 # `<w:p/>` as an open tag — 32 of 899 manuscripts carry one. Latent
 # here, since the one caller is only ever handed a caption paragraph and
 # a caption has text; fixed anyway, because "latent" is a claim about
 # today's callers.
 _P_OPEN_RE = re.compile(r"<w:p\b[^>]*(?<!/)>")
-_RPR_RE = re.compile(r"<w:rPr>.*?</w:rPr>", re.DOTALL)
 # a bookmark name Word will accept: letters, digits, underscore
 _UNSAFE_RE = re.compile(r"[^0-9A-Za-z_]")
 

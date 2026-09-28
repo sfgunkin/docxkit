@@ -134,7 +134,7 @@ _NUMBERING = "word/numbering.xml"
 #: Stops at the FIRST `</w:pPr>`, which is the snapshot's inside a
 #: `w:pPrChange` when there is one: read what it holds through
 #: `live_properties`, never as it stands (code review, 2026-09-13).
-_PPR_RE = re.compile(r"<w:pPr>(.*?)</w:pPr>", re.DOTALL)
+_PPR_RE = re.compile(r"<w:pPr\b[^>]*(?<!/)>(.*?)</w:pPr>", re.DOTALL)
 _NUMPR_RE = re.compile(r"<w:numPr>(.*?)</w:numPr>", re.DOTALL)
 _NUMID_RE = re.compile(r'<w:numId w:val="(\d+)"')
 _ILVL_RE = re.compile(r'<w:ilvl w:val="(\d+)"')

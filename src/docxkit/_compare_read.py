@@ -61,7 +61,7 @@ P_RE = PARA_RE
 # layer read the EMPTY run's properties as that run's. See `_xml.RUN_RE`
 # — 28 of 899 manuscripts carry one.
 RUN_RE = re.compile(r"<w:r\b[^>]*(?<!/)>(.*?)</w:r>", re.DOTALL)
-RPR_RE = re.compile(r"<w:rPr>(.*?)</w:rPr>", re.DOTALL)
+RPR_RE = re.compile(r"<w:rPr\b[^>]*(?<!/)>(.*?)</w:rPr>", re.DOTALL)
 PARAID_RE = re.compile(r'w14:paraId="([0-9A-Fa-f]+)"')
 
 #: `OMML_STRUCT_RE` is imported, not defined: `equations.skeleton` reads

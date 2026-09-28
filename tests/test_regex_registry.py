@@ -1057,9 +1057,10 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
         "a paragraph mark's empty one is a deletion"),
     ("_tracked_gates.py",
      r"(<w:(?:footnote|endnote)Reference\b[^>]*/></w:r>)"
-     r"(<w:del\b[^>]*><w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
+     r"(<w:del\b[^>]*><w:r\b[^>]*>"
+     r"(?:<w:rPr\b[^>]*(?<!/)>(?:(?!</w:rPr>).)*</w:rPr>)?"
      r"<w:delText\b[^>]*>)([^<]*?)([ \t]+)(</w:delText></w:r></w:del>)"
-     r"(<w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t)"
+     r"(<w:r\b[^>]*>(?:<w:rPr\b[^>]*(?<!/)>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t)"
      r"((?:\s[^>]*)?>)(?=[^\s<])"): (
         "shape reader: `return_note_spaces` looks for ONE sequence Compare "
         "writes — a note mark, a deletion ending in a space, a run — and "
@@ -2016,41 +2017,21 @@ def _bare_opens(probe: str) -> set[str]:
     return {m.group(1) for m in _BARE_OPEN.finditer(_hole_masked(probe))}
 
 
-#: Bare opens known and NOT yet widened, each naming its BACKLOG entry.
-#: Not an exemption: nothing here is right as written, and the entry
-#: leaves this table when it is fixed — the test below fails on an entry
-#: whose pattern no longer needs it. Keyed by (module, pattern NAME),
-#: because some of these sources are keys in the tables above too.
-BARE_OPENS_PENDING: dict[tuple[str, str], str] = dict.fromkeys(
-    (("_cite_repair.py", "_EMPTIED_RUN_RE"),
-     ("_compare_read.py", "RPR_RE"),
-     ("_tracked_gates.py", "_NOTE_SPACE_RE"),
-     ("crossrefs.py", "_PPR_RE"),
-     ("crossrefs.py", "_RPR_RE"),
-     ("edit.py", "_EMPTY_RPR_RE"),
-     ("edit.py", "_RPR_HEAD_RE"),
-     ("sections.py", "_PPR_RE")),
-    "OPEN in BACKLOG.md (S2, 2026-09-28): opens w:rPr / w:pPr with no room "
-    "for an attribute; 3 and 7 corpus packages declare xmlns on them")
-
-
+#: No exemptions, on purpose. The eight `w:rPr`/`w:pPr` patterns this
+#: rule found the day it went in were each measured against the corpus
+#: and fixed the same day (2026-09-28): five widened, the two in
+#: `crossrefs` dead and dropped, and `edit._RPR_HEAD_RE` no longer
+#: spells a tag it had only built to read back. A pattern whose input
+#: docxkit built itself can say so by not spelling the tag at all.
 def test_no_pattern_opens_a_container_with_a_BARE_tag():
-    found = {(module, name): sorted(_bare_opens(probe))
-             for module, name, _source, probe, _line in ALL_PATTERNS
-             if _bare_opens(probe)}
-    new = {key: tags for key, tags in found.items()
-           if key not in BARE_OPENS_PENDING}
-    assert not new, (
+    found = sorted(f"{module}:{line} {name} opens {sorted(tags)}"
+                   for module, name, _source, probe, line in ALL_PATTERNS
+                   if (tags := _bare_opens(probe)))
+    assert found == [], (
         "these open a container as `<w:tag>`, which no producer that "
         "declares a namespace on it (or adds any attribute) will match — "
         "the element is simply not there. Read it `<w:tag\\b[^>]*(?<!/)>`, "
-        "or through `_xml.element_spans`:\n  " + "\n  ".join(
-            f"{module}: {name} opens {tags}"
-            for (module, name), tags in sorted(new.items())))
-    stale = set(BARE_OPENS_PENDING) - set(found)
-    assert not stale, f"widened: take these out of BARE_OPENS_PENDING {stale}"
-    for key, reason in BARE_OPENS_PENDING.items():
-        assert "BACKLOG" in reason, (key, reason)
+        "or through `_xml.element_spans`:\n  " + "\n  ".join(found))
 
 
 def test_the_bare_open_detector_both_ways_round():

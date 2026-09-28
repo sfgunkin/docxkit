@@ -515,7 +515,7 @@ def _convert(xml: str, anchor: str, *, narrative: bool) -> str:
 #: `countriesWHO (2025)`, 26 real citations over five papers, each refused
 #: by the text guard before anything was written (2026-09-11).
 _EMPTIED_RUN_RE = re.compile(
-    r"<w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
+    r"<w:r\b[^>]*>(?:<w:rPr\b[^>]*(?<!/)>(?:(?!</w:rPr>).)*</w:rPr>)?"
     r"<w:t\b[^>]*></w:t></w:r>", re.DOTALL)
 
 

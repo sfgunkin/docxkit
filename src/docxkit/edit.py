@@ -258,8 +258,11 @@ def _locate(para_xml: str, old: str, *, normalize: bool = False,
 # corpus packages, 32 hold such a `w:b`, 30 a `w:i`, 22 a `w:vertAlign`),
 # and unread, an OFF italic read as ON and a second alignment was added
 # beside the first (2026-09-17).
+#: Matched at the START of the live properties, so it spells no `w:rPr`
+#: open tag of its own: it used to be searched in `f"<w:rPr>{live}"`,
+#: a tag this module wrote only to have the pattern read it back.
 _RPR_HEAD_RE = re.compile(
-    r"<w:rPr>(?:<w:rStyle [^>]*/>)?(?:<w:rFonts [^>]*/>)?"
+    r"(?:<w:rStyle [^>]*/>)?(?:<w:rFonts [^>]*/>)?"
     r"(?:<w:b(?: [^>]*)?/>)?(?:<w:bCs(?: [^>]*)?/>)?")
 _ITALIC_OFF_RE = re.compile(
     r'<w:i w:val="(?:0|false|none)"\s*(?:/>|></w:i>)')
@@ -293,9 +296,9 @@ def _run_italic(run_xml: str) -> str:
             inner = inner[:m.start()] + inner[m.end():]
         inner = inner[:hits[0].start()] + "<w:i/>" + inner[hits[0].end():]
     else:
-        m = _RPR_HEAD_RE.search(f"<w:rPr>{live}")
+        m = _RPR_HEAD_RE.match(live)
         assert m is not None
-        at = m.end() - len("<w:rPr>")
+        at = m.end()
         inner = inner[:at] + "<w:i/>" + inner[at:]
     return run_xml[:start] + f"<w:rPr>{inner}</w:rPr>" + run_xml[end:]
 
@@ -1289,7 +1292,8 @@ def _plain_runs(span_xml: str) -> str:
         "", _HYPERLINK_STYLE_RE.sub("", "".join(kept)))
 
 
-_EMPTY_RPR_RE = re.compile(r"<w:rPr\s*/>|<w:rPr>\s*</w:rPr>")
+_EMPTY_RPR_RE = re.compile(
+    r"<w:rPr\b[^>]*/>|<w:rPr\b[^>]*(?<!/)>\s*</w:rPr>")
 
 
 def _drop_bookmark(para_xml: str, name: str) -> str:

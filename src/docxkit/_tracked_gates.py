@@ -372,9 +372,10 @@ def _mismatched_paras[R](got: Parts, want: Parts,
 #: deletion's close, the next run up to its `w:t`, that tag's rest.
 _NOTE_SPACE_RE = re.compile(
     r"(<w:(?:footnote|endnote)Reference\b[^>]*/></w:r>)"
-    r"(<w:del\b[^>]*><w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
+    r"(<w:del\b[^>]*><w:r\b[^>]*>"
+    r"(?:<w:rPr\b[^>]*(?<!/)>(?:(?!</w:rPr>).)*</w:rPr>)?"
     r"<w:delText\b[^>]*>)([^<]*?)([ \t]+)(</w:delText></w:r></w:del>)"
-    r"(<w:r\b[^>]*>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t)"
+    r"(<w:r\b[^>]*>(?:<w:rPr\b[^>]*(?<!/)>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t)"
     r"((?:\s[^>]*)?>)(?=[^\s<])",
     re.DOTALL)
 
