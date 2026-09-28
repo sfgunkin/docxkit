@@ -433,6 +433,24 @@ def test_an_EMPTY_row_or_cell_is_counted_not_merged_into_the_next():
                                 + tc("(3)") + "</w:tr></w:tbl>") is False
 
 
+def test_a_NESTED_table_s_rows_and_cells_are_not_the_carrier_s():
+    """Rows and cells are the table's DIRECT children. Read by a lazy
+    `<w:tr…>.*?</w:tr>`, the row closed on the nested table's `</w:tr>`
+    and the nested rows and cells were counted as this table's own, so
+    a 1×2 carrier holding a table in its first cell read as three rows
+    (REVIEW_2026-09-28 §1)."""
+    def tc(text: str) -> str:
+        return f"<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+
+    inner = "<w:tbl><w:tr>" + tc("a") + "</w:tr><w:tr>" + tc("b") \
+        + "</w:tr></w:tbl>"
+    nested = ("<w:tbl><w:tr><w:tc>" + inner + "<w:p/></w:tc>" + tc("(3)")
+              + "</w:tr></w:tbl>")
+
+    assert _is_equation_carrier(nested) is True
+    assert _is_equation_carrier(nested.replace(tc("(3)"), "")) is False
+
+
 def test_restoring_a_part_needs_the_content_types_on_BOTH_sides():
     """`and`, not `or`. The document being repaired may have no
     `[Content_Types].xml` at all — a caller assembling parts by hand, or

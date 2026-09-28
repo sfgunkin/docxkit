@@ -30,6 +30,7 @@ from ._xml import (
     PARA_RE,
     T_PARTS_RE,
     Parts,
+    _own_children,
     element_spans,
     escape,
     live_properties,
@@ -922,6 +923,20 @@ def _is_heading(para_xml: str) -> bool:
     return m is not None and m.group(1).lower().startswith("heading")
 
 
+def _own_elements(element: str, tag: str) -> list[str]:
+    """The DIRECT children named `tag` of one whole element, empties too.
+
+    Depth-counted through `_own_children`, not a lazy `<w:tr…>.*?</w:tr>`:
+    that closed a row on the first `</w:tr>` after it, which in a table
+    holding another is the NESTED table's, and it counted the nested
+    table's rows and cells as this one's (REVIEW_2026-09-28 §1, the
+    element-pairing rule).
+    """
+    inner = element[element.index(">") + 1:element.rindex("</")]
+    return [inner[start:end] for name, start, end in _own_children(inner)
+            if name == tag]
+
+
 def _is_equation_carrier(tbl_xml: str) -> bool:
     """A numbered display equation is a 1×2 table whose second cell is «(N)».
 
@@ -933,12 +948,10 @@ def _is_equation_carrier(tbl_xml: str) -> bool:
     as one, its slash captured: read as an open tag it ran on to the next
     close, and a 2-row or 3-cell table passed for the 1×2 shape.
     """
-    rows = [m.group(0) for m in re.finditer(
-        r"<w:tr\b[^>]*?(?:(/)>|(?<!/)>.*?</w:tr>)", tbl_xml, re.DOTALL)]
+    rows = _own_elements(tbl_xml, "tr")
     if len(rows) != 1:
         return False
-    cells = [m.group(0) for m in re.finditer(
-        r"<w:tc\b[^>]*?(?:(/)>|(?<!/)>.*?</w:tc>)", rows[0], re.DOTALL)]
+    cells = _own_elements(rows[0], "tc")
     return (len(cells) == 2
             and bool(re.fullmatch(r"\([\w.]+\)",
                                   visible_text(cells[-1]).strip())))

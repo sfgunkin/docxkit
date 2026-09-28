@@ -62,9 +62,12 @@ _CAPTION_RE = re.compile(
 #: The table half carries the paragraph's `(?<!/)>` guard too: an empty
 #: `<w:tbl/>` read as an open tag ran on to the next table's close and
 #: took the caption between into a block that is never read as one.
+#: The table half matches the OPEN tag alone: `_blocks` ends the table
+#: with `matching_close`, and the lazy `.*?</w:tbl>` that sat here ran
+#: to the first close only for `_blocks` to throw that end away — the
+#: element pairing the registry now refuses outside `_xml`.
 _BLOCK_RE = re.compile(
-    rf"{PARA_RE.pattern}|(?P<table><w:tbl\b[^>]*(?<!/)>).*?</w:tbl>",
-    re.DOTALL)
+    rf"{PARA_RE.pattern}|(?P<table><w:tbl\b[^>]*(?<!/)>)", re.DOTALL)
 
 
 def _blocks(doc: str) -> list[str]:

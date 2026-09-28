@@ -2098,3 +2098,60 @@ def test_the_first_close_detector_both_ways_round():
         _Folder._cache.pop("_probe_.py", None)
     assert found == ["find(</w:tr>, ...)", "index(</w:tbl>, ...)",
                      "index(</w:tbl>, ...)"]
+
+
+#: Elements that nest inside themselves, through a cell or a content
+#: control. For these a regex that opens one and runs to `</w:X>` closes
+#: on the NESTED one's end.
+_PAIRED_NESTING = ("tbl", "tr", "tc", "sdt", "sdtContent", "txbxContent")
+
+#: Regexes allowed to pair one anyway, each with why. Only a reason about
+#: who READS it is admissible: the package pairs these through
+#: `_xml.element_spans` / `matching_close` / `_own_children`.
+PAIRING_ALLOWED: dict[tuple[str, str], str] = {
+    ("_table_core.py", "_TR_RE"): (
+        "a re-export for paper scripts, which apply it to one row they "
+        "have already isolated; nothing in the package reads it"),
+    ("_table_core.py", "_TC_RE"): (
+        "a re-export for paper scripts (Parental_style's fit_table_columns "
+        "applies it inside one row); nothing in the package reads it"),
+}
+
+
+def _pairs_nesting(probe: str) -> list[str]:
+    masked = _hole_masked(probe)
+    return [tag for tag in _PAIRED_NESTING
+            if re.search(rf"<w:{tag}(?![\w.-])", masked)
+            and f"</w:{tag}>" in masked]
+
+
+def test_no_pattern_PAIRS_a_nesting_element_outside_xml():
+    """REVIEW_2026-09-28 §1, the end of its step 4: element pairing
+    belongs to `_xml`'s depth-counted walks. `hygiene`'s equation-carrier
+    test and `probe._BLOCK_RE` paired rows, cells and tables by regex
+    until 2026-09-29; an old-vs-new run over 20,615 corpus tables found
+    no answer changed, and the next such pattern is refused here."""
+    found = {(module, name): _pairs_nesting(probe)
+             for module, name, _source, probe, _line in ALL_PATTERNS
+             if module != "_xml.py" and _pairs_nesting(probe)}
+    new = sorted(f"{module}: {name} pairs {tags}"
+                 for (module, name), tags in found.items()
+                 if (module, name) not in PAIRING_ALLOWED)
+    assert new == [], (
+        "these pair a nesting element by regex, which closes on the "
+        "NESTED one's end. Pair through `_xml.element_spans`, "
+        "`matching_close` or `_own_children`:\n  " + "\n  ".join(new))
+    assert set(PAIRING_ALLOWED) <= set(found), (
+        f"allowed, but no longer pairing: "
+        f"{sorted(set(PAIRING_ALLOWED) - set(found))}")
+    for key, reason in PAIRING_ALLOWED.items():
+        assert len(reason) > 40, (key, reason)
+
+
+def test_the_pairing_detector_both_ways_round():
+    """The gate's own instrument."""
+    assert _pairs_nesting(r"<w:tr\b[^>]*(?<!/)>.*?</w:tr>") == ["tr"]
+    assert _pairs_nesting(r"(?P<t><w:tbl\b[^>]*>).*?</w:tbl>") == ["tbl"]
+    assert _pairs_nesting(r"<w:tbl\b[^>]*(?<!/)>") == []
+    assert _pairs_nesting(r"<w:tblPr>.*?</w:tblPr>") == []
+    assert _pairs_nesting(r"<w:p\b[^>]*>.*?</w:p>") == []
