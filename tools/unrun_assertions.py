@@ -174,6 +174,13 @@ def _measure() -> Report:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from docxkit.console import utf8_stdout
+
+    # A finding quotes the test's source, em dashes and all, and a
+    # Windows runner's console is cp1252: the first CI run of this tool
+    # died printing its first finding (2026-09-29), so what it found was
+    # never shown. `tools/gates.py` has done the same since August.
+    utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.
                                  RawDescriptionHelpFormatter)

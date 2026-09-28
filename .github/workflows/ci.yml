@@ -12,6 +12,13 @@ on:
   pull_request:
     paths-ignore: ["CONTRIBUTING.md", "REVIEW_*.md"]
 
+# A Windows runner's console is cp1252, and every tool here prints
+# Cyrillic, em dashes and the glyphs it repairs: `unrun_assertions.py`
+# died on its first finding in the first Windows run. The tools guard
+# themselves (`console.utf8_stdout`); this covers any that does not.
+env:
+  PYTHONIOENCODING: utf-8
+
 jobs:
   test:
     # Windows, since 2026-09-29: the toolkit is developed and used on
