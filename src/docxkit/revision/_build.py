@@ -17,7 +17,7 @@ from ..errors import (
     StaleBatch,
     WorkingPending,
 )
-from ..tracked import _simulate, untracked
+from ..tracked import rejected_view, untracked
 from . import _ledger, _timing
 from ._config import Paper
 from ._losses import (
@@ -349,7 +349,7 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     # blocking. Rejecting here costs an in-memory XML pass beside a
     # Word Compare that costs 40-141s.
     if (shaped := moved_footnotes(built, base_parts)):
-        emptied = emptied_footnotes(_simulate(built, revisions.reject),
+        emptied = emptied_footnotes(rejected_view(built),
                                     base_parts, shaped)
         for note in emptied:
             _say(f"footnote {note}: Compare emitted the whole note as an "

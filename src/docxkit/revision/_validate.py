@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .. import guard as _guard
 from .. import lint as _lint
-from .. import package, revisions, tracked
+from .. import package, tracked
 from .. import word as _word
 from .._xml import FOOTNOTES, PARA_RE, WT_RE, Parts, text_parts
 from ..equations import OMATH_RE, tokens
@@ -32,10 +32,11 @@ from ..tracked import (
     Untracked,
     _paras,
     _root,
-    _simulate,
+    accepted_view,
     bookmark_changes,
     bookmark_names,
     cell_property_changes,
+    rejected_view,
     structure_counts,
     structure_diff,
     untracked,
@@ -243,7 +244,7 @@ def render_accepted(batch: str | Path, anchors: Sequence[str], *,
     # and the render it would read costs a session and a PDF export. A
     # plain install used to pay for both and then fail on the import.
     _pages._import_pymupdf()
-    parts = _simulate(package.read_parts(batch), revisions.accept)
+    parts = accepted_view(package.read_parts(batch))
     staging = Path(tempfile.mkdtemp(prefix="docxkit_render_"))
     try:
         accepted_docx = staging / f"{batch.stem}__accepted.docx"
@@ -426,7 +427,7 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             report.word_error = str(exc)[:200]
             return report
 
-    accepted = _simulate(parts, revisions.accept)
+    accepted = accepted_view(parts)
     acc_root = _root(accepted)
     report.accepted = _counts(acc_root)
     base = (package.read_parts(report.baseline)
@@ -434,7 +435,7 @@ def validate(path: str | Path, baseline: str | Path | None = None,
     report.math_anchors = math_anchors(accepted, base)
 
     if base is not None:
-        rejected = _simulate(parts, revisions.reject)
+        rejected = rejected_view(parts)
         # The PACKAGE, before its text: the reject-all gate below proves
         # the words round-trip, and a part that is not there has no words
         # for it to read.

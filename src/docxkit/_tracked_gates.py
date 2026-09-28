@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
 from . import footnotes as _footnotes
+from . import revisions as _revisions
 from ._xml import (
     BOOKMARK_NAME_RE,
     COMMENT_ID_RE,
@@ -302,13 +303,17 @@ def accepted_view(parts: Parts) -> Parts:
     (REVIEW_2026-09-28 §5), and `revisions._simulate` is another thing
     with the same name.
     """
-    return _simulate(parts, _accept)
+    # `revisions.accept` looked up at CALL time, as the protocol did when
+    # it spelled this `_simulate(parts, revisions.accept)`: its
+    # regression tests break the accept to prove a gate notices, and a
+    # function bound at import would never see the break.
+    return _simulate(parts, _revisions.accept)
 
 
 def rejected_view(parts: Parts) -> Parts:
     """The package with every revision REJECTED — what a reject-all gives
     back, which a redline must reproduce as its original. A copy."""
-    return _simulate(parts, _reject)
+    return _simulate(parts, _revisions.reject)
 
 
 @dataclass(frozen=True)
