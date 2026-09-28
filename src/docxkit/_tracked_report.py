@@ -14,6 +14,7 @@ import time
 from typing import NamedTuple
 
 from . import footnotes as _footnotes
+from ._report import Finding, Severity, blocking_of
 from ._tracked_gates import Unaccepted, Untracked
 from .errors import PackageError
 
@@ -169,6 +170,11 @@ ADVISORY: tuple[str, ...] = (
     "deduped_comments", "phases",
 )
 
+#: The advisory lists that want a person's LOOK — a Word call that
+#: failed and was skipped, a thing Compare dropped — rather than a note
+#: of a repair made. `phases` is timing, not a finding, and is left out.
+_WARNINGS = frozenset({"suppressed", "dropped"})
+
 
 class BuildReport:
     """What a redline build did, and how long each phase took."""
@@ -278,15 +284,40 @@ class BuildReport:
     def seconds(self) -> float:
         return time.perf_counter() - self._t0
 
-    def blocking(self) -> list[str]:
+    def findings(self) -> list[Finding]:
+        """Everything the build found, as :class:`~docxkit._report.Finding`.
+
+        The `BLOCKING` lists first, in the build's order and at blocking
+        severity, labelled as a report prints them; then the advisory
+        lists, the two that want a look as warnings and the repairs as
+        notes. Built from the two tables, so a list on neither side
+        cannot be read here either — the test that holds `BLOCKING |
+        ADVISORY` to the class holds this too.
+        """
+        out = [Finding(label, str(item)) for field, label in BLOCKING
+               for item in getattr(self, field)]
+        for field in ADVISORY:
+            if field == "phases":
+                continue
+            severity = (Severity.WARNING if field in _WARNINGS
+                        else Severity.NOTE)
+            out += [Finding(field.upper(), str(item), severity)
+                    for item in getattr(self, field)]
+        return out
+
+    def blocking(self) -> list[Finding]:
         """Every finding a default build would have refused on, labelled.
 
         Empty means the build as run would have written the file with
         every gate on — which is what a caller that turned the refusals
         off (to look at the artefact) still needs to be told.
         """
-        return [f"{label} {item}" for field, label in BLOCKING
-                for item in getattr(self, field)]
+        return blocking_of(self.findings())
+
+    @property
+    def ok(self) -> bool:
+        """Nothing a default build refuses on."""
+        return not self.blocking()
 
     def format(self) -> str:
         lines = [f"  [{secs:6.1f}s] {label}" for label, secs in self.phases]

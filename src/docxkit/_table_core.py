@@ -20,6 +20,7 @@ from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, NamedTuple, overload
 
+from ._report import no_truth
 from ._xml import (
     PARA_RE,
     RUN_RE,
@@ -718,7 +719,9 @@ class RowsReport:
         return not (self.lost or self.gained)
 
     def __bool__(self) -> bool:
-        return self.ok
+        # it was truthy when the check PASSED, while refstyle's reports
+        # were truthy when something CHANGED (REVIEW_2026-09-28 §2)
+        raise no_truth(self, "`.ok`")
 
     def format(self) -> str:
         if self.ok:
@@ -1360,7 +1363,7 @@ def reorder_rows(xml: str, table: Table, key: Callable[[list[str]], Any], *,
             f"multiset differs")
     out = _rows_replaced(xml, table, rows)
     moved = read_all(out, view=table.view)[table.index]
-    if not (report := rows_preserved(table, moved, skip_header=False)):
+    if not (report := rows_preserved(table, moved, skip_header=False)).ok:
         raise AnchorError(
             f"reordering table {table.index} changed its rows, not just "
             f"their order:\n{report.format()}")

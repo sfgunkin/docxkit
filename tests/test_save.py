@@ -15,6 +15,7 @@ from conftest import make_parts, para, run, write
 
 import docxkit
 from docxkit import package, save
+from docxkit._report import Report, Severity
 from docxkit._xml import DOCUMENT
 from docxkit.errors import PackageError
 
@@ -42,7 +43,7 @@ def test_a_clean_save_writes_protects_edge_spaces_and_backs_up(tmp_path):
 
     report = save.save(path, parts, backup_tag="pre_test")
 
-    assert report.written and not report.blocking()
+    assert report.written and not report.blocking() and report.ok
     assert report.protected == 1, "the edge-space run the edit brought"
     assert report.backup is not None and report.backup.exists()
     assert report.backup.parent == tmp_path, "beside it, when not told"
@@ -69,7 +70,8 @@ def test_a_finding_the_EDIT_brings_is_refused_whatever_the_flag(tmp_path):
                        allow_existing_lint=True)
 
     assert not report.written and report.fresh and not report.existing
-    assert report.blocking() == list(report.fresh)
+    assert [f.message for f in report.blocking()] == list(report.fresh)
+    assert not report.ok
     assert "this edit would leave markup" in report.refusal()
     assert path.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == ["paper.docx"]
@@ -90,6 +92,8 @@ def test_a_finding_the_file_ALREADY_had_is_refused_unless_allowed(tmp_path):
 
     assert allowed.written and allowed.existing
     assert allowed.blocking() == [], "written, so nothing blocked it"
+    assert [f.severity for f in allowed.findings()] == [Severity.WARNING]
+    assert isinstance(allowed, Report)
     assert allowed.refusal() == ""
 
 

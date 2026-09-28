@@ -48,7 +48,7 @@ LAYERS: tuple[tuple[str, ...], ...] = (
     ("comments", "body", "paragraph", "guard", "hygiene", "authors", "save",
      "batch"),
     ("edit", "find", "revisions", "styles", "package", "lint", "word"),
-    ("_xml", "errors", "console", "timings"),
+    ("_xml", "_report", "errors", "console", "timings"),
 )
 
 #: A facade and the private modules only it may reach into. The halves

@@ -16,6 +16,7 @@ import re
 import pytest
 from conftest import ins, make_parts, para, run
 
+from docxkit._report import Report, Severity
 from docxkit._tracked_gates import (
     _first_difference,
     _revision_gap,
@@ -164,16 +165,18 @@ def test_whatever_the_accept_side_REFUSES_on_is_in_the_table():
 
 
 def test_blocking_labels_every_item_of_every_blocking_list_IN_ORDER():
-    report = BuildReport()
-    assert report.blocking() == []
+    empty = BuildReport()
+    assert empty.blocking() == [] and empty.ok
 
+    report = BuildReport()
     for field, _ in BLOCKING:
         setattr(report, field, [f"{field} 1", f"{field} 2"])
     report.dropped = ["advisory, never a finding"]
 
-    assert report.blocking() == [f"{label} {field} {n}"
-                                 for field, label in BLOCKING
-                                 for n in (1, 2)]
+    assert [str(f) for f in report.blocking()] == [
+        f"{label} {field} {n}" for field, label in BLOCKING for n in (1, 2)]
+    assert not report.ok
+    assert all(f.severity is Severity.BLOCKING for f in report.blocking())
 
 
 def test_the_report_names_parts_from_the_BASELINE_only_when_there_are_some():
@@ -184,3 +187,18 @@ def test_the_report_names_parts_from_the_BASELINE_only_when_there_are_some():
 
     assert ("come from the BASELINE: customXml/item1.xml"
             in report.format())
+
+
+def test_the_report_IS_a_Report_and_its_advisories_do_not_block():
+    """The shared protocol, and the other side of the table: a dropped
+    part is a WARNING a person should look at, a returned space a NOTE,
+    and neither makes the build not ok."""
+    report = BuildReport()
+    report.dropped = ["part LOST: customXml/item1.xml"]
+    report.returned_spaces = ["returned the space after a note mark"]
+    report.phases = [("compare", 1.0)]
+
+    assert isinstance(report, Report)
+    assert report.ok and report.blocking() == []
+    assert [(f.code, f.severity) for f in report.findings()] == [
+        ("DROPPED", Severity.WARNING), ("RETURNED_SPACES", Severity.NOTE)]

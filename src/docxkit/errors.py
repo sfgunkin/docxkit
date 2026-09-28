@@ -12,6 +12,8 @@ build code keep working.
 """
 from __future__ import annotations
 
+from enum import IntEnum
+
 __all__ = [
     "AnchorError",
     "BaselinePending",
@@ -20,6 +22,7 @@ __all__ = [
     "DeliverableModified",
     "DocumentLocked",
     "DocxKitError",
+    "ExitCode",
     "FontMissing",
     "HandbackLoss",
     "MathResolved",
@@ -31,6 +34,36 @@ __all__ = [
     "WordTimeout",
     "WorkingPending",
 ]
+
+
+class ExitCode(IntEnum):
+    """What ``docxkit`` exits with, named — the codes a script branches on.
+
+    Written down 2026-09-29 (REVIEW_2026-09-28 §2). The numbers are the
+    ones already in use and already quoted by the papers' own configs and
+    scripts — ``MathResolved, exit 2``, ``BaselinePending, exit 3`` — so
+    naming them changes none. What is new is :attr:`INTERNAL`: an
+    exception outside this module's family used to leave the CLI as a
+    traceback, exit 1, indistinguishable from "a check found something".
+
+    Several commands also return 2 or 3 as verdicts of their OWN (a
+    `revision validate` whose Word could not open, an `exhibits` with
+    nothing to check) and say so where they return it; those predate
+    this enum and papers read them. Only the protocol refusals below are
+    one code, one meaning, across every command.
+    """
+
+    OK = 0
+    #: A check found something, or a :class:`DocxKitError` refused.
+    FINDINGS = 1
+    MATH_RESOLVED = 2
+    BASELINE_PENDING = 3
+    STALE_BATCH = 4
+    HANDBACK_LOSS = 5
+    WORKING_PENDING = 6
+    #: An exception outside this family: a bug in docxkit, not a finding
+    #: about the document. `sysexits.h`'s EX_SOFTWARE.
+    INTERNAL = 70
 
 
 class DocxKitError(Exception):
@@ -155,7 +188,7 @@ class ProtocolError(DocxKitError):
     are the ones the protocol's own documentation already quotes.
     """
 
-    exit_code = 1
+    exit_code = ExitCode.FINDINGS
 
 
 class BaselinePending(ProtocolError):
@@ -167,7 +200,7 @@ class BaselinePending(ProtocolError):
     never be rejected again.
     """
 
-    exit_code = 3
+    exit_code = ExitCode.BASELINE_PENDING
 
 
 class WorkingPending(ProtocolError):
@@ -185,7 +218,7 @@ class WorkingPending(ProtocolError):
     all until the author has decided — `baseline` refuses it.
     """
 
-    exit_code = 6
+    exit_code = ExitCode.WORKING_PENDING
 
 
 class MathResolved(ProtocolError):
@@ -197,7 +230,7 @@ class MathResolved(ProtocolError):
     hand instead.
     """
 
-    exit_code = 2
+    exit_code = ExitCode.MATH_RESOLVED
 
 
 class HandbackLoss(ProtocolError):
@@ -216,7 +249,7 @@ class HandbackLoss(ProtocolError):
     earlier and without touching anything; it exits on this code.
     """
 
-    exit_code = 5
+    exit_code = ExitCode.HANDBACK_LOSS
 
 
 class StaleBatch(ProtocolError):
@@ -226,4 +259,4 @@ class StaleBatch(ProtocolError):
     meantime — the one unrecoverable mistake in this workflow.
     """
 
-    exit_code = 4
+    exit_code = ExitCode.STALE_BATCH

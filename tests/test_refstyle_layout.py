@@ -90,7 +90,7 @@ def test_layout_is_idempotent_so_it_doubles_as_an_audit():
     first = parts["word/document.xml"]
     again = layout(parts)
     assert parts["word/document.xml"] == first
-    assert not again
+    assert not again.wrote
 
 
 def test_an_inherited_house_value_is_left_to_the_style():
@@ -500,14 +500,18 @@ def test_the_whole_head_reads_as_one_sentence_in_order():
         "7 left to the style")
 
 
-def test_a_report_is_TRUTHY_only_when_it_changed_something():
+def test_a_report_WROTE_only_when_it_changed_something():
     """`inherited` alone is a pass that deliberately did nothing, and a
-    caller printing on truthiness must not announce it."""
-    assert not _report()
-    assert not _report(inherited=SEVEN)
-    assert _report(indented=THREE)
-    assert _report(spaced=FIVE)
-    assert _report(page_break="Ref")
+    caller announcing on `.wrote` must not announce it. It was the
+    report's TRUTH value until 2026-09-29, and truth meant "changed" here
+    and "passed" in `rows_preserved`; a report has none now."""
+    assert not _report().wrote
+    assert not _report(inherited=SEVEN).wrote
+    assert _report(indented=THREE).wrote
+    assert _report(spaced=FIVE).wrote
+    assert _report(page_break="Ref").wrote
+    with pytest.raises(TypeError, match=r"`\.wrote`"):
+        bool(_report())
 
 
 

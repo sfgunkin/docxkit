@@ -73,7 +73,8 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `guard` | stop a rebuild discarding a review someone made in Word; `restamp` records a repair the TOOL made, which is not a review; `carry` moves a stamp with the bytes it describes, as `promote` does onto the manuscript |
 | `ingest` | fold the author's Word edits back into the build source, part by part — a footnote the author retyped is an override too |
 | `lint` | structural checks for the markup Word refuses to open (ported from DSI) |
-| `console` | UTF-8 stdout, guarded — a bare reconfigure crashes off-console |
+| `console` | UTF-8 stdout, guarded — a bare reconfigure crashes off-console; `write_json`, the one report writer |
+| `_report` | `Finding` / `Severity` / the `Report` protocol — what a check found and whether it blocks, derived rather than re-decided; a report has no truth value |
 | `timings` | how long a build's steps took, kept per run so the next can be compared |
 | `errors` | `DocxKitError` and friends — a library never calls `SystemExit` |
 | `_xml` | internal: the WordprocessingML primitives, defined once |

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import lint as _lint
 from . import package as _package
+from ._report import Finding, Severity, blocking_of
 from ._xml import DOCUMENT, Parts
 from .edit import preserve_space
 from .errors import PackageError
@@ -45,11 +46,26 @@ class SaveReport:
     #: or nothing was written.
     backup: Path | None = None
 
-    def blocking(self) -> list[str]:
+    def findings(self) -> list[Finding]:
+        """What the lint found, as :class:`~docxkit._report.Finding`.
+
+        A finding the edit INTRODUCED always blocks. One the file already
+        carried blocks unless the caller allowed those, and is then a
+        warning: written over, and still there.
+        """
+        carried = (Severity.WARNING if self.allowed_existing
+                   else Severity.BLOCKING)
+        return ([Finding("LINT", p) for p in self.fresh]
+                + [Finding("LINT", p, carried, where="already in the file")
+                   for p in self.existing])
+
+    def blocking(self) -> list[Finding]:
         """The findings that stopped the write — empty when it went ahead."""
-        if self.written:
-            return []
-        return [*self.fresh, *self.existing]
+        return blocking_of(self.findings())
+
+    @property
+    def ok(self) -> bool:
+        return not self.blocking()
 
     def refusal(self, *, flag: str = "allow_existing_lint=True") -> str:
         """Why nothing was written, and what to do about it; "" if written.
@@ -159,7 +175,7 @@ def edit_in_place(path: str | Path, transform: Callable[[Parts], object],
     saved = save(path, parts, backup_tag=backup_tag, backup_into=backup_into,
                  allow_existing_lint=allow_existing_lint, order=order)
     if not saved.written:
-        listed = "\n  - ".join(saved.blocking())
+        listed = "\n  - ".join(f.message for f in saved.blocking())
         raise PackageError(f"{path.name}: nothing written. The lint found:"
                            f"\n  - {listed}\n{saved.refusal()}")
     return report

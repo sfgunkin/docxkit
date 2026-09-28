@@ -67,6 +67,7 @@ VALUES = [
     "repack.Move",              # one placement, and what the render said
     "repack.Sheet",             # one rendered sheet's fill
     "save.SaveReport",          # what a save did, or why it wrote nothing
+    "_report.Finding",          # one thing a check found, and its weight
     "refstyle.Issue",
     "refstyle.Layout",          # the house rule itself, passed in and read
     "sections.Heading",         # a heading's number, as the reader sees it

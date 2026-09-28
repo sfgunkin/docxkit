@@ -37,10 +37,12 @@ import pytest
 #: `lint` and `save` joined 2026-09-29, when `docxkit.edit_in_place`
 #: became the safe save (edge spaces protected, lint before the write).
 #: Measured: 2.3 ms of a 68 ms import, and `lint` imports `_xml` alone.
+#: `_report` came with `save`'s report the same day: an enum, a frozen
+#: dataclass and a Protocol, standard library only.
 BASE_CHAIN = {
-    "docxkit", "docxkit._xml", "docxkit.console", "docxkit.edit",
-    "docxkit.errors", "docxkit.find", "docxkit.lint", "docxkit.package",
-    "docxkit.save",
+    "docxkit", "docxkit._report", "docxkit._xml", "docxkit.console",
+    "docxkit.edit", "docxkit.errors", "docxkit.find", "docxkit.lint",
+    "docxkit.package", "docxkit.save",
 }
 
 #: Third-party imports the base chain must not pay for, and what each

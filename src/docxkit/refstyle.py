@@ -32,6 +32,7 @@ from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 
+from ._report import no_truth
 from ._xml import (
     BOOKMARK_NAME_RE,
     DOCUMENT,
@@ -576,7 +577,7 @@ class ConvertReport:
     skipped: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
-        return bool(self.changed)
+        raise no_truth(self, "`.changed` (what was converted)")
 
     def format(self) -> str:
         head = (f"{len(self.changed)} fix(es) written, "
@@ -667,8 +668,13 @@ class LayoutReport:
     #: paragraph_property`.
     inherited: list[str] = field(default_factory=list)
 
-    def __bool__(self) -> bool:
+    @property
+    def wrote(self) -> bool:
+        """Did `layout` set anything at all?"""
         return bool(self.page_break or self.indented or self.spaced)
+
+    def __bool__(self) -> bool:
+        raise no_truth(self, "`.wrote`")
 
     def format(self) -> str:
         head = (f"{len(self.indented)} indent(s), {len(self.spaced)} "
@@ -689,7 +695,7 @@ class RefileReport:
     refused: str = ""
 
     def __bool__(self) -> bool:
-        return bool(self.moved)
+        raise no_truth(self, "`.moved` (and `.refused` for why not)")
 
     def format(self) -> str:
         if self.refused:

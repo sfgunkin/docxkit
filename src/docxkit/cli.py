@@ -70,6 +70,7 @@ from ._xml import (
 from .console import utf8_console, write_json
 from .errors import (
     DocxKitError,
+    ExitCode,
     HandbackLoss,
     PackageError,
     ProtocolError,
@@ -248,7 +249,7 @@ def cmd_refstyle(args: argparse.Namespace) -> int:
         print("  " + filed.format().replace("\n", "\n  "))
         set_out = layout(parts)
         print("  " + set_out.format().replace("\n", "\n  "))
-        if ((written or filed or set_out)
+        if ((written.changed or filed.moved or set_out.wrote)
                 and not _save(args.docx, parts, "pre_refstyle",
                               allow_existing=args.allow_existing_lint)):
             return 1
@@ -1271,7 +1272,7 @@ def cmd_compare_probe(args: argparse.Namespace) -> int:
     # Every list the build would have refused on, from the report's own
     # table — picking five by hand here missed the lost anchor and the
     # orphaned note, and printed the success verdict over both.
-    findings = report.blocking()
+    findings = [str(finding) for finding in report.blocking()]
     for line in findings:
         print(f"  {line}")
     if args.keep:
@@ -2985,6 +2986,19 @@ def main() -> None:
         sys.exit(exc.exit_code)
     except DocxKitError as exc:
         sys.exit(f"docxkit: {exc}")
+    except Exception as exc:
+        # Outside the family: a bug in docxkit, not a finding about the
+        # document, and a traceback with exit 1 read exactly like "the
+        # check found something" (REVIEW_2026-09-28 §2 counted fifteen
+        # bare ValueErrors, an int() of a config value, a raw ZipFile).
+        # KeyboardInterrupt and SystemExit are not Exceptions and pass.
+        if os.environ.get("DOCXKIT_TRACEBACK"):
+            raise
+        print(f"docxkit: internal error — {type(exc).__name__}: {exc}\n"
+              f"  This is a bug in docxkit, not a finding about your "
+              f"document. Set DOCXKIT_TRACEBACK=1 to see where it is.",
+              file=sys.stderr)
+        sys.exit(ExitCode.INTERNAL)
 
 
 if __name__ == "__main__":

@@ -101,14 +101,17 @@ def test_a_row_that_ARRIVED_is_a_finding_too():
     assert report.gained == [("Bosnia", "-0.5", "+1.5")]
 
 
-def test_the_report_is_FALSY_when_rows_changed():
-    """So the caller can write `assert rows_preserved(a, b), report()`
-    the way every other gate here reads."""
+def test_the_report_is_not_OK_when_rows_changed():
+    """`.ok`, and no truth value: the report was truthy when the check
+    PASSED while refstyle's were truthy when something CHANGED, so
+    `if report:` meant opposite things (REVIEW_2026-09-28 §2)."""
     before, = read_all(_doc(HEADER, *DATA))
     after, = read_all(_doc(HEADER, DATA[0], DATA[1]))
 
-    assert not rows_preserved(before, after)
-    assert rows_preserved(before, before)
+    assert not rows_preserved(before, after).ok
+    assert rows_preserved(before, before).ok
+    with pytest.raises(TypeError, match=r"`\.ok`"):
+        bool(rows_preserved(before, before))
 
 
 def test_TWO_identical_rows_are_two_rows():

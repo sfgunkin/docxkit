@@ -22,7 +22,7 @@ import pytest
 from conftest import comment, make_parts, para, run, write
 
 from docxkit import cli
-from docxkit.errors import DocxKitError, PackageError
+from docxkit.errors import DocxKitError, ExitCode, PackageError
 
 SRC = Path(cli.__file__)
 
@@ -1080,3 +1080,59 @@ def test_a_docx_that_SORTS_before_the_paper_keeps_its_backup_beside_it(
     assert code == 0, capsys.readouterr().out
     assert (protocol_paper.root / "a_draft_pre_smarten1.docx").is_file()
     assert not list(protocol_paper.rescue_dir.glob("a_draft*"))
+
+
+# ------------------------------------------------------ exit codes, named -
+
+
+def _main_raising(monkeypatch, exc: BaseException) -> None:
+    """`cli.main` over a parser whose one command raises `exc`."""
+    def boom(_args: argparse.Namespace) -> int:
+        raise exc
+
+    class Parser:
+        def parse_args(self) -> argparse.Namespace:
+            return argparse.Namespace(fn=boom)
+
+    monkeypatch.setattr(cli, "build_parser", Parser)
+    monkeypatch.setattr(cli, "utf8_console", lambda: True)
+
+
+def test_a_bug_OUTSIDE_the_error_family_exits_INTERNAL_in_one_line(
+        monkeypatch, capsys):
+    """It left the CLI as a traceback and exit 1 — the code "a check
+    found something" uses. It is a bug in docxkit, and says so."""
+    monkeypatch.delenv("DOCXKIT_TRACEBACK", raising=False)
+    _main_raising(monkeypatch, ValueError("invalid literal for int()"))
+
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+
+    assert done.value.code == ExitCode.INTERNAL
+    assert ExitCode.INTERNAL.value == 70, "sysexits' EX_SOFTWARE"
+    err = capsys.readouterr().err
+    assert err.startswith("docxkit: internal error — ValueError: invalid")
+    assert "DOCXKIT_TRACEBACK=1" in err and "Traceback" not in err
+
+
+def test_DOCXKIT_TRACEBACK_lets_the_bug_through_as_it_is(monkeypatch):
+    monkeypatch.setenv("DOCXKIT_TRACEBACK", "1")
+    _main_raising(monkeypatch, ValueError("where"))
+
+    with pytest.raises(ValueError, match="where"):
+        cli.main()
+
+
+def test_a_refusal_and_a_protocol_code_are_unchanged_by_the_enum(
+        monkeypatch, capsys):
+    """Naming the codes changed none: the papers quote `MathResolved,
+    exit 2` and `BaselinePending, exit 3` in their own configs."""
+    from docxkit.errors import BaselinePending, MathResolved
+
+    assert (MathResolved.exit_code, BaselinePending.exit_code) == (2, 3)
+    _main_raising(monkeypatch, PackageError("refused"))
+
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+
+    assert done.value.code == "docxkit: refused", "exit 1, message as ever"
