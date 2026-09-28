@@ -46,8 +46,9 @@ from docxkit.console import utf8_stdout  # noqa: E402
 TIMINGS = ROOT / timings_mod.FOLDER
 
 
-#: Below this a gate is not worth a line in the report. Measured: five
-#: of the nine gates are under a second and always will be.
+#: Below this a gate is not worth a line in the report. Measured when
+#: the chain had nine gates: five of them were under a second and
+#: always will be.
 NOTABLE = 0.5
 
 

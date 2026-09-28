@@ -1,4 +1,4 @@
-"""`tools/gates.py` — the ten gates, run so the answer cannot be lost.
+"""`tools/gates.py` — the gates, run so the answer cannot be lost.
 
 The runner exists because the CHAIN is where they go wrong, and every
 failure it guards against has happened here: a piped gate whose status

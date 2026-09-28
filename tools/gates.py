@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run the nine gates in order and say which one stopped.
+"""Run every gate in `GATES`, in order, and say which one stopped.
 
     python tools/gates.py
 
@@ -21,7 +21,7 @@ that the answer cannot be lost between them. Exit status is 0 only when
 all of them pass, and the first failure stops the run — a gate after a
 red one tells you nothing you can act on yet.
 
-Two of the nine can SKIP. `sweep` needs a corpus of real manuscripts,
+Two of them can SKIP. `sweep` needs a corpus of real manuscripts,
 which no CI runner has and most machines do not either, so it exits 3
 and prints what to set. That is a third state on purpose: `ok` over
 zero documents and `ok` over 347 are the same line, and the corpus gate
