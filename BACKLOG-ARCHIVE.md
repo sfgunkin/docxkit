@@ -14,6 +14,46 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — `docxkit compare-probe` says "both views reproduce their documents" over an accept that loses anchors or orphans a note~~ — FIXED 28.09, `470f37c`
+
+<!-- status: fixed -->
+
+Found by the 2026-09-28 review (`REVIEW_2026-09-28.md` §2). `cmd_compare_probe`
+(`cli.py:1352-1377`) builds with every gate reporting rather than refusing,
+then assembles its findings from five report fields — `unrejectable`,
+`unaccepted`, `structure_diff`, `accepted_math`, `lint` — and prints the
+success verdict with exit 0 when that list is empty. `tracked.build` fills
+two more on EVERY build, whatever the flags (`tracked.py:755-765`):
+`accepted_losses` (a bookmark or hyperlink the accepted view drops) and
+`orphan_notes` (a note with words and no marker after accept-all). The build
+REFUSES on both (`_tracked_report._refuse_accept_side`, `:101-121`); the probe
+never reads them. So the command that exists to ask "what would Compare make
+of this edit" answers "nothing wrong" over the two losses the build treats as
+fatal — the "report that reads as success" shape.
+
+The cause is structural, not a typo: `BuildReport` has 17 list fields and no
+`ok`/`blocking`; which lists block is written only in `_refuse_accept_side`,
+and every consumer re-derives it (see the review's §2 for the general fix).
+
+**Fix:** list `accepted_losses` and `orphan_notes` in the probe's findings;
+better, give `BuildReport` a `blocking()` that `_refuse_accept_side` and the
+probe both read, and a test that plants each blocking list and asserts the
+probe exits 1.
+
+**Fixed in `470f37c`.** `_tracked_report.BLOCKING` names the seven lists a
+default build refuses on (lint, structure_diff, unrejectable,
+accepted_losses, orphan_notes, unaccepted, accepted_math), in the build's
+order and with the label a report prints; `ADVISORY` names the rest, and
+`BuildReport.blocking()` is what `compare-probe` now prints and exits on.
+`tests/test_tracked_edges.py` holds `BLOCKING | ADVISORY` to the class's
+list fields, so a new list has to take a side, and asks
+`_refuse_accept_side` itself which lists it raises on.
+`tests/test_cli_compare_probe.py` plants each blocking list behind a stub
+build and requires exit 1, and runs a lost link end to end. The old probe
+failed 3 of these: the link, `accepted_losses` and `orphan_notes`. The
+refusals keep their own messages and are not driven from the table yet;
+the completeness test is what keeps the two in step.
+
 ### ~~S2 — `link_all(only=…)` bookmarks an entry that already has a key, leaving a marker nothing targets~~ — FIXED 26.09, `4989332`
 
 <!-- status: fixed -->
