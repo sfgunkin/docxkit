@@ -141,6 +141,35 @@ def _refuse_accept_side(report: BuildReport, revised: str, *,
             f"edit to the built batch instead. " + _ACCEPT_ESCAPE)
 
 
+#: The report's lists that `build` REFUSES on under its default
+#: switches, in the order it asks them, each with the word a report
+#: prints before one of its items. The one place that says which lists
+#: block: the report itself has no verdict, so every reader that wants
+#: one re-derived it, and `docxkit compare-probe` re-derived five of
+#: these seven — "both views reproduce their documents", exit 0, over
+#: an accept that lost a link or orphaned a note, the two losses the
+#: build treats as fatal (REVIEW_2026-09-28 §2). Every other list field
+#: is named in `ADVISORY`, and a test holds the two to the class, so a
+#: new list has to be put on one side or the other.
+BLOCKING: tuple[tuple[str, str], ...] = (
+    ("lint", "LINT"),
+    ("structure_diff", "STRUCTURE"),
+    ("unrejectable", "UNREJECTABLE"),
+    ("accepted_losses", "ANCHOR"),
+    ("orphan_notes", "ORPHAN"),
+    ("unaccepted", "UNACCEPTED"),
+    ("accepted_math", "MATH"),
+)
+
+#: The lists a build reports and never refuses on: what it repaired,
+#: carried back, or could only note. See `BLOCKING`.
+ADVISORY: tuple[str, ...] = (
+    "suppressed", "dropped", "carried", "carried_from_baseline",
+    "carried_properties", "restored_glyphs", "returned_spaces",
+    "deduped_comments", "phases",
+)
+
+
 class BuildReport:
     """What a redline build did, and how long each phase took."""
 
@@ -248,6 +277,16 @@ class BuildReport:
     @property
     def seconds(self) -> float:
         return time.perf_counter() - self._t0
+
+    def blocking(self) -> list[str]:
+        """Every finding a default build would have refused on, labelled.
+
+        Empty means the build as run would have written the file with
+        every gate on — which is what a caller that turned the refusals
+        off (to look at the artefact) still needs to be told.
+        """
+        return [f"{label} {item}" for field, label in BLOCKING
+                for item in getattr(self, field)]
 
     def format(self) -> str:
         lines = [f"  [{secs:6.1f}s] {label}" for label, secs in self.phases]

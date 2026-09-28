@@ -1362,11 +1362,10 @@ def cmd_compare_probe(args: argparse.Namespace) -> int:
           f"{', '.join(f'{k} {n}' for k, n in sorted(kinds.items()))}")
     for note in report.returned_spaces + report.restored_glyphs:
         print(f"  repaired: {note}")
-    findings = ([f"UNREJECTABLE {u}" for u in report.unrejectable]
-                + [f"UNACCEPTED {u}" for u in report.unaccepted]
-                + [f"STRUCTURE {d}" for d in report.structure_diff]
-                + [f"MATH {m}" for m in report.accepted_math]
-                + [f"LINT {problem}" for problem in report.lint])
+    # Every list the build would have refused on, from the report's own
+    # table — picking five by hand here missed the lost anchor and the
+    # orphaned note, and printed the success verdict over both.
+    findings = report.blocking()
     for line in findings:
         print(f"  {line}")
     if args.keep:

@@ -25,6 +25,8 @@ from docxkit._tracked_gates import (
 )
 from docxkit._tracked_report import (
     _ACCEPT_ESCAPE,
+    ADVISORY,
+    BLOCKING,
     BuildReport,
     _refuse_accept_side,
 )
@@ -123,6 +125,55 @@ def test_the_accept_side_REFUSES_a_lost_note_and_an_unaccepted_paragraph(
 
     assert str(refused.value).endswith(_ACCEPT_ESCAPE)
     _refuse_accept_side(report, "clean.docx", math_only=True)
+
+
+# --- which lists block, said once --------------------------------------------
+
+
+def _list_fields() -> set[str]:
+    return {name for name, value in vars(BuildReport()).items()
+            if isinstance(value, list)}
+
+
+def test_every_list_on_the_report_is_BLOCKING_or_ADVISORY_and_not_both():
+    """The table is the one place a reader learns which findings block.
+    A list added to the report without a side is the omission
+    `compare-probe` shipped with — five of seven read by hand."""
+    blocking = {field for field, _ in BLOCKING}
+
+    assert blocking | set(ADVISORY) == _list_fields()
+    assert not blocking & set(ADVISORY)
+    assert len(blocking) == len(BLOCKING)
+
+
+def test_whatever_the_accept_side_REFUSES_on_is_in_the_table():
+    """Asked of the refusal itself rather than copied from it: plant each
+    list alone and see whether `_refuse_accept_side` raises."""
+    refused = set()
+    for field in sorted(_list_fields() - {"phases"}):
+        report = BuildReport()
+        setattr(report, field, ["the finding"])
+        try:
+            _refuse_accept_side(report, "clean.docx")
+        except PackageError:
+            refused.add(field)
+
+    assert refused == {"accepted_losses", "orphan_notes", "unaccepted",
+                       "accepted_math"}
+    assert refused <= {field for field, _ in BLOCKING}
+
+
+def test_blocking_labels_every_item_of_every_blocking_list_IN_ORDER():
+    report = BuildReport()
+    assert report.blocking() == []
+
+    for field, _ in BLOCKING:
+        setattr(report, field, [f"{field} 1", f"{field} 2"])
+    report.dropped = ["advisory, never a finding"]
+
+    assert report.blocking() == [f"{label} {field} {n}"
+                                 for field, label in BLOCKING
+                                 for n in (1, 2)]
 
 
 def test_the_report_names_parts_from_the_BASELINE_only_when_there_are_some():
