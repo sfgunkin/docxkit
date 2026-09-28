@@ -126,11 +126,12 @@ class Survey:
     """A built batch is sitting in `build/`, promoted or not."""
     missing: bool = False
     """The config resolved and the file it names is not there."""
+    error: str = ""
     leftover: bool = False
     """The config is gone from a folder under the system TEMP directory:
     a scaffold a test or a throwaway script registered before the suite
-    isolated the registry, and whose folder was then cleaned away."""
-    error: str = ""
+    isolated the registry, and whose folder was then cleaned away. LAST,
+    so no field before it moved (the `api` gate named `error`)."""
 
     @property
     def name(self) -> str:
