@@ -14,6 +14,48 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `find.table_spans` still has both defects `_table_core._table_spans` fixed on 2026-09-17~~ — FIXED 28.09, `25af519`
+
+<!-- status: fixed -->
+
+Found by the 2026-09-28 review (§1). `find.table_spans` (`find.py:245-258`,
+exported from `docxkit.__all__`, called by `comments.py:360` and `:454`)
+matches the exact string `<w:tbl>` and closes on the first `</w:tbl>` after
+it. `_table_core._table_spans` documents and fixes both of those
+(`element_spans(xml, "tbl")`): a nested table and an opening tag carrying an
+attribute. Measured on a synthetic body (outer table holding an inner one,
+then a table whose tag carries `xmlns:w`):
+
+    find.table_spans  2 spans  [8:103] UNBALANCED   [27:103] (the inner)
+                                (the attributed table: absent)
+    _table_spans      2 spans  [8:169] outer, whole [169:287] attributed
+
+So an offset in the outer table after its inner one reads as "in no table",
+the inner table takes an index of its own and shifts every later one — the
+very thing `expect=` was written to catch, and it counts the wrong things.
+The regex registry passes it: it has no rule against an opening tag that
+admits NO attributes, nor against first-close pairing done with `str.index`.
+
+**Fix:** make `find.table_spans` call `element_spans(xml, "tbl")` (keep
+`expect=`); add the two registry rules so the third copy is refused.
+
+**Fixed in `25af519`.** `find.table_spans` reads through
+`element_spans(xml, "tbl")` (and `expect=` is kept). The corpus measure,
+3,051 packages: 42 answer differently, 40 of them nested-table
+questionnaires and notes and 2 generated files with xmlns on `w:tbl`. No
+manuscript a paper counts with `expect=` is among them (AFI, DSI).
+
+The third copy the registry would refuse was in `refstyle._header_rows`:
+a header row holding a nested table ended at the NESTED row's `</w:tr>`.
+It uses `matching_close` now, and an unterminated row still bounds at
+the end. `_table_core._TC_RE` opens `<w:tc\b[^>]*(?<!/)>`.
+
+Both registry rules went in: `test_no_pattern_opens_a_container_with_a_BARE_tag`
+and `test_no_read_pairs_a_NESTING_element_with_its_first_close`, each
+with its own instrument test. The first found eight `rPr`/`pPr` patterns
+that real packages defeat. They are filed as their own S2 and held in
+`BARE_OPENS_PENDING`.
+
 ### ~~S1 — `docxkit compare-probe` says "both views reproduce their documents" over an accept that loses anchors or orphans a note~~ — FIXED 28.09, `470f37c`
 
 <!-- status: fixed -->

@@ -48,30 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `find.table_spans` still has both defects `_table_core._table_spans` fixed on 2026-09-17
-<!-- status: open -->
-
-Found by the 2026-09-28 review (§1). `find.table_spans` (`find.py:245-258`,
-exported from `docxkit.__all__`, called by `comments.py:360` and `:454`)
-matches the exact string `<w:tbl>` and closes on the first `</w:tbl>` after
-it. `_table_core._table_spans` documents and fixes both of those
-(`element_spans(xml, "tbl")`): a nested table and an opening tag carrying an
-attribute. Measured on a synthetic body (outer table holding an inner one,
-then a table whose tag carries `xmlns:w`):
-
-    find.table_spans  2 spans  [8:103] UNBALANCED   [27:103] (the inner)
-                                (the attributed table: absent)
-    _table_spans      2 spans  [8:169] outer, whole [169:287] attributed
-
-So an offset in the outer table after its inner one reads as "in no table",
-the inner table takes an index of its own and shifts every later one — the
-very thing `expect=` was written to catch, and it counts the wrong things.
-The regex registry passes it: it has no rule against an opening tag that
-admits NO attributes, nor against first-close pairing done with `str.index`.
-
-**Fix:** make `find.table_spans` call `element_spans(xml, "tbl")` (keep
-`expect=`); add the two registry rules so the third copy is refused.
-
 ### S2 — `paper.toml` values are coerced, not validated: `render_math = "no"` is True
 <!-- status: open -->
 
@@ -86,6 +62,39 @@ mistyped value.
 
 **Fix:** check each value's type at load and raise `ProtocolError` naming
 `[section] key`, the value and the type wanted; a test per coercion.
+
+### S2 — eight patterns open `w:rPr` / `w:pPr` with no room for an attribute, and real packages declare xmlns on them
+<!-- status: open -->
+
+Found 2026-09-28 while fixing `find.table_spans`, by the registry rule that
+fix added (`test_no_pattern_opens_a_container_with_a_BARE_tag`). The
+registry's founding premise — no real document carries an attribute on these
+elements — was measured on 899 manuscripts (08-15). Over 3,051 corpus
+packages it no longer holds: `w:rPr` has 10 attributed opens in 3 packages,
+`w:pPr` 33 in 7, every one an `xmlns:w` declaration from a generator. A
+pattern reading `<w:rPr>` does not see those properties at all. The run then
+reads as unformatted, or its properties as absent, and a writer may add a
+second `w:rPr` beside the one it missed.
+
+The eight, all declared in `BARE_OPENS_PENDING` in
+`tests/test_regex_registry.py` until fixed: `_cite_repair._EMPTIED_RUN_RE`,
+`_compare_read.RPR_RE`, `_tracked_gates._NOTE_SPACE_RE`, `crossrefs._PPR_RE`
+and `_RPR_RE`, `edit._EMPTY_RPR_RE` and `_RPR_HEAD_RE`, `sections._PPR_RE`.
+`_NOTE_SPACE_RE` is also a key in `NOT_EXERCISED` by its SOURCE, so widening
+it moves that key too.
+
+Not gated, same family: five regexes pair a table element with its first
+close by `.*?` — `_table_core._TR_RE` and `_TC_RE` (re-exports for paper
+scripts; the package walks cells with `element_spans`), `hygiene`'s rows and
+cells in the numbered-equation shape test, and `probe._BLOCK_RE`, whose table
+end `_blocks` already replaces with `matching_close`. The new
+`test_no_read_pairs_a_NESTING_element_with_its_first_close` covers only the
+`str.index`/`find` form.
+
+**Fix:** widen each to `<w:rPr\b[^>]*(?<!/)>` (or read through
+`_xml.own_properties`), run `tools/writer_oracle.py` over the corpus for the
+writers among them, and remove each key from `BARE_OPENS_PENDING` as it
+goes. The registry test fails on a stale key, which enforces that.
 
 ### S4 — `tools/gates.py` says "the nine gates"; it runs twelve
 <!-- status: open -->
