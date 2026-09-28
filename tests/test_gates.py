@@ -189,10 +189,15 @@ def test_the_real_list_is_the_eleven_CONTRIBUTING_names():
     does: what the papers import, against the snapshot the `api` gate
     judges breakage by. It had been a tool nothing ran, and the
     snapshot was 50 pairs short when it was.
+
+    `golden` joined the same day: four frozen manuscripts end to end, as
+    counts and digests, since real manuscripts find the defects and no
+    test held one.
     """
     assert [name for name, _argv, _reads in gates.GATES] == [
         "ruff", "mypy", "pyright", "optionals", "pytest", "floors", "unrun",
-        "claims", "api", "deps", "sweep", "consumers", "committed"]
+        "claims", "api", "deps", "sweep", "consumers", "golden",
+        "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]
 

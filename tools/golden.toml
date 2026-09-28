@@ -1,0 +1,87 @@
+# Golden fingerprints of frozen manuscripts: written by
+# tools/golden.py --update, read by tools/golden.py. Counts
+# and SHA-256 prefixes only — this repository is public.
+
+[[golden]]
+path = "Papers/_Accepted/MDI_UZ/Documents/Archive/MDI_UZ_08182025_ML.docx"
+input = "4088f53b32bca405"
+[golden.fingerprint]
+accepted_document = "b32ce847e150abd8"
+bookmarks = 70
+captions = 10
+comments = 15
+equations = 161
+footnotes = 19
+links = 79
+lint = 1
+lint_findings = "2a3c24bb4ab1d619"
+markdown = "f1733d720f7f6f2b"
+paragraphs = 175
+revision_kinds = "e2c30497e38966e9"
+tables = 8
+text_final = "2a80aabf58ff44f6"
+text_original = "6365e243e16368a3"
+words = "a555526202b5ac6a"
+
+[[golden]]
+path = "Papers/_Accepted/CC_age_gap/Documents/Questioning the climate change age gap ed BK 7.22.24.docx"
+input = "0a2787746bd6e466"
+[golden.fingerprint]
+accepted_document = "681bd5157840c551"
+bookmarks = 138
+captions = 22
+comments = 0
+equations = 145
+footnotes = 15
+links = 144
+lint = 0
+lint_findings = "e3b0c44298fc1c14"
+markdown = "740093821c19e7a8"
+paragraphs = 310
+revision_kinds = "d408c6f71e1c8e8c"
+tables = 36
+text_final = "ed9488575f5927df"
+text_original = "13429c9868aa64f6"
+words = "3891b30bba8fbbf8"
+
+[[golden]]
+path = "Papers/_Accepted/Corruption_wages/Documents/Archive/Corruption_and_Wages_in_the_Public_Sector_clean.docx"
+input = "87bc4735a9949a52"
+[golden.fingerprint]
+accepted_document = "be78bf547b599f64"
+bookmarks = 236
+captions = 12
+comments = 0
+equations = 10
+footnotes = 24
+links = 241
+lint = 0
+lint_findings = "e3b0c44298fc1c14"
+markdown = "d6e5995e2b7052f7"
+paragraphs = 252
+revision_kinds = "44136fa355b3678a"
+tables = 10
+text_final = "69f21217cd2b8e0c"
+text_original = "69f21217cd2b8e0c"
+words = "9f21fcdfd13bc233"
+
+[[golden]]
+path = "Papers/_Accepted/Jobs Tenure/Documents/Tenure_in_Europe__ML.docx"
+input = "cfa2cd1551a2b3ef"
+[golden.fingerprint]
+accepted_document = "45a5e4ce7b0f08d8"
+bookmarks = 129
+captions = 24
+comments = 0
+equations = 8
+footnotes = 10
+links = 145
+lint = 0
+lint_findings = "e3b0c44298fc1c14"
+markdown = "7dfa24a058da6739"
+paragraphs = 1499
+revision_kinds = "44136fa355b3678a"
+tables = 11
+text_final = "11c9b215e868581b"
+text_original = "11c9b215e868581b"
+words = "59cb269b109cfb28"

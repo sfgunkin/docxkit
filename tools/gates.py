@@ -235,6 +235,11 @@ GATES: list[Gate] = [
     # (REVIEW_2026-09-28 §5).
     ("consumers", [sys.executable, "tools/consumers.py", "--check"],
      False),
+    # Four frozen manuscripts end to end, as counts and digests: what the
+    # package READS from each. Real manuscripts found more defects than
+    # every gate together and no test held one (REVIEW_2026-09-28 §6).
+    # Three seconds; the same corpus and the same skip.
+    ("golden", [sys.executable, "tools/golden.py"], False),
     # Last on purpose. It reports on HEAD rather than on the work
     # in hand, and a broken HEAD must not stand between the author
     # and the lint error they are actually here to fix.
