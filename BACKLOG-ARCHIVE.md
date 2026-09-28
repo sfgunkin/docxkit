@@ -14,6 +14,56 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — eight patterns open `w:rPr` / `w:pPr` with no room for an attribute, and real packages declare xmlns on them~~ — FIXED 28.09, `be2de16`
+
+<!-- status: fixed -->
+
+Found 2026-09-28 while fixing `find.table_spans`, by the registry rule that
+fix added (`test_no_pattern_opens_a_container_with_a_BARE_tag`). The
+registry's founding premise — no real document carries an attribute on these
+elements — was measured on 899 manuscripts (08-15). Over 3,051 corpus
+packages it no longer holds: `w:rPr` has 10 attributed opens in 3 packages,
+`w:pPr` 33 in 7, every one an `xmlns:w` declaration from a generator. A
+pattern reading `<w:rPr>` does not see those properties at all. The run then
+reads as unformatted, or its properties as absent, and a writer may add a
+second `w:rPr` beside the one it missed.
+
+The eight, all declared in `BARE_OPENS_PENDING` in
+`tests/test_regex_registry.py` until fixed: `_cite_repair._EMPTIED_RUN_RE`,
+`_compare_read.RPR_RE`, `_tracked_gates._NOTE_SPACE_RE`, `crossrefs._PPR_RE`
+and `_RPR_RE`, `edit._EMPTY_RPR_RE` and `_RPR_HEAD_RE`, `sections._PPR_RE`.
+`_NOTE_SPACE_RE` is also a key in `NOT_EXERCISED` by its SOURCE, so widening
+it moves that key too.
+
+Not gated, same family: five regexes pair a table element with its first
+close by `.*?` — `_table_core._TR_RE` and `_TC_RE` (re-exports for paper
+scripts; the package walks cells with `element_spans`), `hygiene`'s rows and
+cells in the numbered-equation shape test, and `probe._BLOCK_RE`, whose table
+end `_blocks` already replaces with `matching_close`. The new
+`test_no_read_pairs_a_NESTING_element_with_its_first_close` covers only the
+`str.index`/`find` form.
+
+**Fix:** widen each to `<w:rPr\b[^>]*(?<!/)>` (or read through
+`_xml.own_properties`), run `tools/writer_oracle.py` over the corpus for the
+writers among them, and remove each key from `BARE_OPENS_PENDING` as it
+goes. The registry test fails on a stale key, which enforces that.
+
+**Fixed in `be2de16`.** Five patterns were widened to
+`<w:rPr\b[^>]*(?<!/)>` / `<w:pPr\b…>`. The two in `crossrefs` had no
+reader and were deleted. `edit._RPR_HEAD_RE` no longer spells the tag it
+built only to read back. An old-vs-new oracle over every `word/*.xml`
+part of 3,051 packages differs on exactly the 10 attributed `rPr` and 33
+attributed `pPr` opens, with nothing unexplained. The head refactor
+agrees on 4,733,144 live `rPr` bodies. `tests/test_xmlns_properties.py`
+reads each shape spelled both ways. `BARE_OPENS_PENDING` is removed, so
+the bare-open rule has no exemptions.
+
+The five regex `.*?` table pairings named above stay as they are,
+because none is a live defect. `probe` already replaces its table end
+with `matching_close`. `hygiene`'s rows and cells shape test only ever
+sees a table that a nested one disqualifies anyway. `_TR_RE` and
+`_TC_RE` are re-exports that no package code reads.
+
 ### ~~S4 — `tools/gates.py` says "the nine gates"; it runs twelve~~ — FIXED 28.09, `e00f57d`
 
 <!-- status: fixed -->

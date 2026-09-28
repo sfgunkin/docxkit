@@ -48,39 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — eight patterns open `w:rPr` / `w:pPr` with no room for an attribute, and real packages declare xmlns on them
-<!-- status: open -->
-
-Found 2026-09-28 while fixing `find.table_spans`, by the registry rule that
-fix added (`test_no_pattern_opens_a_container_with_a_BARE_tag`). The
-registry's founding premise — no real document carries an attribute on these
-elements — was measured on 899 manuscripts (08-15). Over 3,051 corpus
-packages it no longer holds: `w:rPr` has 10 attributed opens in 3 packages,
-`w:pPr` 33 in 7, every one an `xmlns:w` declaration from a generator. A
-pattern reading `<w:rPr>` does not see those properties at all. The run then
-reads as unformatted, or its properties as absent, and a writer may add a
-second `w:rPr` beside the one it missed.
-
-The eight, all declared in `BARE_OPENS_PENDING` in
-`tests/test_regex_registry.py` until fixed: `_cite_repair._EMPTIED_RUN_RE`,
-`_compare_read.RPR_RE`, `_tracked_gates._NOTE_SPACE_RE`, `crossrefs._PPR_RE`
-and `_RPR_RE`, `edit._EMPTY_RPR_RE` and `_RPR_HEAD_RE`, `sections._PPR_RE`.
-`_NOTE_SPACE_RE` is also a key in `NOT_EXERCISED` by its SOURCE, so widening
-it moves that key too.
-
-Not gated, same family: five regexes pair a table element with its first
-close by `.*?` — `_table_core._TR_RE` and `_TC_RE` (re-exports for paper
-scripts; the package walks cells with `element_spans`), `hygiene`'s rows and
-cells in the numbered-equation shape test, and `probe._BLOCK_RE`, whose table
-end `_blocks` already replaces with `matching_close`. The new
-`test_no_read_pairs_a_NESTING_element_with_its_first_close` covers only the
-`str.index`/`find` form.
-
-**Fix:** widen each to `<w:rPr\b[^>]*(?<!/)>` (or read through
-`_xml.own_properties`), run `tools/writer_oracle.py` over the corpus for the
-writers among them, and remove each key from `BARE_OPENS_PENDING` as it
-goes. The registry test fails on a stale key, which enforces that.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
