@@ -493,6 +493,32 @@ def _say_regressions(folder: Path, say: Callable[[str], None]) -> None:
             f"over {n} runs — python tools/timings.py")
 
 
+def _record_library(say: Callable[[str], None]) -> None:
+    """Time the LIBRARY on its large manuscript and keep it with the rest.
+
+    Not a gate: `tools/perf.py` always exits 0, and a gate that cannot
+    fail is the thing the backlog ranks S3. It is a recorder — the
+    history was the gates' alone, so a change that made `para_slice`
+    twice as slow on a long paper showed up only as an author's wait
+    (REVIEW_2026-09-28 §6) — and `_say_regressions`, which reads every
+    kind of record in the folder, names what moved by the GATES' floor;
+    the library's own, finer floor is `perf.py`'s, so its "slower" lines
+    are passed on here and the rest of its report is not. After a GREEN
+    chain only, and never raising: ~4 s, and it must not decide
+    anything about the code.
+    """
+    try:
+        done = subprocess.run([sys.executable, "tools/perf.py"], cwd=ROOT,
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              check=False, env=_child_env())
+    except OSError:
+        return
+    for line in done.stdout.splitlines():
+        if line.startswith("slower"):
+            say(f"{line} — python tools/perf.py")
+
+
 def run(gates: Sequence[Gate] = tuple(GATES),
         say: Callable[[str], None] = print,
         timings: Path | None = None) -> int:
@@ -548,6 +574,12 @@ def run(gates: Sequence[Gate] = tuple(GATES),
         _say_behind(say)
         if timings is not None and entries:
             _record(entries, outcome, timings)
+            # the REAL chain only: `tests/test_gates.py` drives this with
+            # its own folder, and a green fake chain ran the real
+            # `perf.py` into the real `.timings` — 4 s and a junk record
+            # per test, found on the day it went in
+            if outcome == "green" and timings == TIMINGS:
+                _record_library(say)
             _say_regressions(timings, say)
         # The report is scratch between two gates, and a chain that
         # stops early still wrote it. `missing_ok` because most runs of

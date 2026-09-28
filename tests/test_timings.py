@@ -529,3 +529,17 @@ def test_a_run_that_says_NOTHING_about_load_is_kept():
                                       "status": "ok"}]} for _ in range(4)]
 
     assert T.regressions(runs), "an empty extra is not a load record"
+
+
+def test_a_caller_with_FINER_steps_passes_its_own_floor(tmp_path):
+    """Two seconds is the gates' floor, and it would never name a library
+    call that went from 0.4 s to 0.8 s — `tools/perf.py` passes 50 ms.
+    The default is unchanged, so the gate chain reads as it did."""
+    for i, s in enumerate((0.4, 0.4, 0.4, 0.8, 0.8, 0.8)):
+        _run(tmp_path, f"2026092{i}-000000", locate=s)
+    runs = timings.read(tmp_path)
+
+    assert timings.regressions(runs) == []
+    ((delta, name, was, now, n),) = timings.regressions(runs, floor=0.05)
+    assert (name, was, now, n) == ("locate", 0.4, 0.8, 6)
+    assert delta == pytest.approx(0.4)

@@ -133,7 +133,8 @@ def by_step(runs: list[Run]) -> dict[str, list[float]]:
 
 
 def regressions(
-        runs: list[Run]) -> list[tuple[float, str, float, float, int]]:
+        runs: list[Run], *, floor: float = FLOOR_SECONDS,
+) -> list[tuple[float, str, float, float, int]]:
     """Steps whose recent median stands clear of their earlier one.
 
     `(delta, name, was, now, samples)`, biggest first.
@@ -185,6 +186,6 @@ def regressions(
         cut = max(3, len(seconds) // 3)
         recent, before = seconds[-cut:], seconds[:-cut]
         now, was = statistics.median(recent), statistics.median(before)
-        if now >= was * SLOWER and now - was >= FLOOR_SECONDS:
+        if now >= was * SLOWER and now - was >= floor:
             found.append((now - was, name, was, now, len(seconds)))
     return sorted(found, reverse=True)
