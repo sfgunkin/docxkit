@@ -620,6 +620,12 @@ def mt(tmp_path, monkeypatch):
     # listing and its lstat, and the child failed collecting (2026-09-13).
     # It starts beside its test file instead.
     monkeypatch.chdir(tmp_path)
+    # And without the five plugins autoload brings in, as a sweep runs it
+    # (`mutation_session._env`). That is the environment under test, and
+    # it halves the child's start: measured 2026-09-28, launch to the
+    # test's first line, 0.63 s -> 0.27 s idle and 0.97 s -> 0.43 s
+    # (median) under a concurrent `-n 8` suite.
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
     return mutant_tests
 
 
@@ -635,8 +641,10 @@ def test_the_wrapper_ENDS_a_harness_that_runs_past_its_deadline(
                     "    time.sleep(120)\n", encoding="utf-8")
     start = time.monotonic()
 
+    # Past the child's start (worst 1.30 s under load, measured
+    # 2026-09-28), so what is ended is a pytest inside the hanging test.
     code = mt.run(["-q", "-p", "no:cacheprovider", str(hang)],
-                  deadline=start + 3)
+                  deadline=start + 2)
 
     assert code == 1
     assert time.monotonic() - start < 30
@@ -731,8 +739,13 @@ def test_what_the_harness_STARTED_ends_with_a_run_past_its_deadline(
         f"    pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))\n"
         "    time.sleep(120)\n", encoding="utf-8")
 
+    # The deadline has to outlast the child reaching the line that writes
+    # the pid, or there is no grandchild to ask about. Measured
+    # 2026-09-28, launch to that line: 0.63 s idle (autoload on), worst
+    # 1.30 s of 24 under a concurrent `-n 8` suite. 3 s is over twice the
+    # worst; it was 8, which this test then spent in full on every run.
     assert mt.run(["-q", "-p", "no:cacheprovider", str(spawns)],
-                  deadline=time.monotonic() + 8) == 1
+                  deadline=time.monotonic() + 3) == 1
     assert not ms._alive(int(pid_file.read_text(encoding="utf-8")))
 
 
@@ -813,7 +826,10 @@ def test_a_REAL_grandchild_dies_with_the_chunk(tmp_path, monkeypatch):
     monkeypatch.setattr(ms, "WORKTREE", tmp_path)
     monkeypatch.setattr(ms, "_env", os.environ.copy)
 
-    ms._bounded([sys.executable, "-c", script], 5)
+    # Long enough for the script to spawn and write the pid: measured
+    # 2026-09-28 at 0.05 s idle, worst 0.33 s under a concurrent `-n 8`
+    # suite. `_bounded` takes whole seconds, so 2 — it was 5.
+    ms._bounded([sys.executable, "-c", script], 2)
 
     assert not ms._alive(int(pid_file.read_text(encoding="utf-8")))
 
