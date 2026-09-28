@@ -48,21 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S2 — `paper.toml` values are coerced, not validated: `render_math = "no"` is True
-<!-- status: open -->
-
-Found by the 2026-09-28 review (§2). `revision/_config.load_paper`
-(`:266-277`) passes each raw TOML value through `tuple()`, `int()`, `float()`
-or `bool()`. `bool("no")` and `bool("false")` are True, so `render_math =
-"no"` and `timings = "false"` silently leave the feature ON; `commands =
-"pytest -q"` (a string where a list is meant) becomes ten gates, one per
-character; `rescue_keep = "three"` raises a bare ValueError out of every
-`revision` command. `doctor` catches a MISSPELT key (`KNOWN`), not a
-mistyped value.
-
-**Fix:** check each value's type at load and raise `ProtocolError` naming
-`[section] key`, the value and the type wanted; a test per coercion.
-
 ### S2 — eight patterns open `w:rPr` / `w:pPr` with no room for an attribute, and real packages declare xmlns on them
 <!-- status: open -->
 
@@ -95,14 +80,6 @@ end `_blocks` already replaces with `matching_close`. The new
 `_xml.own_properties`), run `tools/writer_oracle.py` over the corpus for the
 writers among them, and remove each key from `BARE_OPENS_PENDING` as it
 goes. The registry test fails on a stale key, which enforces that.
-
-### S4 — `tools/gates.py` says "the nine gates"; it runs twelve
-<!-- status: open -->
-
-Found by the 2026-09-28 review (§4). The module docstring (`:2`, `:24`)
-still counts nine. Prose drift in the file that polices drift.
-
-**Fix:** state the count from `GATES` rather than in words, or drop it.
 
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->

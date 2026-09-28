@@ -14,6 +14,43 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `tools/gates.py` says "the nine gates"; it runs twelve~~ — FIXED 28.09, `e00f57d`
+
+<!-- status: fixed -->
+
+Found by the 2026-09-28 review (§4). The module docstring (`:2`, `:24`)
+still counts nine. Prose drift in the file that polices drift.
+
+**Fix:** state the count from `GATES` rather than in words, or drop it.
+
+**Fixed in `e00f57d`.** The docstring names `GATES` as the list instead of a count; `tests/test_gates.py` (ten) and `tools/timings.py` (nine) carried the same drift and were fixed with it.
+
+### ~~S2 — `paper.toml` values are coerced, not validated: `render_math = "no"` is True~~ — FIXED 28.09, `36c102c`
+
+<!-- status: fixed -->
+
+Found by the 2026-09-28 review (§2). `revision/_config.load_paper`
+(`:266-277`) passes each raw TOML value through `tuple()`, `int()`, `float()`
+or `bool()`. `bool("no")` and `bool("false")` are True, so `render_math =
+"no"` and `timings = "false"` silently leave the feature ON; `commands =
+"pytest -q"` (a string where a list is meant) becomes ten gates, one per
+character; `rescue_keep = "three"` raises a bare ValueError out of every
+`revision` command. `doctor` catches a MISSPELT key (`KNOWN`), not a
+mistyped value.
+
+**Fix:** check each value's type at load and raise `ProtocolError` naming
+`[section] key`, the value and the type wanted; a test per coercion.
+
+**Fixed in `36c102c`.** `_config.KINDS` gives the type of each of the 13
+`KNOWN` keys, and a test holds the two tables together. `_read` refuses a
+value that is present and of another type with `ProtocolError`, naming
+`[section] key`, the value, and what it must be. For a boolean key it
+adds that TOML writes these unquoted. A `bool` is refused where an int
+is wanted, and every item of a list must be a string. Thirteen wrong
+shapes are tested, each refused naming its key; the old code let eleven
+through and crashed on two (ValueError, a pathlib TypeError). All nine
+registered papers' `revision/paper.toml` load unchanged.
+
 ### ~~S2 — `find.table_spans` still has both defects `_table_core._table_spans` fixed on 2026-09-17~~ — FIXED 28.09, `25af519`
 
 <!-- status: fixed -->
