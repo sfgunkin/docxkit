@@ -48,6 +48,78 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S1 — `docxkit compare-probe` says "both views reproduce their documents" over an accept that loses anchors or orphans a note
+<!-- status: open -->
+
+Found by the 2026-09-28 review (`REVIEW_2026-09-28.md` §2). `cmd_compare_probe`
+(`cli.py:1352-1377`) builds with every gate reporting rather than refusing,
+then assembles its findings from five report fields — `unrejectable`,
+`unaccepted`, `structure_diff`, `accepted_math`, `lint` — and prints the
+success verdict with exit 0 when that list is empty. `tracked.build` fills
+two more on EVERY build, whatever the flags (`tracked.py:755-765`):
+`accepted_losses` (a bookmark or hyperlink the accepted view drops) and
+`orphan_notes` (a note with words and no marker after accept-all). The build
+REFUSES on both (`_tracked_report._refuse_accept_side`, `:101-121`); the probe
+never reads them. So the command that exists to ask "what would Compare make
+of this edit" answers "nothing wrong" over the two losses the build treats as
+fatal — the "report that reads as success" shape.
+
+The cause is structural, not a typo: `BuildReport` has 17 list fields and no
+`ok`/`blocking`; which lists block is written only in `_refuse_accept_side`,
+and every consumer re-derives it (see the review's §2 for the general fix).
+
+**Fix:** list `accepted_losses` and `orphan_notes` in the probe's findings;
+better, give `BuildReport` a `blocking()` that `_refuse_accept_side` and the
+probe both read, and a test that plants each blocking list and asserts the
+probe exits 1.
+
+### S2 — `find.table_spans` still has both defects `_table_core._table_spans` fixed on 2026-09-17
+<!-- status: open -->
+
+Found by the 2026-09-28 review (§1). `find.table_spans` (`find.py:245-258`,
+exported from `docxkit.__all__`, called by `comments.py:360` and `:454`)
+matches the exact string `<w:tbl>` and closes on the first `</w:tbl>` after
+it. `_table_core._table_spans` documents and fixes both of those
+(`element_spans(xml, "tbl")`): a nested table and an opening tag carrying an
+attribute. Measured on a synthetic body (outer table holding an inner one,
+then a table whose tag carries `xmlns:w`):
+
+    find.table_spans  2 spans  [8:103] UNBALANCED   [27:103] (the inner)
+                                (the attributed table: absent)
+    _table_spans      2 spans  [8:169] outer, whole [169:287] attributed
+
+So an offset in the outer table after its inner one reads as "in no table",
+the inner table takes an index of its own and shifts every later one — the
+very thing `expect=` was written to catch, and it counts the wrong things.
+The regex registry passes it: it has no rule against an opening tag that
+admits NO attributes, nor against first-close pairing done with `str.index`.
+
+**Fix:** make `find.table_spans` call `element_spans(xml, "tbl")` (keep
+`expect=`); add the two registry rules so the third copy is refused.
+
+### S2 — `paper.toml` values are coerced, not validated: `render_math = "no"` is True
+<!-- status: open -->
+
+Found by the 2026-09-28 review (§2). `revision/_config.load_paper`
+(`:266-277`) passes each raw TOML value through `tuple()`, `int()`, `float()`
+or `bool()`. `bool("no")` and `bool("false")` are True, so `render_math =
+"no"` and `timings = "false"` silently leave the feature ON; `commands =
+"pytest -q"` (a string where a list is meant) becomes ten gates, one per
+character; `rescue_keep = "three"` raises a bare ValueError out of every
+`revision` command. `doctor` catches a MISSPELT key (`KNOWN`), not a
+mistyped value.
+
+**Fix:** check each value's type at load and raise `ProtocolError` naming
+`[section] key`, the value and the type wanted; a test per coercion.
+
+### S4 — `tools/gates.py` says "the nine gates"; it runs twelve
+<!-- status: open -->
+
+Found by the 2026-09-28 review (§4). The module docstring (`:2`, `:24`)
+still counts nine. Prose drift in the file that polices drift.
+
+**Fix:** state the count from `GATES` rather than in words, or drop it.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
