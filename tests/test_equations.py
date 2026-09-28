@@ -1,6 +1,8 @@
 """Equations: the LaTeX pipeline, harvesting, and formula fingerprints."""
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 from conftest import document, para, run
 
@@ -702,22 +704,35 @@ def test_normalisation_reaches_a_fence_inside_a_fraction():
     assert tokens(out) == "−−"
 
 
-def _needs_word_and_latex() -> None:
-    pytest.importorskip("latex2mathml")
+def _why_no_pipeline() -> str | None:
+    """Why LaTeX -> OMML cannot run here, or None when it can."""
+    if importlib.util.find_spec("latex2mathml") is None:
+        return "latex2mathml is not installed"
     try:
         find_mml2omml_xsl()
     except PackageError as exc:
-        pytest.skip(f"Word not installed here: {exc}")
+        return f"Word not installed here: {exc}"
+    return None
 
 
+#: Decided at COLLECTION, not inside the test. A skip raised from the
+#: body leaves the test "started" in the coverage record with its
+#: assertions unexecuted, and `unrun` reads that as a test asserting
+#: nothing — which is what the first Windows CI run reported for all
+#: three of these, on a runner with no Word (2026-09-29).
+_NO_PIPELINE = _why_no_pipeline()
+needs_word_and_latex = pytest.mark.skipif(_NO_PIPELINE is not None,
+                                          reason=_NO_PIPELINE or "")
+
+
+@needs_word_and_latex
 def test_the_whole_pipeline_produces_a_drawable_overline():
-    _needs_word_and_latex()
     out = latex_to_omml(r"\overline{v}_i")
     assert "―" not in out and 'm:val="̅"' in out
 
 
+@needs_word_and_latex
 def test_the_whole_pipeline_keeps_a_parenthesised_sign():
-    _needs_word_and_latex()
     assert tokens(latex_to_omml(r"(-1)")) == "−1"
     assert "<m:e/>" not in latex_to_omml(r"\frac{(-)}{(-)}")
 
@@ -754,14 +769,14 @@ def test_clone_composes_with_harvest():
     assert clone(out) == out                        # and again
 
 
+@needs_word_and_latex
 def test_clone_still_accepts_a_freshly_built_equation():
     """latex_to_omml already declared its namespaces; that path must not
     regress while the harvest one is fixed."""
-    # `_needs_word_and_latex`, not `if find_mml2omml_xsl() is None`: the
+    # `_why_no_pipeline`, not `if find_mml2omml_xsl() is None`: the
     # finder RAISES when the XSL is absent and never returns None, so
     # that guard could not fire — the fourth layer of the red CI of
     # 2026-09-03, reached once the `latex` extra was installed there.
-    _needs_word_and_latex()
     built = latex_to_omml(r"\lambda")
     assert "<m:oMath" in clone(built)
 
