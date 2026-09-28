@@ -129,15 +129,20 @@ Install what they need with `pip install -e .[dev]` — hypothesis is in
 there because the property suite imports it at module level, so a clone
 without it does not lose those tests quietly, it fails at collection.
 
-**What CI installs is `.[dev,pdf,latex]`, and the difference is a gate.**
+**What CI installs is `.[dev,pdf,latex,word]`, on a Windows runner, and
+the difference is a gate.** Windows since 2026-09-29 — the toolkit is
+never used on Linux — which put the `word` extra in (pywin32 installs
+there; Word does not, and its 8 tests stay deselected). What follows
+predates that and still holds for an install without an extra.
 pymupdf is not Windows-only and `tests/test_pages.py` builds its PDFs
 with pymupdf itself, so those 15 tests run anywhere — and `pages.py`'s
 85 % floor assumes they did. latex2mathml joined it on 2026-09-03 for
 the same reason: `test_equations_typography.py` calls `latex_to_omml`
 in 22 tests, and from the day it landed (08-24) until then every CI run
 was red on a checkout that did not have the extra — twelve in a row,
-unread. The `word` extra stays out, which makes its import ABSENT
-rather than untyped on a clean checkout: that needs an entry in the mypy
+unread. An install without the `word` extra still exists — any clone
+that skips it — and there its import is ABSENT rather than untyped: that
+needs an entry in the mypy
 override list AND a `pyright: ignore` on the import line, and a test
 that needs an optional extra says so with `pytest.importorskip` —
 latex2mathml taught this in August, pymupdf repeated it three days

@@ -7,7 +7,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Windows, since 2026-09-29: the toolkit is developed and used on
+    # Windows only, and never on Linux (the maintainer's call). The Linux
+    # runner's red was, more than once, a claim about Linux alone — a
+    # coverage floor on lines only pywin32 reaches (09-11), a sweep root
+    # split on `:` — and it did not run the Windows-only tests at all
+    # (job objects, `taskkill` trees), which now run here.
+    runs-on: windows-latest
     strategy:
       matrix:
         # 3.14 only, since 2026-09-12: the one interpreter the toolkit is
@@ -34,9 +40,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        # No `word` extra: pywin32 is Windows-only, and every gate below
-        # runs without Word. The 8 tests that drive it are marked and
-        # deselected by default.
+        # The `word` extra too, as on the machine the package is used on:
+        # pywin32 installs on a Windows runner, and Word itself does not —
+        # the 8 tests that drive Word are marked and deselected by default.
         #
         # `pdf` IS installed. It is not Windows-only and the tests that
         # need it build their PDFs with pymupdf itself, so all 15 run
@@ -51,7 +57,7 @@ jobs:
         # skip where the extra is absent; installing it HERE is what keeps
         # them tests rather than skips.
         id: install
-        run: pip install -e ".[dev,pdf,latex]"
+        run: pip install -e ".[dev,pdf,latex,word]"
       # Every gate runs even when an earlier GATE is red — `!cancelled()`
       # rather than `always()`, so a cancelled run still stops. The job
       # still FAILS on any red step; what changes is that the report is
@@ -134,14 +140,14 @@ jobs:
     # Its OWN job, not a step in the matrix above: it is 39 runs of the
     # suite, and running that on three interpreters would treble the bill
     # for an answer that does not depend on the version.
-    runs-on: ubuntu-latest
+    runs-on: windows-latest             # as `test`, and for its reason
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
       - id: install
-        run: pip install -e ".[dev,pdf,latex]"
+        run: pip install -e ".[dev,pdf,latex,word]"
       - name: Curated mutations
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python tools/mutate.py
