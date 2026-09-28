@@ -537,6 +537,68 @@ def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
     assert sum(len(keys) for keys in KNOWN.values()) == 13
 
 
+@pytest.mark.parametrize(("section", "line", "wanted"), [
+    ("verify", 'render_math = "no"', "true or false"),
+    ("paper", 'timings = "false"', "true or false"),
+    ("verify", 'commands = "pytest -q"', "a list of strings"),
+    ("verify", 'commands = ["pytest -q", 3]', "a list of strings"),
+    ("batch", 'rescue_keep = "three"', "a whole number"),
+    ("batch", "rescue_keep = true", "a whole number"),
+    ("batch", "rescue_keep = 2.5", "a whole number"),
+    ("batch", 'word_deadline = "600"', "a number of seconds"),
+    ("batch", "word_deadline = false", "a number of seconds"),
+    ("batch", 'carry = "customXml"', "a list of strings"),
+    ("batch", "author = 7", "a string"),
+    ("attic", "path = 5", "a string"),
+    ("doctor", "skip = [1]", "a list of strings"),
+], ids=lambda v: v if " = " in str(v) else None)
+def test_a_value_of_the_wrong_TYPE_is_refused_naming_the_key(
+        tmp_path, section, line, wanted):
+    """Coerced, `render_math = "no"` was `bool("no")` — True — and a
+    string of commands became one gate per character. Refused at load
+    now, with the section, the key, the value and what it must be."""
+    folder = tmp_path / "proj" / "revision"
+    folder.mkdir(parents=True)
+    (folder / "paper.toml").write_text(f"[{section}]\n{line}\n",
+                                       encoding="utf-8")
+    key = line.partition(" = ")[0]
+
+    with pytest.raises(ProtocolError) as refused:
+        revision.load_paper(tmp_path / "proj")
+
+    said = str(refused.value)
+    assert f"[{section}] {key} = " in said
+    assert said.endswith(f"must be {wanted}") or f"must be {wanted};" in said
+    assert ("TOML writes these unquoted" in said) == (wanted
+                                                      == "true or false")
+
+
+def test_every_KNOWN_key_has_a_KIND_and_nothing_else_does():
+    from docxkit.revision._config import KINDS, KNOWN
+
+    assert set(KINDS) == {(section, key) for section, keys in KNOWN.items()
+                          for key in keys}
+
+
+def test_a_value_of_the_right_type_comes_back_AS_WRITTEN(tmp_path):
+    """The other side of the refusal: an int deadline is a number of
+    seconds, false turns the switch off, and lists become tuples."""
+    folder = tmp_path / "proj" / "revision"
+    folder.mkdir(parents=True)
+    (folder / "paper.toml").write_text(
+        "[paper]\ntimings = false\n[batch]\nrescue_keep = 2\n"
+        "word_deadline = 90\ncarry = [\"customXml\"]\n"
+        "[verify]\ncommands = [\"pytest -q\"]\nrender_math = false\n",
+        encoding="utf-8")
+
+    paper = revision.load_paper(tmp_path / "proj")
+
+    assert paper.timings is False and paper.render_math is False
+    assert paper.rescue_keep == 2 and paper.word_deadline == 90.0
+    assert paper.carry == ("customXml",)
+    assert paper.gates == ("pytest -q",)
+
+
 def test_word_deadline_is_read_from_batch_and_defaults_to_TEN_MINUTES(
         tmp_path, project):
     assert project.word_deadline == 600.0

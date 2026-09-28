@@ -205,14 +205,58 @@ KNOWN: dict[str, frozenset[str]] = {
 }
 
 
+#: What each :data:`KNOWN` key must BE, and the words for it. The values
+#: were coerced — `bool()`, `int()`, `tuple()` — and a coercion is not a
+#: check: `render_math = "no"` is `bool("no")`, True, so the switch a
+#: paper wrote to turn a feature OFF left it on in silence; `commands =
+#: "pytest -q"` became nine gates, one per character; `rescue_keep =
+#: "three"` raised a bare ValueError out of every `revision` command
+#: (REVIEW_2026-09-28 §2). `doctor` sees a misspelt KEY; this sees a
+#: mistyped VALUE, at load, naming both.
+_STR = ((str,), "a string")
+_STRS = ((list,), "a list of strings")
+KINDS: dict[tuple[str, str], tuple[tuple[type, ...], str]] = {
+    ("paper", "name"): _STR,
+    ("paper", "language"): _STR,
+    ("paper", "working"): _STR,
+    ("paper", "prev"): _STR,
+    ("paper", "timings"): ((bool,), "true or false"),
+    ("batch", "author"): _STR,
+    ("batch", "rescue_keep"): ((int,), "a whole number"),
+    ("batch", "carry"): _STRS,
+    ("batch", "word_deadline"): ((int, float), "a number of seconds"),
+    ("verify", "commands"): _STRS,
+    ("verify", "render_math"): ((bool,), "true or false"),
+    ("attic", "path"): _STR,
+    ("doctor", "skip"): _STRS,
+}
+
+
 def _read(data: dict[str, Any], section: str, key: str,
           default: Any) -> Any:
-    """``[section] key``, or `default` — through :data:`KNOWN`, always."""
+    """``[section] key``, or `default` — through :data:`KNOWN`, always,
+    and a value that is there must be of its :data:`KINDS` type."""
     if key not in KNOWN.get(section, frozenset()):
         raise KeyError(f"[{section}] {key} is read but not declared in "
                        f"KNOWN — add it there, so `doctor` can see a typo "
                        f"of it")
-    return data.get(section, {}).get(key, default)
+    table = data.get(section, {})
+    if key not in table:
+        return default
+    value = table[key]
+    types, wanted = KINDS[section, key]
+    if isinstance(value, list):
+        fits = types == (list,) and all(isinstance(i, str) for i in value)
+    else:
+        # `bool` is an `int` to isinstance, so `rescue_keep = true` would
+        # pass as 1 — refused unless a bool is what is wanted
+        fits = (isinstance(value, types)
+                and (bool in types or not isinstance(value, bool)))
+    if not fits:
+        raise ProtocolError(
+            f"paper.toml: [{section}] {key} = {value!r} must be {wanted}"
+            + ("; TOML writes these unquoted" if bool in types else ""))
+    return value
 
 
 def find_config(start: str | Path | None = None) -> Path:
@@ -268,11 +312,12 @@ def load_paper(start: str | Path | None = None) -> Paper:
         language=_read(data, "paper", "language", "en"),
         gates=tuple(_read(data, "verify", "commands", ())),
         attic=Path(attic) if attic else None,
-        rescue_keep=int(_read(data, "batch", "rescue_keep", RESCUE_KEEP)),
+        # checked, not coerced — `_read` refuses a value of another type
+        rescue_keep=_read(data, "batch", "rescue_keep", RESCUE_KEEP),
         word_deadline=float(_read(data, "batch", "word_deadline",
                                   WORD_DEADLINE)),
         doctor_skip=tuple(_read(data, "doctor", "skip", _DOCTOR_SPENT)),
         carry=tuple(_read(data, "batch", "carry", ())),
-        render_math=bool(_read(data, "verify", "render_math", True)),
-        timings=bool(_read(data, "paper", "timings", True)),
+        render_math=_read(data, "verify", "render_math", True),
+        timings=_read(data, "paper", "timings", True),
     )
