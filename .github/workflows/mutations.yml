@@ -1,0 +1,38 @@
+name: Mutations
+
+# The CURATED mutations. Every one re-introduces a defect this package has
+# really shipped, or removes a guard that exists because one did, and every
+# one of them must turn the suite red.
+#
+# Wired into ci.yml 2026-08-27, having never been wired to anything: its
+# report had been true and unread — three anchors had drifted, it said so
+# and exited 1 on every run, and `39/39 mutations caught` at the top of the
+# output is the number an eye lands on. A drifted anchor is a curated
+# defect whose regression cover has silently gone.
+#
+# Its own workflow since 2026-09-29, nightly and on demand, no longer on
+# every push. It is one full-suite run per curated mutation, median 14.9
+# min, and it was 72 % of all CI minutes (2,860 of 3,982 over 200 runs,
+# 08-29..09-27) while 122 of those runs changed nothing under `src/`
+# (REVIEW_2026-09-28 §4). What it answers does not change between two
+# pushes of prose, and a curated defect coming back is still seen within
+# the day. Run it by hand (`gh workflow run mutations.yml`) before a
+# release.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  mutations:
+    runs-on: windows-latest             # as ci.yml's `test`, and for its reason
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - id: install
+        run: pip install -e ".[dev,pdf,latex,word]"
+      - name: Curated mutations
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python tools/mutate.py

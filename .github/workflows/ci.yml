@@ -1,9 +1,16 @@
 name: CI
 
 on:
+  # Not for a push that changes only prose nothing reads. 29 docs-only
+  # pushes cost 583 minutes in a month (REVIEW_2026-09-28 §4). Only
+  # these two: README.md is gated against the parser, and BACKLOG.md is
+  # read by `backlog_status` / `backlog_refs` and their tests, so a push
+  # to either still runs everything.
   push:
     branches: [master, main]
+    paths-ignore: ["CONTRIBUTING.md", "REVIEW_*.md"]
   pull_request:
+    paths-ignore: ["CONTRIBUTING.md", "REVIEW_*.md"]
 
 jobs:
   test:
@@ -80,18 +87,36 @@ jobs:
       - name: Pyright
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m pyright
+      # Two seconds, about the source alone: can this `| None` ever BE
+      # None. See `tools/gates.py`, where it has run since 2026-09-18.
+      - name: Optionals
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python tools/optional_audit.py --callers tests
+      # ONE run of the suite, under coverage, as the local chain has done
+      # since 2026-09-18: `floors` and `unrun` read the report it writes.
+      # CI ran it twice — this step bare (77 s) and then
+      # `coverage_floor.py` running the whole suite again under the
+      # tracer (73 s) — for the same tests over the same code.
       - name: Pytest
         id: pytest
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: python -m pytest -q
-      # The floors are the exception, and gated on PYTEST rather than on
-      # the install: `tools/coverage_floor.py` runs the whole suite again
-      # in a subprocess to collect coverage, so on a red suite it costs a
-      # second full run to report every module under its floor — a wall
-      # of failures on top of the one that matters.
+        run: >-
+          python -m pytest -q -n auto --durations=25 --durations-min=0.05
+          --cov=docxkit --cov=tests --cov-report=json:coverage.json
+      # The two readers of that report are gated on PYTEST: on a red
+      # suite the report is partial and both would bury the one failure
+      # that matters under a wall of their own.
       - name: Coverage floors
         if: ${{ !cancelled() && steps.pytest.outcome == 'success' }}
-        run: python tools/coverage_floor.py
+        run: python tools/coverage_floor.py --from-json coverage.json
+      - name: Unrun assertions
+        if: ${{ !cancelled() && steps.pytest.outcome == 'success' }}
+        run: python tools/unrun_assertions.py --from-json coverage.json
+      # A claim in `tools/equivalents.toml` that no longer names its line
+      # — what a fix leaves behind when it forgets to delete one.
+      - name: Claims
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python tools/verify_equivalents.py --anchors
       # The public surface, against the last release. It needs the whole
       # history — the checkout above already fetches it for the two gates
       # that read commits, and this one checks a TAG out into a worktree —
@@ -124,30 +149,3 @@ jobs:
       - name: Dependencies
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m deptry src
-
-  mutations:
-    # The CURATED mutations. Every one re-introduces a defect this package
-    # has really shipped, or removes a guard that exists because one did,
-    # and every one of them must turn the suite red.
-    #
-    # Wired here 2026-08-27, having never been wired to anything. It is in
-    # neither this file nor the local gate chain, so its report has been
-    # true and unread: three anchors had drifted, it said so and exited 1
-    # on every run, and `39/39 mutations caught` at the top of the output
-    # is the number an eye lands on. A drifted anchor is a curated defect
-    # whose regression cover has silently gone.
-    #
-    # Its OWN job, not a step in the matrix above: it is 39 runs of the
-    # suite, and running that on three interpreters would treble the bill
-    # for an answer that does not depend on the version.
-    runs-on: windows-latest             # as `test`, and for its reason
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - id: install
-        run: pip install -e ".[dev,pdf,latex,word]"
-      - name: Curated mutations
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: python tools/mutate.py
