@@ -26,7 +26,13 @@ from hypothesis import strategies as st
 
 from docxkit import crossrefs, hygiene, tables
 from docxkit._xml import _PPR_RANK, escape, visible_text
-from docxkit.edit import preserve_space
+from docxkit.edit import (
+    italicize,
+    preserve_space,
+    replace_in_para,
+    set_run_properties,
+)
+from docxkit.find import edit_para
 from docxkit.revisions import W as _W
 
 SETTINGS = settings(max_examples=60, deadline=None,
@@ -277,3 +283,89 @@ def test_the_order_CHECK_can_fail():
 
     with pytest.raises(AssertionError, match="out of order: jc, pStyle"):
         ppr_order_holds(bad)
+
+
+# --- the spellings the CORPUS showed (2026-09-29) ------------------------
+#
+# Measured over 3,051 packages for REVIEW_2026-09-28: `w:rPr` / `w:pPr`
+# declaring a namespace (3 and 7 packages), ` />` closing a property,
+# attributes in the other order, empty `<w:p/>` and `<w:t/>`, bookmarks
+# between runs, a comment in the body. The generator above spells none
+# of them, so none of its properties had seen them. These blocks come
+# from exactly those measurements, and two properties are asked of them:
+# the three above, and the byte invariant — an edit to ONE paragraph
+# leaves every byte outside it as it was (tests/test_byte_invariant.py
+# pins one document; this asks every generated one).
+
+_XMLNS_W = ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+
+_HOSTILE = [
+    "<w:p/>",
+    "<w:p><w:r><w:t/></w:r></w:p>",
+    f"<w:p><w:pPr{_XMLNS_W}><w:jc w:val=\"both\" /></w:pPr>"
+    "<w:r><w:t>Justified.</w:t></w:r></w:p>",
+    f"<w:p><w:r><w:rPr{_XMLNS_W}><w:b /></w:rPr><w:t>Bold</w:t></w:r></w:p>",
+    '<w:p w14:textId="0000AAAA" w14:paraId="0000AAAA">'
+    '<w:bookmarkStart w:name="b1" w:id="5"/><w:r><w:t>Marked</w:t></w:r>'
+    '<w:bookmarkEnd w:id="5"/></w:p>',
+    "<!-- a producer's comment -->",
+]
+
+
+@st.composite
+def hostile_document_xml(draw: st.DrawFn) -> str:
+    """`document_xml`'s blocks with the corpus's spellings among them."""
+    blocks = draw(st.lists(st.one_of(paragraph_xml(), table_xml(),
+                                     st.sampled_from(_HOSTILE)),
+                           min_size=1, max_size=7))
+    return f"<w:document {NS}><w:body>" + "".join(blocks) \
+        + "</w:body></w:document>"
+
+
+@pytest.mark.parametrize("name,fn", TEXT_PRESERVING,
+                         ids=[n for n, _ in TEXT_PRESERVING])
+@SETTINGS
+@given(xml=hostile_document_xml())
+def test_the_three_invariants_hold_over_the_CORPUS_spellings(name, fn, xml):
+    out = fn(xml)
+    parses(out)
+    assert visible_text(out) == visible_text(xml)
+    assert fn(out) == out
+
+
+_TARGET = ('<w:p><w:r><w:t xml:space="preserve">The QQMARKQQ word </w:t>'
+           "</w:r><w:r><w:rPr><w:i/></w:rPr><w:t>here.</w:t></w:r></w:p>")
+
+_ONE_PARAGRAPH_WRITERS = [
+    ("replace_in_para", lambda p: replace_in_para(p, "QQMARKQQ", "chosen")),
+    ("italicize", lambda p: italicize(p, "QQMARKQQ")),
+    ("set_run_properties",
+     lambda p: set_run_properties(p, {"sz": '<w:sz w:val="20"/>'})[0]),
+]
+
+
+@pytest.mark.parametrize("name,write", _ONE_PARAGRAPH_WRITERS,
+                         ids=[n for n, _ in _ONE_PARAGRAPH_WRITERS])
+@SETTINGS
+@given(before=st.lists(st.sampled_from(_HOSTILE), max_size=4),
+       after=st.lists(st.sampled_from(_HOSTILE), max_size=4))
+def test_an_edit_to_ONE_paragraph_leaves_every_byte_around_it(
+        name, write, before, after):
+    head = f"<w:document {NS}><w:body>" + "".join(before)
+    tail = "".join(after) + "</w:body></w:document>"
+    xml = head + _TARGET + tail
+
+    out = edit_para(xml, "QQMARKQQ", write)
+
+    assert out != xml
+    assert out.startswith(head) and out.endswith(tail), name
+    parses(out)
+
+
+def test_the_hostile_blocks_PARSE_and_are_what_they_claim():
+    """The generator is part of the check (as above): each block parses
+    inside a document, and the namespace ones really declare one."""
+    for block in _HOSTILE:
+        parses(f"<w:document {NS}><w:body>{block}</w:body></w:document>")
+    assert sum(_XMLNS_W in block for block in _HOSTILE) == 2
+    assert any(" />" in block for block in _HOSTILE)
