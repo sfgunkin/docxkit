@@ -893,6 +893,44 @@ def test_expect_fails_on_TOO_MANY_tables_as_well_as_too_few():
         table_spans(xml, expect=1)
 
 
+def test_a_NESTED_table_rides_inside_its_outer_one_and_takes_no_index():
+    """Closed on the first `</w:tbl>`, the outer table ended at the inner
+    one's close and the inner table took an index of its own, so an
+    offset in the outer table after it read as in no table and every
+    later index shifted (REVIEW_2026-09-28 §1)."""
+    nested = table(row("outer head")).replace(
+        "</w:tc>", table(row("inner")) + "</w:tc>", 1)
+    nested = nested.replace("</w:tr>", "</w:tr>" + row("outer tail"), 1)
+    xml = document(nested + para(run("between")) + table(row("last")))
+    outer = xml.index("<w:tbl>")
+    inner = xml.index("<w:tbl>", outer + 1)
+
+    spans = table_spans(xml, expect=2)
+
+    first = xml[spans[0][0]:spans[0][1]]
+    assert spans[0][0] == outer
+    assert first.endswith("</w:tbl>") and "outer tail" in first
+    assert "between" not in first
+    assert table_index_at(spans, inner) == 0
+    assert table_index_at(spans, xml.index("outer tail")) == 0
+    assert table_index_at(spans, xml.index("last")) == 1
+
+
+def test_a_table_whose_tag_carries_ATTRIBUTES_is_a_table():
+    """A generated manuscript declares namespaces on `w:tbl` — 22 tables
+    in 2 of 3,051 corpus packages. Found as the exact string `<w:tbl>`,
+    none of them was a table and `expect=` counted 0 of 13."""
+    tagged = table(row("cell")).replace(
+        "<w:tbl>", '<w:tbl xmlns:w="http://schemas.openxmlformats.org/'
+                   'wordprocessingml/2006/main">', 1)
+    xml = document(table(row("plain")) + tagged)
+
+    spans = table_spans(xml, expect=2)
+
+    assert table_index_at(spans, xml.index("cell")) == 1
+    assert xml[spans[1][0]:spans[1][1]].endswith("</w:tbl>")
+
+
 def test_table_index_at_counts_the_tables_FIRST_offset_as_inside_it():
     """`s <= pos`, and callers pass the span start straight back in."""
     xml = document(table(row("a")) + para(run("between"))

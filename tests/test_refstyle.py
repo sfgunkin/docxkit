@@ -3035,6 +3035,24 @@ def test_a_NESTED_table_still_gets_a_header_of_its_own():
     assert len(spans) == 2, spans
 
 
+def test_the_parents_heads_AFTER_a_nested_table_are_still_its_header():
+    """The row's end was the first `</w:tr>` after it opened — which, with
+    a table nested in the first row, is the NESTED table's. The parent's
+    later column heads then fell outside every header span, and
+    `Base 1990` there was read as a citation (REVIEW_2026-09-28 §1)."""
+    from docxkit.refstyle import _header_rows
+
+    doc = (f"<w:body><w:tbl><w:tr><w:tc>{_tbl('inner head')}</w:tc>"
+           f"<w:tc>Base 1990</w:tc></w:tr>"
+           f"<w:tr><w:tc>body</w:tc></w:tr></w:tbl></w:body>")
+
+    spans = _header_rows(doc)
+
+    parent = doc[spans[0][0]:spans[0][1]]
+    assert "Base 1990" in parent, parent
+    assert "body" not in parent, "and it stops at the PARENT's row end"
+
+
 # ---- a comma between the journal and its volume (author, 2026-09-26)
 
 NO_JOURNAL_COMMA = ("Drummond, C., and B. Fischhoff. (2017). \u201cIndividuals"

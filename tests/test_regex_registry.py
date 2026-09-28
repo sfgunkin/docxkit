@@ -1992,3 +1992,128 @@ def test_the_name_END_detector_both_ways_round():
     assert _endless_names("<w:t", pattern=False) == {"w:t"}
     assert not _endless_names("<w:t>", pattern=False)
     assert not _endless_names("<w:ins ", pattern=False)
+
+
+# --- a container OPENED with no room for an attribute -------------------
+#
+# `find.table_spans` found tables as the exact pattern `<w:tbl>` and
+# closed each on the first `</w:tbl>` after it (`str.index`), eleven days
+# after `_table_core._table_spans` had fixed both halves of that in its
+# twin (REVIEW_2026-09-28 §1). Neither gate above could see it: a bare
+# `<w:tbl>` reads no EMPTY element as an opening tag, and first-close
+# pairing done with `str.index` is no pattern at all. The module
+# docstring's premise — that no real document carries an attribute on
+# these elements — was measured on 899 manuscripts and no longer holds
+# over 3,051 packages (2026-09-28): `w:tbl` 22 opens in 2 packages,
+# `w:rPr` 10 in 3, `w:pPr` 33 in 7, every one a namespace declaration
+# from a generator. `w:tc`: 0 of 1,750,286.
+
+_BARE_OPEN = re.compile(r"<(?:w|m):(" + "|".join(CONTAINERS) + r")>")
+
+
+def _bare_opens(probe: str) -> set[str]:
+    """The containers `probe` opens with a tag that admits no attribute."""
+    return {m.group(1) for m in _BARE_OPEN.finditer(_hole_masked(probe))}
+
+
+#: Bare opens known and NOT yet widened, each naming its BACKLOG entry.
+#: Not an exemption: nothing here is right as written, and the entry
+#: leaves this table when it is fixed — the test below fails on an entry
+#: whose pattern no longer needs it. Keyed by (module, pattern NAME),
+#: because some of these sources are keys in the tables above too.
+BARE_OPENS_PENDING: dict[tuple[str, str], str] = dict.fromkeys(
+    (("_cite_repair.py", "_EMPTIED_RUN_RE"),
+     ("_compare_read.py", "RPR_RE"),
+     ("_tracked_gates.py", "_NOTE_SPACE_RE"),
+     ("crossrefs.py", "_PPR_RE"),
+     ("crossrefs.py", "_RPR_RE"),
+     ("edit.py", "_EMPTY_RPR_RE"),
+     ("edit.py", "_RPR_HEAD_RE"),
+     ("sections.py", "_PPR_RE")),
+    "OPEN in BACKLOG.md (S2, 2026-09-28): opens w:rPr / w:pPr with no room "
+    "for an attribute; 3 and 7 corpus packages declare xmlns on them")
+
+
+def test_no_pattern_opens_a_container_with_a_BARE_tag():
+    found = {(module, name): sorted(_bare_opens(probe))
+             for module, name, _source, probe, _line in ALL_PATTERNS
+             if _bare_opens(probe)}
+    new = {key: tags for key, tags in found.items()
+           if key not in BARE_OPENS_PENDING}
+    assert not new, (
+        "these open a container as `<w:tag>`, which no producer that "
+        "declares a namespace on it (or adds any attribute) will match — "
+        "the element is simply not there. Read it `<w:tag\\b[^>]*(?<!/)>`, "
+        "or through `_xml.element_spans`:\n  " + "\n  ".join(
+            f"{module}: {name} opens {tags}"
+            for (module, name), tags in sorted(new.items())))
+    stale = set(BARE_OPENS_PENDING) - set(found)
+    assert not stale, f"widened: take these out of BARE_OPENS_PENDING {stale}"
+    for key, reason in BARE_OPENS_PENDING.items():
+        assert "BACKLOG" in reason, (key, reason)
+
+
+def test_the_bare_open_detector_both_ways_round():
+    """The gate's own instrument."""
+    for source in (r"<w:tbl>", r"<w:tc>.*?</w:tc>", r"(<w:rPr>)?<w:t\b",
+                   r"<m:r>"):
+        assert _bare_opens(source), source
+    for source in (r"<w:tbl\b[^>]*(?<!/)>", r"</w:tbl>", r"<w:t>",
+                   r"<w:tc\b[^>]*?(/?)>", r"<w:tblGrid>", r"<w:rPr\s*/>"):
+        assert not _bare_opens(source), source
+
+
+#: The elements that NEST: a table sits inside a cell, so the first
+#: close after an open tag is not that element's close. (A paragraph or a
+#: run nests only through a text box; that is a different question.)
+_NESTING = ("tbl", "tr", "tc")
+
+
+def _first_close_pairs(module: str) -> list[tuple[str, int]]:
+    """(description, line) for each `.index` / `.find` of a NESTING
+    element's close tag from an offset — pairing an open with the first
+    close after it."""
+    folder = _Folder.of(module)
+    closes = {f"</w:{tag}>" for tag in _NESTING}
+    out = []
+    for node in ast.walk(folder.tree):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("index", "find")
+                and len(node.args) >= 2):
+            for text in _literal_texts(folder, node.args[0]):
+                if text in closes:
+                    out.append((f"{node.func.attr}({text}, ...)",
+                                node.lineno))
+    return out
+
+
+def test_no_read_pairs_a_NESTING_element_with_its_first_close():
+    found = [f"{module}:{line} {what}" for module in _TREES
+             for what, line in _first_close_pairs(module)]
+    assert found == [], (
+        "these pair an open tag with the first close after it, which for "
+        "a table holding another is the NESTED one's. Use "
+        "`_xml.matching_close` or `_xml.element_spans`:\n  "
+        + "\n  ".join(found))
+
+
+def test_the_first_close_detector_both_ways_round():
+    """The gate's own instrument."""
+    _TREES["_probe_.py"] = ast.parse(
+        'CLOSE = "</w:tbl>"\n'
+        "def f(xml, s, tag):\n"
+        '    a = xml.index("</w:tbl>", s)\n'
+        '    b = xml.find("</w:tr>", s + 1)\n'
+        "    c = xml.index(CLOSE, s)\n"
+        '    d = xml.find("</w:p>", s)\n'
+        '    e = xml.index("</w:tc>")\n'
+        '    g = xml.index(f"</w:{tag}>", s)\n')
+    _Folder._cache.pop("_probe_.py", None)
+    try:
+        found = sorted(what for what, _ in _first_close_pairs("_probe_.py"))
+    finally:
+        del _TREES["_probe_.py"]
+        _Folder._cache.pop("_probe_.py", None)
+    assert found == ["find(</w:tr>, ...)", "index(</w:tbl>, ...)",
+                     "index(</w:tbl>, ...)"]

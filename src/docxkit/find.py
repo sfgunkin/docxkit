@@ -243,16 +243,23 @@ def para_text_at(xml: str, pos: int) -> str:
 
 
 def table_spans(xml: str, expect: int | None = None) -> list[tuple[int, int]]:
-    """(start, end) of every ``<w:tbl>`` in body order.
+    """(start, end) of every TOP-LEVEL ``w:tbl`` in body order.
 
     Index into this to identify WHICH manuscript table an offset falls in.
     `expect` asserts the count, so a table added or lost upstream fails
     loudly here instead of silently shifting every later index.
+
+    Through `element_spans`, as `_table_core._table_spans` has read since
+    2026-09-17. Found as the exact string `<w:tbl>` and closed on the
+    first `</w:tbl>` after it, a table holding another ended at the
+    NESTED one's close and the nested table took an index of its own,
+    shifting every later one; and a table whose tag carried a namespace
+    declaration was no table at all. Measured over 3,051 corpus packages
+    (2026-09-28): 42 answered differently — 98 tables against a true 20
+    in one questionnaire, 0 against 13 in a generated results file — and
+    no manuscript a caller counts with `expect=` was among them.
     """
-    out = []
-    for m in re.finditer(r"<w:tbl>", xml):
-        s = m.start()
-        out.append((s, xml.index("</w:tbl>", s) + len("</w:tbl>")))
+    out = element_spans(xml, "tbl")
     if expect is not None and len(out) != expect:
         raise AnchorError(f"{len(out)} tables, expected {expect}")
     return out
@@ -302,9 +309,8 @@ def body_elements(xml: str) -> list[tuple[str, int, int]]:
     paragraphs too — the word-count and markdown passes both need this
     and must not disagree about it.
 
-    Spans are depth-counted (unlike :func:`table_spans`, kept as-is for
-    offset lookups), so a nested table rides along inside its outer one
-    rather than truncating it.
+    Spans are depth-counted, as :func:`table_spans`' are, so a nested
+    table rides along inside its outer one rather than truncating it.
     """
     # `element_spans` reads the table's open tag in any spelling; found as
     # the exact string `<w:tbl>`, a table whose tag carried a namespace

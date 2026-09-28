@@ -37,7 +37,13 @@ from .find import TABLE_LABELS, caption_re
 from .revisions import FINAL, _has_revisions, rows_in_view, view_transform
 
 _TR_RE = re.compile(r"<w:tr\b[^>]*(?<!/)>.*?</w:tr>", re.DOTALL)
-_TC_RE = re.compile(r"<w:tc>.*?</w:tc>", re.DOTALL)
+# the open tag in any spelling, and never the empty `<w:tc/>`: no cell in
+# 3,051 corpus packages carries an attribute, but `w:tbl`, `w:rPr` and
+# `w:pPr` do (xmlns declarations), and the registry now refuses a bare
+# container open. A NESTED table still closes this on the inner cell —
+# it is a re-export for paper scripts; the package walks cells with
+# `element_spans`.
+_TC_RE = re.compile(r"<w:tc\b[^>]*(?<!/)>.*?</w:tc>", re.DOTALL)
 # a merged cell: structure, which is why it lives here and
 # not with the width fitting that also consumes it. `\s*/>`: other
 # producers close it ` />` (5,183 in 8 of 2,954 corpus packages), and read

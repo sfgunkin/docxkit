@@ -41,6 +41,7 @@ from ._xml import (
     Parts,
     internal_links,
     live_properties,
+    matching_close,
     own_properties,
     set_para_property,
     visible_text,
@@ -1222,8 +1223,15 @@ def _header_rows(doc: str) -> list[tuple[int, int]]:
         after = next((at for at in opens if at > tbl.start()), len(doc))
         if tr is None or tr.start() >= after:
             continue
-        end = doc.find("</w:tr>", tr.end())
-        spans.append((tr.start(), end if end != -1 else len(doc)))
+        # Depth-counted: a nested table opens INSIDE this row, and the
+        # first `</w:tr>` after it is the NESTED table's, so the parent's
+        # column heads after the nested table read as body and a
+        # `Base 1990` there as a citation (REVIEW_2026-09-28 §1).
+        try:
+            end = matching_close(doc, tr.end(), "tr")
+        except ValueError:          # a row that never closes: to the end
+            end = len(doc)
+        spans.append((tr.start(), end))
     return spans
 
 
