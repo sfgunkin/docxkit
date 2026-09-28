@@ -57,6 +57,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from docxkit.console import utf8_stdout
+
 ROOT = Path(__file__).resolve().parents[1]
 
 #: A coverage JSON, as `--cov-report=json` writes it: per file, the
@@ -174,8 +176,6 @@ def _measure() -> Report:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from docxkit.console import utf8_stdout
-
     # A finding quotes the test's source, em dashes and all, and a
     # Windows runner's console is cp1252: the first CI run of this tool
     # died printing its first finding (2026-09-29), so what it found was
