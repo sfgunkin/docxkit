@@ -33,6 +33,15 @@ put a paper's vocabulary into docxkit, it is on the wrong side of the seam.
   a build keeps "succeeding" while dropping an edit.
 - **Run `preserve_space` as the last build step.** An unprotected edge
   space in a bare `<w:t>` is eaten by Word and ships in the deliverable.
+- **An edit changes the bytes it edits, and no others — inside a part as
+  well as across parts.** This is the reason the package works on
+  strings, and the stronger half of it went unwritten until 2026-09-28:
+  Word's Compare and a round-to-round diff see exactly the edit, and the
+  offsets the papers splice at do not move. A parse-and-serialise round
+  trip loses it (` />` becomes `/>`, attributes reorder, an empty paired
+  element collapses). `tests/test_byte_invariant.py` holds every writer
+  to it over a document spelled the ways other producers spell it; any
+  change to how the package reads or writes markup must keep it green.
 
 ## A modified table is hundreds of revisions
 
