@@ -6,6 +6,7 @@ is part of :mod:`docxkit.revision`; import from there.
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -96,7 +97,8 @@ def scan(root: str | Path, *, depth: int = 4) -> list[Path]:
 #: The verdicts a row can carry, WORST first: the order a survey lists
 #: them in, and the scale its exit code is read off. Ordered by what it
 #: costs to ignore — a proposal is somebody waiting on the author.
-VERDICTS = ("unreadable", "missing", "PROPOSAL", "stale", "truth")
+VERDICTS = ("unreadable", "missing", "PROPOSAL", "stale", "truth",
+            "leftover")
 
 #: What each verdict exits with, on the scale one paper's `status`
 #: uses: 1 a proposal, 4 a settled paper whose baseline has drifted, 0
@@ -106,7 +108,7 @@ VERDICTS = ("unreadable", "missing", "PROPOSAL", "stale", "truth")
 #: lie. Not monotone in `VERDICTS`, which is why the survey takes the
 #: worst ROW rather than the largest number.
 _EXIT = {"unreadable": 2, "missing": 2, "PROPOSAL": 1, "stale": 4,
-         "truth": 0}
+         "truth": 0, "leftover": 0}
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,10 @@ class Survey:
     """A built batch is sitting in `build/`, promoted or not."""
     missing: bool = False
     """The config resolved and the file it names is not there."""
+    leftover: bool = False
+    """The config is gone from a folder under the system TEMP directory:
+    a scaffold a test or a throwaway script registered before the suite
+    isolated the registry, and whose folder was then cleaned away."""
     error: str = ""
 
     @property
@@ -149,6 +155,8 @@ class Survey:
         could not parse, the other is a manuscript that is not where the
         paper says it is — a moved file, or a drive not mounted.
         """
+        if self.leftover:
+            return "leftover"
         if self.missing:
             return "missing"
         if self.error or self.paper is None or self.state is None:
@@ -180,6 +188,23 @@ def survey_exit_code(rows: Sequence[Survey]) -> int:
     return worst.exit_code if worst is not None else 0
 
 
+def _vanished_scaffold(config: Path) -> bool:
+    """Gone, and from under the system TEMP directory.
+
+    Told apart from `missing` (REVIEW_2026-09-28, housekeeping): 22 of
+    this machine's 32 registry rows were test scaffolds in `%TEMP%`
+    whose folders had been cleaned away, each a "missing" row exiting 2,
+    so `status --all` exited 2 for ever over nothing anyone could act
+    on. A config gone from anywhere ELSE is still `missing` — a drive
+    that is not mounted is not a paper retired.
+    """
+    if config.exists():
+        return False
+    temp = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
+    here = os.path.normcase(os.path.realpath(config))
+    return here.startswith(temp + os.sep)
+
+
 def survey(configs: Sequence[str | Path] | None = None) -> list[Survey]:
     """Every registered paper's state, in one pass.
 
@@ -197,6 +222,10 @@ def survey(configs: Sequence[str | Path] | None = None) -> list[Survey]:
     out: list[Survey] = []
     for entry in (configs if configs is not None else registered()):
         config = Path(entry)
+        if _vanished_scaffold(config):
+            out.append(Survey(config=config, paper=None, state=None,
+                              leftover=True))
+            continue
         try:
             paper = load_paper(config)
         except Exception as exc:

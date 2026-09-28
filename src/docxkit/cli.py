@@ -1556,9 +1556,18 @@ def cmd_revision_survey(args: argparse.Namespace) -> int:
         return 0
     rows = survey(configs)
     rows.sort(key=lambda r: (r.rank, r.name.lower()))
+    left = [row for row in rows if row.verdict == "leftover"]
     for row in rows:
-        print(_survey_row(row))
-    print(f"\n  {len(rows)} paper(s) · {registry_path()}")
+        if row.verdict != "leftover":
+            print(_survey_row(row))
+    papers = len(rows) - len(left)
+    print(f"\n  {papers} paper(s) · {registry_path()}")
+    if left:
+        # One line, not a row each: a scaffold a test left in TEMP is
+        # nothing to act on, and 22 of them buried the nine real rows.
+        print(f"  {len(left)} leftover(s): registered from TEMP, folder "
+              f"since cleaned away — delete their lines from the "
+              f"registry, or leave them; they change no exit code.")
     return survey_exit_code(rows)
 
 

@@ -59,11 +59,18 @@ def test_a_registry_entry_can_be_COMMENTED_OUT(tmp_path):
     assert registered() == []
 
 
-def test_a_path_that_no_longer_EXISTS_is_kept_not_pruned(tmp_path):
+def test_a_path_that_no_longer_EXISTS_is_kept_not_pruned(tmp_path,
+                                                          monkeypatch):
     """A project on a drive that happens to be disconnected is not a
     project that has been retired. Dropping it here is how a paper stops
     being watched without anyone deciding that it should — the survey
-    reports it instead."""
+    reports it instead.
+
+    `tmp_path` is itself under the system TEMP directory, where a gone
+    config is a `leftover` (below); TEMP is moved aside so this path
+    stands for the unplugged drive it means."""
+    monkeypatch.setattr(revision._registry.tempfile, "gettempdir",
+                        lambda: str(tmp_path / "TEMP"))
     gone = tmp_path / "unplugged" / "revision" / "paper.toml"
     registry_path().parent.mkdir(parents=True, exist_ok=True)
     registry_path().write_text(f"{gone}\n", encoding="utf-8")
@@ -397,6 +404,9 @@ def _row(verdict: str, root) -> revision.Survey:
     if verdict == "unreadable":
         return revision.Survey(config=Path("x/revision/paper.toml"),
                                paper=None, state=None, error="TOMLDecodeError")
+    if verdict == "leftover":
+        (found,) = survey([root / "tmpgone" / "revision" / "paper.toml"])
+        return found
     paper = paper_at(root / verdict)
     if verdict == "missing":
         return revision.Survey(config=paper.config, paper=paper, state=None,
@@ -413,14 +423,14 @@ def test_every_verdict_has_a_rank_and_the_order_is_worst_first(tmp_path):
     rows = [_row(v, tmp_path) for v in revision._registry.VERDICTS]
     assert [r.verdict for r in rows] == list(revision._registry.VERDICTS), (
         "the fixture does not produce the verdict it names")
-    assert [r.rank for r in rows] == [0, 1, 2, 3, 4]
+    assert [r.rank for r in rows] == [0, 1, 2, 3, 4, 5]
 
 
 def test_each_row_exits_on_the_scale_ONE_paper_uses(tmp_path):
     codes = {v: _row(v, tmp_path).exit_code
              for v in revision._registry.VERDICTS}
     assert codes == {"unreadable": 2, "missing": 2, "PROPOSAL": 1,
-                     "stale": 4, "truth": 0}
+                     "stale": 4, "truth": 0, "leftover": 0}
 
 
 def test_the_survey_exits_with_its_WORST_row_not_its_largest_code(tmp_path):
@@ -596,3 +606,32 @@ def test_a_survey_row_quotes_120_characters_of_an_ERROR_on_both_branches(
     assert [len(r.error) for r in rows] == [120, 120], rows
     assert all(r.error.startswith("OSError: the drive went away")
                for r in rows)
+
+
+def test_a_config_GONE_from_TEMP_is_a_leftover_that_changes_no_exit_code(
+        tmp_path, monkeypatch, capsys):
+    """22 of one machine's 32 registry rows were test scaffolds in TEMP
+    whose folders had been cleaned away, each a `missing` row exiting 2,
+    so `status --all` exited 2 for ever over nothing to act on
+    (REVIEW_2026-09-28). They are kept in the registry — it is the
+    person's list — and told apart: one line, exit 0."""
+    from test_cli import run_cli
+
+    temp = tmp_path / "TEMP"
+    monkeypatch.setattr(revision._registry.tempfile, "gettempdir",
+                        lambda: str(temp))
+    live = paper_at(tmp_path / "live")
+    gone = temp / "tmpab12cd" / "P" / "revision" / "paper.toml"
+    registry_path().parent.mkdir(parents=True, exist_ok=True)
+    registry_path().write_text(f"{live.config}\n{gone}\n", encoding="utf-8")
+
+    rows = survey()
+
+    assert [r.verdict for r in rows] == ["truth", "leftover"]
+    assert revision.survey_exit_code(rows) == 0
+    assert registered() == [live.config, gone], "kept, not pruned"
+    code, _ = run_cli(monkeypatch, "revision", "status", "--all")
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "1 paper(s)" in out and "1 leftover(s)" in out
+    assert str(gone) not in out, "one line, not a row each"
