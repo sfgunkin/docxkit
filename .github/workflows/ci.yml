@@ -37,7 +37,7 @@ jobs:
         # `test (3.14)`.
         python-version: ["3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The whole history, because two gates READ it and both go
           # blind without it. `tools/backlog_refs.py` walks back to the
@@ -50,7 +50,7 @@ jobs:
           # named it. Worse on a pull request, where checkout resolves
           # `refs/pull/N/merge` and a merge commit lists no files at all.
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
