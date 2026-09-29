@@ -133,3 +133,31 @@ def test_keep_saves_the_redline_where_it_is_told(monkeypatch, tmp_path,
     assert code == 0
     assert kept.is_file()
     assert f"redline kept: {kept}" in capsys.readouterr().out
+
+
+def test_the_probe_builds_REPORTING_offline_and_as_asked_about_maths(
+        monkeypatch, tmp_path):
+    """The build the probe asks for: every refusal off, Word not opened
+    for a verify, FORCE (the copies are scratch), and the maths resolved
+    unless `--keep-math` — pinned by the call itself, since a fake Word
+    answers the same whichever of these is flipped (sweep, 2026-09-29)."""
+    seen: dict[str, object] = {}
+
+    def build(original, clean, out, *_args, **kwargs):
+        seen.update(kwargs)
+        with zipfile.ZipFile(out, "w") as z:
+            z.writestr("word/document.xml", clean_document())
+        return BuildReport()
+
+    monkeypatch.setattr(tracked, "build", build)
+    orig, cln, _ = _pair(tmp_path, clean_document(), clean_document())
+
+    run_cli(monkeypatch, "compare-probe", str(orig), str(cln))
+    assert {k: seen[k] for k in ("verify_in_word", "reject_check",
+                                 "accept_check", "lint_check", "force",
+                                 "resolve_math")} == {
+        "verify_in_word": False, "reject_check": False, "accept_check": False,
+        "lint_check": False, "force": True, "resolve_math": True}
+
+    run_cli(monkeypatch, "compare-probe", str(orig), str(cln), "--keep-math")
+    assert seen["resolve_math"] is False

@@ -51,6 +51,17 @@ def test_a_clean_save_writes_protects_edge_spaces_and_backs_up(tmp_path):
     assert '<w:t xml:space="preserve"> spaced </w:t>' in written
 
 
+def test_the_report_is_a_VALUE(tmp_path):
+    """A caller keeps what a save answered; one that could be assigned to
+    lets whatever runs next rewrite it (`frozen=False` survived the first
+    sweep, 2026-09-29: `test_value_types` holds it, outside this harness)."""
+    path = _paper(tmp_path)
+    report = save.save(path, package.read_parts(path))
+
+    with pytest.raises(AttributeError):
+        report.written = False  # type: ignore[misc]
+
+
 def test_no_backup_is_made_unless_one_is_ASKED_for(tmp_path):
     path = _paper(tmp_path)
 

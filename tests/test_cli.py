@@ -2534,7 +2534,12 @@ def test_allow_existing_lint_WRITES_and_still_refuses_a_NEW_finding(
     parts = package.read_parts(target)
 
     assert _save(target, parts, "kept", allow_existing=True) is True
-    assert "written; previous version kept at" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "written; previous version kept at" in out
+    # and it SAYS the findings were left, by count (sweep, 2026-09-29: the
+    # line was never asserted, and `if not report.existing` survived)
+    assert ("1 finding(s) above were already in paper.docx and are left "
+            "as they are (--allow-existing-lint)") in out
 
     parts = package.read_parts(target)
     parts["word/document.xml"] = (

@@ -551,6 +551,11 @@ def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
     ("batch", "author = 7", "a string"),
     ("attic", "path = 5", "a string"),
     ("doctor", "skip = [1]", "a list of strings"),
+    # a LIST where a scalar is wanted: the list branch must ask whether
+    # a list is what the key takes, not only whether its items are
+    # strings (three survivors of the first sweep, 2026-09-29)
+    ("batch", 'rescue_keep = ["3"]', "a whole number"),
+    ("verify", "render_math = []", "true or false"),
 ], ids=lambda v: v if " = " in str(v) else None)
 def test_a_value_of_the_wrong_TYPE_is_refused_naming_the_key(
         tmp_path, section, line, wanted):

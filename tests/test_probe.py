@@ -594,3 +594,36 @@ def test_the_old_anchors_spelling_still_works(tmp_path):
 
     assert old.phrases == new.phrases
     assert old.anchors == old.phrases
+
+
+def test_the_THIRD_paragraph_and_later_are_read_against_their_own_tags(
+        tmp_path):
+    """`opens[at_open - 1]` and `closes[at_close - 1]` — the tag BEFORE
+    the bookmark. Spelled `at >> 1` they agree for the first two
+    paragraphs (1 >> 1 == 0, 2 >> 1 == 1) and part at the third, and no
+    test had a bookmark past the second (mutation sweep, 2026-09-29)."""
+    def p(text: str, inner: str = "") -> str:
+        return f"<w:p>{inner}<w:r><w:t>{text}</w:t></w:r></w:p>"
+
+    held = ('<w:bookmarkStart w:id="1" w:name="in_third"/>'
+            '<w:bookmarkEnd w:id="1"/>')
+    between = ('<w:bookmarkStart w:id="2" w:name="after_third"/>'
+               '<w:bookmarkEnd w:id="2"/>')
+    body = p("One.") + p("Two.") + p("Three.", held) + between + p("Four.")
+
+    rep = probe(make_docx(tmp_path, body))
+
+    assert rep.bookmarks == [("in_third", "nested"),
+                             ("after_third", "body")]
+
+
+def test_blocks_reads_a_fragment_that_BEGINS_with_a_paragraph():
+    """`pos = 0`: a body handed over as a fragment starts with its first
+    block, and a walk starting one character in lost it."""
+    from docxkit.probe import _blocks
+
+    frag = ("<w:p><w:r><w:t>First.</w:t></w:r></w:p>"
+            "<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>")
+
+    assert _blocks(frag) == [frag[:frag.index("<w:tbl>")],
+                             frag[frag.index("<w:tbl>"):]]

@@ -69,7 +69,11 @@ HARNESS: dict[str, list[str]] = {
                          "tests/test_width_model.py"],
     "cli.py": ["tests/test_cli.py", "tests/test_cli_guards.py",
                "tests/test_cli_revision.py",
-               "tests/test_cli_compare_probe.py"],
+               "tests/test_cli_compare_probe.py",
+               # `revision status --all`'s printing is tested through
+               # run_cli there: measured 2026-09-29, it kills 9 of the
+               # module's 21 sweep survivors and the four above none
+               "tests/test_revision_survey.py"],
     "comments.py": ["tests/test_comments.py", "tests/test_comment_threads.py",
                     "tests/test_classify_match.py",
                     "tests/test_parts_gaps.py",
@@ -367,7 +371,15 @@ HARNESS: dict[str, list[str]] = {
                        "tests/test_table_measure_divide.py",
                        "tests/test_table_spacing.py",
                        "tests/test_rows_preserved.py",
-                       "tests/test_value_types.py"],
+                       "tests/test_value_types.py",
+                       # measured 2026-09-29: it alone kills 37 of the
+                       # module's 178 sweep survivors (decimal_mark,
+                       # _comma_role), which the harness above kills
+                       # none of; test_tables_decimals kills 0 and stays
+                       # out
+                       "tests/test_table_decimal_comma.py",
+                       # the 2026-09-29 survivor round's tests
+                       "tests/test_table_core_edges.py"],
     "_xml.py": ["tests/test_xml_primitives.py", "tests/test_span_membership.py",
                 "tests/test_field_walk.py", "tests/test_find_edit.py",
                 "tests/test_locate_spans.py"],
@@ -466,10 +478,15 @@ HARNESS: dict[str, list[str]] = {
     "sections.py": ["tests/test_sections.py", "tests/test_sections_edges.py"],
     "snapshot.py": ["tests/test_snapshot.py"],
     "probe.py": ["tests/test_probe.py", "tests/test_probe_report.py"],
+    # test_locator_separator: measured 2026-09-29, it alone kills 52 of
+    # the module's 128 sweep survivors (the issue-to-pages locator audit)
+    # and the files below kill none of them
     "refstyle.py": ["tests/test_refstyle.py",
                     "tests/test_refstyle_layout.py",
                     "tests/test_paragraph_numbering.py",
-                    "tests/test_value_types.py"],
+                    "tests/test_value_types.py",
+                    "tests/test_locator_separator.py",
+                    "tests/test_refstyle_edges.py"],
     "renumber.py": ["tests/test_renumber.py", "tests/test_footnote_ids.py",
                     "tests/test_footnote_audit.py"],
     "tables.py": ["tests/test_tables_api.py", "tests/test_tables.py",

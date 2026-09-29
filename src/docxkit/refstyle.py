@@ -550,7 +550,7 @@ def convert_text(text: str, style: Style = HOUSE) -> tuple[str, list[Fix]]:
     # changed and refuse although nothing had been done to it.
     before = _alnum(text.replace("&", "and"))
     after = _alnum(out.replace("&", "and"))
-    if before != after:
+    if before != after:  # an expanded page range may account for it
         for fix in applied:
             if fix.code == "en-dash":
                 before = _alnum(

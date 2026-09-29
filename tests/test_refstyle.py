@@ -1639,13 +1639,13 @@ def test_an_UNLINKED_manuscript_is_still_read_by_the_pattern_alone():
     assert "missing-ref" in _codes(report.issues)
 
 #
-# `lab != span` in `_trust_the_links` is EQUIVALENT and left alive. A
-# label equal to the span re-reads to the same citation at the same
-# offsets — `_read_label` puts a parenthetical's parentheses back, so
-# even the form that does not parse alone comes out unchanged. The guard
-# is there to say what the function is FOR (a span that swallowed a
-# linked one), and to skip the re-parse on every already-exact citation
-# in a fully linked manuscript.
+# `lab != span` in `_trust_the_links` was argued EQUIVALENT here — "a
+# label equal to the span re-reads to the same citation" — and that was
+# WRONG (sweep of 2026-09-29): docxkit's own linker labels the first work
+# of "Sen (1985, 1992)" as `Sen (1985`, and re-reading that label moves
+# the citation's end onto the comma. The mutant is killed in
+# test_refstyle_edges.py, by
+# test_a_linked_YEAR_GROUP_keeps_the_span_the_linker_gave_it.
 
 
 # ------------------------------------------------ converting, not just ---

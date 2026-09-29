@@ -635,3 +635,47 @@ def test_a_config_GONE_from_TEMP_is_a_leftover_that_changes_no_exit_code(
     out = capsys.readouterr().out
     assert "1 paper(s)" in out and "1 leftover(s)" in out
     assert str(gone) not in out, "one line, not a row each"
+
+
+def test_a_leftover_FIRST_in_the_registry_does_not_end_the_survey(
+        tmp_path, monkeypatch):
+    """`continue`, not `break`: with the leftover last, both read the
+    same, which is how a `break` survived the first sweep (2026-09-29).
+    First, a `break` loses every paper registered after it."""
+    temp = tmp_path / "TEMP"
+    monkeypatch.setattr(revision._registry.tempfile, "gettempdir",
+                        lambda: str(temp))
+    gone = temp / "tmpab12cd" / "P" / "revision" / "paper.toml"
+    live = paper_at(tmp_path / "live")
+
+    rows = survey([gone, live.config])
+
+    assert [r.verdict for r in rows] == ["leftover", "truth"]
+
+
+def test_the_survey_COUNTS_its_papers_and_hides_no_PROPOSAL_among_leftovers(
+        tmp_path, monkeypatch, capsys):
+    """Two papers and a leftover: "2 paper(s)" (with one paper, `2 - 1`
+    and `2 >> 1` agree), and a paper whose verdict SORTS below
+    "leftover" — "PROPOSAL", upper case — is still printed as a paper
+    rather than folded into the leftover line (sweep, 2026-09-29)."""
+    from conftest import ins
+    from test_cli import run_cli
+
+    temp = tmp_path / "TEMP"
+    monkeypatch.setattr(revision._registry.tempfile, "gettempdir",
+                        lambda: str(temp))
+    settled = paper_at(tmp_path / "settled")
+    waiting = paper_at(tmp_path / "waiting")
+    write(waiting.working, make_parts(para(run("x "), ins("proposed"))))
+    gone = temp / "tmpab12cd" / "P" / "revision" / "paper.toml"
+    registry_path().parent.mkdir(parents=True, exist_ok=True)
+    registry_path().write_text(
+        f"{settled.config}\n{waiting.config}\n{gone}\n", encoding="utf-8")
+
+    code, _ = run_cli(monkeypatch, "revision", "status", "--all")
+
+    out = capsys.readouterr().out
+    assert code == 1, "the PROPOSAL, not the leftover, sets the exit"
+    assert "PROPOSAL" in out
+    assert "2 paper(s)" in out and "1 leftover(s)" in out

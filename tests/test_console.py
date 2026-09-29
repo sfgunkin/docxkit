@@ -14,7 +14,15 @@ from __future__ import annotations
 
 import io
 
-from docxkit.console import _reconfigure, utf8_console, utf8_stdout
+import pytest
+
+from docxkit.console import (
+    _reconfigure,
+    json_default,
+    utf8_console,
+    utf8_stdout,
+    write_json,
+)
 
 
 def _stream(*, line_buffering: bool = False) -> io.TextIOWrapper:
@@ -113,3 +121,37 @@ def test_utf8_console_still_fixes_stderr_when_stdout_cannot_be(monkeypatch):
     utf8_console()
 
     assert err.encoding == "utf-8"
+
+
+# --- the report writer, since it moved here (2026-09-28) ----------------
+
+
+def test_a_report_is_written_as_READABLE_utf8_two_spaces_deep(tmp_path):
+    """What a person opens: the Cyrillic of a caption as itself, not
+    `\u0422...`, and two-space indentation — the file a paper's log
+    links to. Pinned exactly, because indent and ensure_ascii survived
+    the first sweep of the module (2026-09-29)."""
+    dest = tmp_path / "r.json"
+
+    write_json(dest, {"caption": "Таблица 1", "rows": [1]})
+
+    assert dest.read_text(encoding="utf-8") == (
+        '{\n  "caption": "Таблица 1",\n  "rows": [\n    1\n  ]\n}')
+
+
+def test_the_encoder_REFUSES_what_it_cannot_encode_by_name(tmp_path):
+    """Only a dataclass INSTANCE is turned into a dict. An `or` in that
+    test raised too — from `asdict`, about something else — so the
+    refusal is pinned by its own words, for a plain object and for a
+    dataclass CLASS alike."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Row:
+        n: int
+
+    assert json_default(Row(2)) == {"n": 2}
+    with pytest.raises(TypeError, match="not JSON serializable: object"):
+        json_default(object())
+    with pytest.raises(TypeError, match="not JSON serializable: type"):
+        json_default(Row)

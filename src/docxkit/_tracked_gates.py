@@ -499,7 +499,7 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 def _same_props(a: str, b: str) -> bool:
     """Two property contents equal as XML: attribute order and the
     whitespace between tags are not properties."""
-    if a == b:
+    if a == b:  # the same text: nothing to canonicalise
         return True
     from lxml import etree
 

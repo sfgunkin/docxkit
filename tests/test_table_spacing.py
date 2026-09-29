@@ -451,6 +451,19 @@ def test_a_NESTED_table_s_rows_and_cells_are_not_the_carrier_s():
     assert _is_equation_carrier(nested.replace(tc("(3)"), "")) is False
 
 
+def test_a_carrier_row_with_ROW_PROPERTIES_is_still_one_row_of_two_cells():
+    """Children by NAME, `==`: `trPr` sorts above `tc`, so read with `>=`
+    the row's properties became a third cell and a carrier Word wrote with
+    `w:trPr` (cantSplit, a height) stopped being one (sweep, 2026-09-29)."""
+    def tc(text: str) -> str:
+        return f"<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+
+    row = ("<w:tr><w:trPr><w:cantSplit/></w:trPr>" + tc("x = 1") + tc("(3)")
+           + "</w:tr>")
+
+    assert _is_equation_carrier(f"<w:tbl><w:tblPr/>{row}</w:tbl>") is True
+
+
 def test_restoring_a_part_needs_the_content_types_on_BOTH_sides():
     """`and`, not `or`. The document being repaired may have no
     `[Content_Types].xml` at all — a caller assembling parts by hand, or

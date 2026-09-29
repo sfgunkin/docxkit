@@ -22,6 +22,17 @@ def test_only_BLOCKING_findings_block_and_their_order_is_kept():
     assert Severity.NOTE < Severity.WARNING < Severity.BLOCKING
 
 
+def test_a_severity_is_its_NUMBER_in_a_json_report():
+    """The order alone was pinned, and `NOTE = -1` or `BLOCKING = 3` kept
+    it (mutation sweep, 2026-09-29). The numbers are a contract of their
+    own: `console.write_json` writes an IntEnum as its int, so a script
+    reading a report's JSON reads 0, 1, 2."""
+    import json
+
+    assert [int(s) for s in Severity] == [0, 1, 2]
+    assert json.loads(json.dumps({"s": Severity.BLOCKING})) == {"s": 2}
+
+
 def test_a_finding_is_a_VALUE():
     finding = Finding("A", "1")
 

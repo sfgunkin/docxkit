@@ -1136,3 +1136,30 @@ def test_a_refusal_and_a_protocol_code_are_unchanged_by_the_enum(
         cli.main()
 
     assert done.value.code == "docxkit: refused", "exit 1, message as ever"
+
+
+def test_every_exit_code_is_PINNED_by_name_and_the_list_is_complete():
+    """Exit codes belong to the scripts that branch on them — the papers'
+    configs quote `MathResolved, exit 2` and `BaselinePending, exit 3` —
+    so a wrong number does something else, quietly. `OK = 1` and
+    `WORKING_PENDING = 7` survived the first sweep of `errors`
+    (2026-09-29): pinned by NAME, and complete, so a code added without
+    a line here fails."""
+    from docxkit.errors import (
+        BaselinePending,
+        HandbackLoss,
+        MathResolved,
+        ProtocolError,
+        StaleBatch,
+        WorkingPending,
+    )
+
+    assert {code.name: int(code) for code in ExitCode} == {
+        "OK": 0, "FINDINGS": 1, "MATH_RESOLVED": 2, "BASELINE_PENDING": 3,
+        "STALE_BATCH": 4, "HANDBACK_LOSS": 5, "WORKING_PENDING": 6,
+        "INTERNAL": 70}
+    assert {cls.__name__: cls.exit_code for cls in (
+        ProtocolError, MathResolved, BaselinePending, StaleBatch,
+        HandbackLoss, WorkingPending)} == {
+        "ProtocolError": 1, "MathResolved": 2, "BaselinePending": 3,
+        "StaleBatch": 4, "HandbackLoss": 5, "WorkingPending": 6}
