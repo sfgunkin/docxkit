@@ -450,9 +450,17 @@ def _drop_row(row: _Element) -> None:
     behind would report one more table than the document has and, on the
     reject side, would not restore the baseline.
     """
-    table = _parent(row)
-    table.remove(row)
-    if not table.findall(W + "tr"):
+    table = next(row.iterancestors(W + "tbl"), None)   # before it detaches
+    holder = _parent(row)
+    holder.remove(row)
+    # A row in a content control: the control goes with its last row,
+    # rather than standing empty in the table (BACKLOG S4, 2026-09-29).
+    if holder.tag == W + "sdtContent" and not any(
+            isinstance(child.tag, str) for child in holder):
+        sdt = holder.getparent()
+        if sdt is not None and sdt.getparent() is not None:
+            _parent(sdt).remove(sdt)
+    if table is not None and not _own_rows(table):
         parent = table.getparent()
         if parent is not None:
             parent.remove(table)
@@ -1027,7 +1035,21 @@ def rows_in_view(table_xml: str, view: str) -> list[bool]:
     tbl = root.find(W + "tbl") if wrapped else root
     if tbl is None:
         return []
-    return [_row_flag(tr, vanish) is None for tr in tbl.findall(W + "tr")]
+    return [_row_flag(tr, vanish) is None for tr in _own_rows(tbl)]
+
+
+def _own_rows(tbl: _Element) -> list[_Element]:
+    """The table's OWN rows, in order — at any depth but a nested table's.
+
+    Not ``tbl.findall(W + "tr")``, which is direct children only and
+    misses a row in a content control (``w:sdt`` > ``w:sdtContent`` >
+    ``w:tr``), as templates write repeating sections. `rows_of` finds that
+    row and `accept`/`reject` drop it, so this counted one row fewer than
+    both, and `reorder_rows` refused the table as "a docxkit bug"
+    (BACKLOG S4, 2026-09-29).
+    """
+    return [tr for tr in tbl.iter(W + "tr")
+            if next(tr.iterancestors(W + "tbl"), None) is tbl]
 
 
 def text(xml: str, view: str = FINAL) -> list[str]:

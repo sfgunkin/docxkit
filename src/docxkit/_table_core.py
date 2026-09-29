@@ -1057,12 +1057,21 @@ def _write_text(cell: str, text: str, *, flatten: bool, raises: bool,
     result = _STARS_RE.fullmatch(text)
     target = lines[0] if lines else next(
         (m for m in PARA_RE.finditer(cell) if _text_runs(m.group(0))), None)
-    if result is None or target is None or not (
+    if target is None:
+        return set_run_text(cell, text)
+    if result is None or not (
             _superscript_runs(target.group(0))
             or (raises and result.group(2))):
-        return set_run_text(cell, text)
-    filled = _fill_result(target.group(0), result.group(1), result.group(2),
-                          clone=raises)
+        # Into the printing LINE's own paragraph, not the cell's first
+        # text node: a cell laid out as an NBSP spacer over its value has
+        # the spacer's `w:t` first, and writing there moved the number up
+        # a line and blanked the one that printed — while the cell's text
+        # read back right, so no gate saw it (BACKLOG S2, 2026-09-29). A
+        # spacer below the line is left as it is too.
+        filled = set_run_text(target.group(0), text)
+    else:
+        filled = _fill_result(target.group(0), result.group(1),
+                              result.group(2), clone=raises)
     before, after = cell[:target.start()], cell[target.end():]
     if flatten:                  # one line: every other line's words go
         before, after = set_run_text(before, ""), set_run_text(after, "")
@@ -1265,17 +1274,25 @@ def set_result(xml: str, table: Table, row: int, col: int, number: str, *,
 def _rows_replaced(xml: str, table: Table, rows: list[str]) -> str:
     """The document with this table's `w:tr` elements replaced by `rows`.
 
-    One splice for the whole table rather than one per row: every write
-    shifts the offsets after it, and a per-row loop over stale spans is
-    the shape that has bitten this file before.
+    `rows` has one entry per row, in order: the markup that takes that
+    row's place, which is two rows' worth where one is being copied.
+
+    Each row is written into its OWN span, not the table's rows into the
+    span from the first `w:tr` to the last. That was one splice, and it
+    assumed the rows stood side by side: a row inside a content control
+    (``w:sdt``) has the control's opening tags between it and the row
+    above, and the splice wrote over them — the result had a closing
+    ``</w:sdt>`` and no opening one (BACKLOG S4, 2026-09-29). The spans
+    are written from the LAST back, so every offset still to be used is
+    in front of every write.
     """
     body = xml[table.start:table.end]
     trs = list(rows_of(body))
     if not trs:
         raise AnchorError(f"table {table.index} has no rows to write")
-    new_body = (body[:trs[0].start()] + "".join(rows)
-                + body[trs[-1].end():])
-    return xml[:table.start] + new_body + xml[table.end:]
+    for tr, new in reversed(list(zip(trs, rows, strict=True))):
+        body = body[:tr.start()] + new + body[tr.end():]
+    return xml[:table.start] + body + xml[table.end:]
 
 
 def reorder_rows(xml: str, table: Table, key: Callable[[list[str]], Any], *,
@@ -1395,7 +1412,8 @@ def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
     body = xml[table.start:table.end]
     trs = [tr.group(0) for tr in rows_of(body)]
     index = _row_at(table, len(trs), index, "clone")
-    rows = trs[:index + 1] + [trs[index]] * count + trs[index + 1:]
+    rows = list(trs)
+    rows[index] = trs[index] * (count + 1)
     return _rows_replaced(xml, table, rows)
 
 

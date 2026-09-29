@@ -12,6 +12,7 @@ import typing
 
 import pytest
 from conftest import document, para, row, run, table
+from lxml import etree
 from test_tables_results import (
     ITALIC,
     STARRED,
@@ -29,6 +30,7 @@ from docxkit._xml import PARA_RE, RUN_RE, visible_text
 from docxkit.errors import AnchorError
 from docxkit.tables import (
     by_caption,
+    clone_row,
     decimal_mark,
     parse_number,
     read_all,
@@ -450,3 +452,102 @@ def test_reorder_rows_with_NO_header_checks_every_row():
 
     assert read_all(out)[0].rows == [["ALB", "2"], ["POL", "1"],
                                      ["UZB", "3"]]
+
+
+# --- the two defects the round found, fixed (2026-09-29) --------------------
+
+NBSP = "\u00a0"
+
+
+@pytest.mark.parametrize(("stars_in_table", "value"), [
+    (False, "0.7"), (True, "0.7"), (True, "0.7*")],
+    ids=["plain-table", "raising-table-unstarred", "raising-table-starred"])
+def test_a_value_goes_into_the_PRINTING_line_not_a_spacer_above_it(
+        stars_in_table, value):
+    """BACKLOG S2. A cell laid out as an NBSP spacer paragraph over its
+    value — a way of pushing the number down a line — had the spacer's
+    `w:t` first, and a plain value was written THERE: the number moved up
+    a line and the printing line went blank, while the cell's text read
+    back as the value, so no gate saw it. A starred value in a raising
+    table already went into the right line; now every value does."""
+    neighbour = (para(r("0.1"), r("*", SUP)) if stars_in_table
+                 else para(r("(1)")))
+    xml = document(
+        para(r("Table 4. Estimates"))
+        + "<w:tbl><w:tr><w:tc>" + para(r("Variable")) + "</w:tc><w:tc>"
+        + neighbour + "</w:tc></w:tr><w:tr><w:tc>" + para(r("Age"))
+        + "</w:tc><w:tc>" + para(r(NBSP)) + para(r("0.5"))
+        + "</w:tc></w:tr></w:tbl>")
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 1, value)
+
+    assert line_texts(out) == [NBSP, value]
+
+
+def test_a_spacer_BELOW_the_line_is_left_as_it_was():
+    """The same writer blanked every other text node in the cell, a
+    trailing NBSP spacer's included; it now writes the line and nothing
+    else."""
+    xml = results(para(r("0.5")) + para(r(NBSP)))
+
+    out = set_cell(xml, by_caption(xml, "Table 4."), 1, 1, "0.7")
+
+    assert line_texts(out) == ["0.7", NBSP]
+
+
+def _controlled(*rows_xml: str) -> str:
+    """Rows inside a content control, as a template's repeating section."""
+    return "<w:sdt><w:sdtPr/><w:sdtContent>" + "".join(rows_xml) \
+        + "</w:sdtContent></w:sdt>"
+
+
+def test_a_table_with_a_row_in_a_CONTENT_CONTROL_can_be_reordered():
+    """BACKLOG S4. `rows_of` found the row inside `w:sdt` and
+    `rows_in_view` did not (direct children only), so the self-check
+    refused the table as "a docxkit bug". The control stays where it
+    stood, and the row the sort puts there takes it."""
+    xml = document(table(row("Country", "N"), row("POL", "1"),
+                         row("ALB", "2"), _controlled(row("UZB", "3"))))
+
+    out = reorder_rows(xml, read_all(xml)[0], key=lambda c: c[0])
+
+    assert read_all(out)[0].rows == [["Country", "N"], ["ALB", "2"],
+                                     ["POL", "1"], ["UZB", "3"]]
+    # The rows were written from the first `w:tr` to the last in one
+    # splice, over the control's opening tags: a `</w:sdt>` with no
+    # `<w:sdt>`, which `read_all` (a string reader) read back happily.
+    etree.fromstring(out.encode())
+    assert re.search(r"<w:sdt><w:sdtPr/><w:sdtContent><w:tr>.*?UZB", out)
+
+
+def test_a_row_in_a_content_control_is_COPIED_inside_it():
+    """`clone_row` writes through the same splice; the copies of a
+    controlled row join it in its control, as Word's repeating section
+    does, and the rows around it are untouched."""
+    xml = document(table(row("Country", "N"), _controlled(row("UZB", "3")),
+                         row("Total", "3")))
+
+    out = clone_row(xml, read_all(xml)[0], 1, count=2)
+
+    etree.fromstring(out.encode())
+    assert read_all(out)[0].rows == [["Country", "N"], ["UZB", "3"],
+                                     ["UZB", "3"], ["UZB", "3"],
+                                     ["Total", "3"]]
+    inside = re.search(r"<w:sdtContent>(.*)</w:sdtContent>", out)
+    assert inside is not None and inside.group(1).count("<w:tr>") == 3
+
+
+def test_a_DELETED_row_in_a_content_control_goes_with_its_control():
+    """The accept side of the same row: `accept` always dropped it, and
+    left the content control standing EMPTY in the table. The control
+    goes with its last row; the table, which has others, stays."""
+    from docxkit.revisions import accept, rows_in_view
+
+    tbl = table(row("Country", "N"), row("POL", "1"),
+                _controlled(row("UZB", "3", revision="del")))
+
+    assert rows_in_view(tbl, "final") == [True, True, False]
+    out = accept(document(tbl))
+
+    assert read_all(out)[0].rows == [["Country", "N"], ["POL", "1"]]
+    assert "<w:sdt" not in out

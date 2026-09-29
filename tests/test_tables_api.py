@@ -1234,8 +1234,10 @@ def test_reorder_rows_REFUSES_when_the_rows_themselves_moved(monkeypatch):
     xml = _countries()
     t = read_all(xml)[0]
     splice = _table_core._rows_replaced
-    monkeypatch.setattr(_table_core, "_rows_replaced",
-                        lambda x, table, rows: splice(x, table, rows[:-1]))
+    # A splice that LOSES the last row: its slot written empty.
+    monkeypatch.setattr(
+        _table_core, "_rows_replaced",
+        lambda x, table, rows: splice(x, table, [*rows[:-1], ""]))
 
     with pytest.raises(AnchorError, match="not just their order"):
         reorder_rows(xml, t, key=_by_name(["ALB", "POL", "UZB", "All"]))
