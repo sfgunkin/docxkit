@@ -14,6 +14,68 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `reorder_rows` refuses a table with a row inside a content control (`w:sdt`)~~ — FIXED 29.09, `7c6bbda`
+
+<!-- status: fixed -->
+
+Found 2026-09-29 by the same round (the `!=`→`>` mutant at L1326 is
+killable only through this refusal and stands). A table whose row is
+wrapped in `w:sdt` — a content control, as templates and some journal
+styles write — raises "…could not be paired … this is a docxkit bug,
+not a stale handle". `rows_of` sees the wrapped row (4 rows);
+`revisions.rows_in_view` counts only DIRECT `w:tr` children (3), and the
+self-check refuses the difference. Loud, not silent; but no table with
+a content-controlled row can be reordered.
+
+Repro: session scratchpad `agents/table_core/repro_sdt_row.py`.
+
+**Fix:** make `rows_in_view` walk rows the way `rows_of` does
+(through `w:sdt`/`w:sdtContent`, depth-counted), and add the sdt row to
+the reorder tests.
+
+Fixed in 7c6bbda. `revisions.rows_in_view` walks the table's own rows at
+any depth but a nested table's (`_own_rows`), as `rows_of` does, so the
+pairing check agrees; `_drop_row` takes an emptied content control with
+its last row. Behind the refusal sat a WORSE defect, fixed in the same
+commit: `_rows_replaced` wrote all rows as one splice from the first
+`w:tr` to the last and overwrote the control's opening tags, leaving a
+`</w:sdt>` with no `<w:sdt>` that `read_all` read back without
+complaint. Each row now goes into its own span, back to front;
+`clone_row`'s copies of a controlled row join its control. Pinned by
+four tests in test_table_core_edges (reorder, clone, accept of a deleted
+controlled row), each parsing the output with lxml.
+
+### ~~S2 — `set_cell` writes a value into a cell's leading NBSP spacer paragraph, and blanks the line that printed~~ — FIXED 29.09, `7c6bbda`
+
+<!-- status: fixed -->
+
+Found 2026-09-29 by the `_table_core` survivor round (three mutants at
+L1060/L1062 are killable only by pinning this; they stand until it is
+fixed). A results cell laid out as a non-breaking-space spacer paragraph
+over the number — a common way of pushing a value down a line — holds
+`["\xa0", "0.5"]`. `set_cell(..., "0.7")` writes the value into the
+SPACER and empties the printing line: `["0.7", ""]`, so the number moves
+up a line. In a table that raises its stars, `0.7*` goes into the right
+line and a plain `0.7` into the spacer, so one table behaves both ways.
+The cell's visible text reads back as the value, so no gate sees it.
+
+Repro: session scratchpad `agents/table_core/repro_leading_spacer.py`
+(session b3b64985; the shape is four lines of `conftest` markup and is
+worth a test when this is fixed).
+
+**Fix:** choose the target line as the PRINTING one — a paragraph whose
+only text is whitespace/NBSP is not a line to write into — in the
+line-aware cell writer behind set_cell/set_row/update/set_result.
+
+Fixed in 7c6bbda. `_write_text` writes every value into the printing
+line's own paragraph (the result's), not the cell's first `w:t`, and
+blanks nothing else: a spacer above the line or below it is left as it
+was. Pinned by test_table_core_edges
+`test_a_value_goes_into_the_PRINTING_line_not_a_spacer_above_it` (plain
+table, raising table unstarred and starred) and
+`test_a_spacer_BELOW_the_line_is_left_as_it_was`, all but the starred
+case failing on the old source.
+
 ### ~~S2 — eight patterns open `w:rPr` / `w:pPr` with no room for an attribute, and real packages declare xmlns on them~~ — FIXED 28.09, `be2de16`
 
 <!-- status: fixed -->
