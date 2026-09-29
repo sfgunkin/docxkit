@@ -48,6 +48,45 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S2 — `set_cell` writes a value into a cell's leading NBSP spacer paragraph, and blanks the line that printed
+<!-- status: open -->
+
+Found 2026-09-29 by the `_table_core` survivor round (three mutants at
+L1060/L1062 are killable only by pinning this; they stand until it is
+fixed). A results cell laid out as a non-breaking-space spacer paragraph
+over the number — a common way of pushing a value down a line — holds
+`["\xa0", "0.5"]`. `set_cell(..., "0.7")` writes the value into the
+SPACER and empties the printing line: `["0.7", ""]`, so the number moves
+up a line. In a table that raises its stars, `0.7*` goes into the right
+line and a plain `0.7` into the spacer, so one table behaves both ways.
+The cell's visible text reads back as the value, so no gate sees it.
+
+Repro: session scratchpad `agents/table_core/repro_leading_spacer.py`
+(session b3b64985; the shape is four lines of `conftest` markup and is
+worth a test when this is fixed).
+
+**Fix:** choose the target line as the PRINTING one — a paragraph whose
+only text is whitespace/NBSP is not a line to write into — in the
+line-aware cell writer behind set_cell/set_row/update/set_result.
+
+### S4 — `reorder_rows` refuses a table with a row inside a content control (`w:sdt`)
+<!-- status: open -->
+
+Found 2026-09-29 by the same round (the `!=`→`>` mutant at L1326 is
+killable only through this refusal and stands). A table whose row is
+wrapped in `w:sdt` — a content control, as templates and some journal
+styles write — raises "…could not be paired … this is a docxkit bug,
+not a stale handle". `rows_of` sees the wrapped row (4 rows);
+`revisions.rows_in_view` counts only DIRECT `w:tr` children (3), and the
+self-check refuses the difference. Loud, not silent; but no table with
+a content-controlled row can be reordered.
+
+Repro: session scratchpad `agents/table_core/repro_sdt_row.py`.
+
+**Fix:** make `rows_in_view` walk rows the way `rows_of` does
+(through `w:sdt`/`w:sdtContent`, depth-counted), and add the sdt row to
+the reorder tests.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
