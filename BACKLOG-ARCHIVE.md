@@ -14,6 +14,96 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `compare`'s FIELD DIFFERENCES reports a footnote reference "lost" that is still there~~ — FIXED 04.10, `2ce6f25`
+
+<!-- status: fixed -->
+
+Same paper and day. `docxkit compare prev.docx r2_clean.docx` printed
+`·  ['lost 1 footnote ref(s)']` under FIELD DIFFERENCES. Both files hold
+references 2–12 in `document.xml` and definitions −1…12 in
+`footnotes.xml` (grep, identical lists). The paragraph holding reference
+11 had been rewritten heavily (its old text replaced on both sides of
+the marker), so the layer appears to pair paragraphs by text and count
+the reference as lost from the old one. Informational, not gated — but
+the next reader goes looking for a lost footnote, as I did.
+
+**Fix:** count references per part, not per paired paragraph, before
+calling one lost. **Workaround:** none needed; checked by hand.
+
+---
+
+**Fixed in `2ce6f25`.** `stripped_block` takes `part_short` — the whole
+part's footnote-reference shortfall, computed in `compare_paras` — and
+caps the block's count with it: the count's counterpart of `present`,
+since a number has no name to look up on the other side. Tests
+(`test_compare.py`): a reference whose rewritten paragraph lands in a
+different replace block is not reported; with `part_short=1` a real loss
+still is, and with no part figure the block count stands as before. The
+existing "a lost footnote reference is counted" test still passes.
+
+### ~~S3 — `tables.fit_columns` output cannot go through `revision build`: its widths are not reviewable~~ — FIXED 04.10, `2ce6f25`
+
+<!-- status: fixed -->
+
+Measured on CC_age_gap R2, 2026-10-03. A clean edit that ran
+`fit_columns(xml, table, total=9360)` on one 20-row table built through
+Compare without complaint (527 revisions), and `revision validate` then
+FAILED: `reject-all == baseline ? structure: False`, "cell properties:
+54 cell(s) differ — table 12 row 1 cell 2 …". Word's Compare does not
+track `w:tcW` (nor `w:gridCol`), so the new widths are baked into the
+redline and rejecting everything keeps them. Nothing before validate
+says so: `fit_columns`' docstring does not mention it and `build` does
+not warn.
+
+**Fix:** either a `build` pre-check that names a table whose widths
+differ from the baseline's ("not reviewable through Compare; apply it
+untracked after acceptance"), or a line in `fit_columns`' docstring.
+**Workaround in use:** dropped `fit_columns`; the paper kept its
+autofit widths by shortening the new labels (the R2 log has it).
+
+**Fixed in `2ce6f25`** — both halves of the proposed fix. `tracked.width_changes`
+pairs baseline and edit tables by their TEXT and names those whose
+`w:gridCol`/`w:tcW` moved while the text did not; `revision build` says so
+in its preflight (`_preflight_notes`, which now also holds the
+note-order check and keeps `build` under the C901 ceiling), before Word
+runs, with the remedy: build without the widths, apply them untracked
+after acceptance. `fit_columns`' docstring carries the same rule. Tests
+(`test_revision.py`): a moved table is named; an inserted table shifts
+nothing; a reworded table is left to the redline; the build preflight
+names table 1. CC_age_gap's workaround (shorter labels instead of
+`fit_columns`) was a manuscript choice, not code, so nothing to delete.
+
+### ~~S3 — `package.missing_parts` reads zip DIRECTORY entries as lost parts — 04.10~~ — FIXED 04.10, `2ce6f25`
+
+<!-- status: fixed -->
+
+Found on Life_Expectancy's Russian translation (`Documents/revision/`,
+2026-10-04). The translated .docx was written by a tool that stores zip
+directory entries (`_rels/`, `word/`, `word/_rels/`, `word/media/`,
+`word/theme/`). They are not OPC parts, Compare never writes them, and
+`revision validate` reported all five as `LOST` and returned **VERDICT:
+FAIL** on a batch whose every substantive gate passed (reject-all ==
+baseline on paragraphs, glyphs, footnotes, links and structure; XML accept
+== Word accept; verify_tracked byte-equal both ways). `docxkit compare`
+shows the same shape as `[MEDIA REMOVED] word/media/ (0 bytes)`.
+
+Fix: `missing_parts` (src/docxkit/package.py) — and compare's MEDIA layer —
+skip names ending in `/`. Arguably `read_parts` should never return them.
+Test with a fixture zip carrying directory entries, healthy AND with a real
+part removed (the gate must still fire on the real one).
+
+---
+
+**Fixed in `2ce6f25`.** `package.is_part_name` (a name ending in `/` is a
+directory entry, not an OPC part) filters both zip readers —
+`package.read_parts` and `_compare_read.load` — so `missing_parts`,
+the build's collateral check and compare's MEDIA layer all stop seeing
+them. Tests (`test_parts_gaps.py`): `read_parts` skips them; a baseline
+with directory entries against a batch without them reads clean AND a
+real removed part still fires; compare reports no `word/media/`. All
+three fail without the fix. The Russian redline that returned VERDICT:
+FAIL now returns PASS. No per-paper workaround existed to delete.
+
 ### ~~S4 — `reorder_rows` refuses a table with a row inside a content control (`w:sdt`)~~ — FIXED 29.09, `7c6bbda`
 
 <!-- status: fixed -->
