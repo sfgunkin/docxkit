@@ -544,6 +544,13 @@ def fit_columns(xml: str, table: Table, *, total: int | None = None,
     approximates Word's layout engine, `pad` covering its error. That
     matters most with `pin_stub`, which spends the whole margin for
     error on `pad` and keeps no accidental cushion.
+
+    **Not in a tracked batch.** Word's Compare tracks neither
+    ``w:gridCol`` nor ``w:tcW``, so widths written here are baked into a
+    `revision build` redline and reject-all keeps them; `revision build`
+    names such a table and `revision validate` fails the batch
+    (CC_age_gap R2, 2026-10-03). Apply it untracked, to the accepted
+    manuscript, after the author's verdict.
     """
     table = _fresh(xml, table, "fit_columns")
     body = xml[table.start:table.end]

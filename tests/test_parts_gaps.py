@@ -635,6 +635,65 @@ def test_missing_parts_ignores_what_word_regenerates():
     assert missing_parts(batch, baseline) == ["customXml/item1.xml"]
 
 
+_ZIP_DIRS = ("_rels/", "word/", "word/_rels/", "word/media/", "word/theme/")
+
+
+def _with_directory_entries(path):
+    """Append the five directory entries Life_Expectancy's Russian
+    translation carried (2026-10-04): names ending in "/", no bytes."""
+    import zipfile
+    with zipfile.ZipFile(path, "a") as z:
+        for name in _ZIP_DIRS:
+            z.writestr(zipfile.ZipInfo(name), b"")
+
+
+def test_read_parts_skips_zip_directory_entries(tmp_path):
+    from docxkit.package import read_parts, write_docx
+
+    path = tmp_path / "dirs.docx"
+    write_docx(path, make_parts(para(run("body"))))
+    _with_directory_entries(path)
+    parts = read_parts(path)
+    assert not [n for n in parts if n.endswith("/")], sorted(parts)
+    assert "word/document.xml" in parts
+
+
+def test_missing_parts_quiet_on_directory_entries_loud_on_a_real_loss(
+        tmp_path):
+    """Healthy AND broken on the same fixture: a baseline whose zip stores
+    directory entries against a batch that does not reads clean, and the
+    gate still fires when a REAL part is gone."""
+    import zipfile
+
+    from docxkit.package import missing_parts, read_parts
+
+    base_path = tmp_path / "baseline.docx"
+    # zipfile, not write_docx: the fixture's customXml stub is not
+    # well-formed, and write_docx rightly refuses malformed XML.
+    with zipfile.ZipFile(base_path, "w") as z:
+        for name, blob in _with_custom_xml().items():
+            z.writestr(name, blob)
+    _with_directory_entries(base_path)
+    baseline = read_parts(base_path)
+    batch = dict(_with_custom_xml())
+    assert missing_parts(batch, baseline) == []
+    del batch["customXml/item1.xml"]
+    assert missing_parts(batch, baseline) == ["customXml/item1.xml"]
+
+
+def test_compare_does_not_report_a_directory_entry_as_removed_media(
+        tmp_path):
+    from docxkit._compare_read import load
+    from docxkit.package import write_docx
+
+    a, b = tmp_path / "a.docx", tmp_path / "b.docx"
+    write_docx(a, make_parts(para(run("body"))))
+    write_docx(b, make_parts(para(run("body"))))
+    _with_directory_entries(a)
+    assert "word/media/" not in load(str(a)).media
+    assert load(str(a)).media == load(str(b)).media
+
+
 def test_docProps_custom_is_NOT_what_word_regenerates():
     """Those are USER-DEFINED properties — Word does not synthesise them
     and neither does Compare. On a World Bank manuscript the part holds

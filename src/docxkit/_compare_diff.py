@@ -234,6 +234,7 @@ def stripped_fields(pa: Para, pb: Para) -> list[str]:
 
 def stripped_block(left: list[Para], right: list[Para], *,
                    present: Collection[str] = (),
+                   part_short: int | None = None,
                    ) -> list[tuple[str, Para | None]]:
     """Machinery the whole block had and lost, with the paragraph that
     held it.
@@ -284,6 +285,14 @@ def stripped_block(left: list[Para], right: list[Para], *,
                           holder_of(key, gone[0])))
     short = (sum(p.fields["footnotes"] for p in left)
              - sum(p.fields["footnotes"] for p in right))
+    # `part_short` is the footnote counterpart of `present`: a count has
+    # no name to look up on the other side, so the PART's own shortfall
+    # caps the block's. A reference whose paragraph was rewritten on both
+    # sides of the marker can pair outside its block and read as lost
+    # while the part still holds every one (CC_age_gap R2, 2026-10-03:
+    # references 2-12 on both sides, "lost 1 footnote ref(s)" printed).
+    if part_short is not None:
+        short = min(short, part_short)
     if short > 0:
         notes.append((f"lost {short} footnote ref(s)", None))
     return notes
@@ -485,15 +494,20 @@ class _Alignment:
     ends can say so.
     """
 
-    __slots__ = ("deleted", "inserted", "report", "surviving", "where")
+    __slots__ = ("deleted", "footnote_short", "inserted", "report",
+                 "surviving", "where")
 
     def __init__(self, report: Report, where: str,
-                 surviving: Collection[str] = ()) -> None:
+                 surviving: Collection[str] = (),
+                 footnote_short: int | None = None) -> None:
         self.report = report
         self.where = where
         # every field name the OTHER side's part still holds, so a
         # target that moved out of its block is not called lost
         self.surviving = surviving
+        # how many footnote references the whole part is short of - the
+        # cap on any block's count (see stripped_block's `part_short`)
+        self.footnote_short = footnote_short
         self.deleted: list[Para] = []
         self.inserted: list[Para] = []
 
@@ -556,8 +570,9 @@ class _Alignment:
         """
         pending: dict[int, list[str]] = defaultdict(list)
         holders: dict[int, Para | None] = {}
-        for note, holder in stripped_block(left, right,
-                                           present=self.surviving):
+        for note, holder in stripped_block(
+                left, right, present=self.surviving,
+                part_short=self.footnote_short):
             pending[id(holder)].append(note)
             holders[id(holder)] = holder
         for off in range(max(len(left), len(right))):
@@ -667,7 +682,10 @@ def compare_paras(a: list[Para], b: list[Para], report: Report,
     align = _Alignment(report, where,
                        surviving if surviving is not None else
                        {n for p in b for key in ("anchors", "cites")
-                        for n in p.fields[key]})
+                        for n in p.fields[key]},
+                       footnote_short=(
+                           sum(p.fields["footnotes"] for p in a)
+                           - sum(p.fields["footnotes"] for p in b)))
     sm = SequenceMatcher(None, [_norm_glyph(p.text) for p in a],
                          [_norm_glyph(p.text) for p in b], autojunk=False)
     for tag, i1, i2, j1, j2 in sm.get_opcodes():

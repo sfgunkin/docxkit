@@ -569,6 +569,52 @@ def cell_property_changes(base: Parts, view: Parts) -> list[str]:
     return [f"cell properties: {len(moved)} cell(s) differ — {where}{more}"]
 
 
+_GRID_W_RE = re.compile(r'<w:gridCol\b[^>]*\bw:w="(\d+)"')
+_TCW_W_RE = re.compile(r'<w:tcW\b[^>]*\bw:w="(\d+)"')
+_CELL_TEXT_RE = re.compile(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>")
+
+
+def _tables_by_text(xml: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Every outermost table as (its text, its widths): the grid's
+    ``w:gridCol`` values followed by every cell's ``w:tcW``."""
+    out = []
+    for s, e in element_spans(xml, "tbl"):
+        tbl = xml[s:e]
+        text = "\x1f".join(_CELL_TEXT_RE.findall(tbl))
+        widths = (*_GRID_W_RE.findall(tbl), "|", *_TCW_W_RE.findall(tbl))
+        out.append((text, widths))
+    return out
+
+
+def width_changes(base_xml: str, edit_xml: str) -> list[int]:
+    """Baseline table numbers (1-based) whose TEXT the edit keeps and
+    whose column widths it changes.
+
+    Word's Compare tracks neither ``w:gridCol`` nor ``w:tcW``: new widths
+    are baked into the redline, rejecting everything keeps them, and
+    `revision validate` fails the batch only at the end, after the
+    Compare has been paid for (CC_age_gap R2, 2026-10-03:
+    `tables.fit_columns` on one table, "cell properties: 54 cell(s)
+    differ"). Asked before the build so it can be said while it is cheap.
+
+    Tables are paired by their text, not their position, so an inserted
+    or deleted table does not misalign every pair after it; a table whose
+    text changed is not paired at all — its widths may have changed with
+    it, and that is the redline's business.
+    """
+    edit = _tables_by_text(edit_xml)
+    unused = list(range(len(edit)))
+    changed = []
+    for n, (text, widths) in enumerate(_tables_by_text(base_xml), 1):
+        match = next((i for i in unused if edit[i][0] == text), None)
+        if match is None:
+            continue
+        unused.remove(match)
+        if edit[match][1] != widths:
+            changed.append(n)
+    return changed
+
+
 def untracked(parts: Parts, baseline: Parts, *,
               limit: int = 8) -> list[Untracked]:
     """Paragraphs where reject-all does NOT reproduce the baseline.

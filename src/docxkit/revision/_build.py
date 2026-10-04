@@ -17,7 +17,7 @@ from ..errors import (
     StaleBatch,
     WorkingPending,
 )
-from ..tracked import rejected_view, untracked
+from ..tracked import rejected_view, untracked, width_changes
 from . import _ledger, _timing
 from ._config import Paper
 from ._losses import (
@@ -93,7 +93,55 @@ def _word_only_note(kinds: dict[str, int]) -> str:
             f"reject the table change there, and save.")
 
 
+def _preflight_notes(prev: Path, revised: str | Path) -> list[str]:
+    """What Word's Compare will mangle, said before Word sees the files.
+
+    **Note definitions out of reference order.** Such a note renders
+    correctly and passes every read-only gate, and Compare then rewrites
+    the definitions INTO document order — so the part no longer lines up
+    with the baseline's and reads as moved. On AFI that was 81 glyph
+    runs and a STRUCTURE count for a one-line prose batch, reported
+    against the batch that came after the one that appended the note.
+
+    **Column widths.** Compare tracks neither ``w:gridCol`` nor
+    ``w:tcW``, so a re-divided table comes back with its new widths
+    baked in, reject-all keeps them, and validate fails the batch at the
+    end (CC_age_gap R2, 2026-10-03: `tables.fit_columns` on one table).
+    """
+    notes: list[str] = []
+    docs: dict[str, str] = {}
+    for side, path in (("baseline", prev), ("clean edit", revised)):
+        side_parts = package.read_parts(path)
+        doc = side_parts.get(DOCUMENT, b"").decode("utf-8", "replace")
+        docs[side] = doc
+        for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
+            blob = side_parts.get(part)
+            if not blob:
+                continue
+            moved = footnotes.out_of_order(
+                doc, blob.decode("utf-8", "replace"), kind=kind)
+            if moved:
+                notes.append(
+                    f"{side}: {kind} definitions are not in document order "
+                    f"({', '.join(moved[:6])}"
+                    f"{' ...' if len(moved) > 6 else ''}) — Word's Compare "
+                    f"will rewrite them, and the whole part then reads as "
+                    f"MOVED. Reorder the definitions to match the "
+                    f"references before building.")
+    widened = width_changes(docs["baseline"], docs["clean edit"])
+    if widened:
+        notes.append(
+            f"clean edit: column widths changed in table(s) "
+            f"{', '.join(map(str, widened))} with their text unchanged — "
+            f"Word's Compare does not track widths, so they are not "
+            f"reviewable and reject-all will keep them (validate will "
+            f"fail). Build the redline WITHOUT the width change and apply "
+            f"it untracked after the author accepts.")
+    return notes
+
+
 @_timing.timed("build")
+
 def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
           *, allow_math_resolve: bool = False,
           allow_pending_baseline: bool = False,
@@ -254,29 +302,10 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
         if progress:
             progress(line)
 
-    # Before Word sees it: a note whose DEFINITION sits out of reference
-    # order renders correctly and passes every read-only gate, and
-    # Compare then rewrites the definitions INTO document order — so the
-    # part no longer lines up with the baseline's and reads as moved. On
-    # AFI that was 81 glyph runs and a STRUCTURE count for a one-line
-    # prose batch, reported against the batch that came after the one
-    # that appended the note. Said here, where it is still cheap.
-    for side, path in (("baseline", paper.prev), ("clean edit", revised)):
-        side_parts = package.read_parts(path)
-        doc = side_parts.get(DOCUMENT, b"").decode("utf-8", "replace")
-        for kind, part in (("footnote", FOOTNOTES), ("endnote", ENDNOTES)):
-            blob = side_parts.get(part)
-            if not blob:
-                continue
-            moved = footnotes.out_of_order(
-                doc, blob.decode("utf-8", "replace"), kind=kind)
-            if moved:
-                _say(f"{side}: {kind} definitions are not in document order "
-                     f"({', '.join(moved[:6])}"
-                     f"{' ...' if len(moved) > 6 else ''}) — Word's Compare "
-                     f"will rewrite them, and the whole part then reads as "
-                     f"MOVED. Reorder the definitions to match the "
-                     f"references before building.")
+    # Before Word sees it: what Compare will mangle, said while it is
+    # still cheap (see _preflight_notes).
+    for line in _preflight_notes(paper.prev, revised):
+        _say(line)
 
     # `accept_check` is left ON, and the asymmetry is deliberate. The
     # reject side has a legitimate cause the protocol can see and gate 5

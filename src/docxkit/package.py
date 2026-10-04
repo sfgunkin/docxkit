@@ -54,6 +54,7 @@ __all__ = [
     "declare_override",
     "edit_in_place",
     "is_locked",
+    "is_part_name",
     "malformed_parts",
     "missing_parts",
     "next_backup_path",
@@ -79,6 +80,21 @@ CORE_PART = "docProps/core.xml"
 REGENERATED_BY_WORD = ("docProps/",)
 #: …and the one part under that prefix that is NOT Word's bookkeeping.
 USER_PROPERTIES = "docProps/custom.xml"
+
+
+def is_part_name(name: str) -> bool:
+    """Is this zip member a PART, or a directory entry some tool stored?
+
+    A zip may carry directory entries (``word/``, ``_rels/``,
+    ``word/media/`` — names ending in ``/``, no bytes). They are not OPC
+    parts: Word never writes them and Compare never keeps them. Read as
+    parts, every one is "lost" on the next batch — `revision validate`
+    returned VERDICT: FAIL on Life_Expectancy's Russian translation
+    (2026-10-04) with five ``LOST`` directories and every substantive gate
+    green, and `compare` reported ``[MEDIA REMOVED] word/media/ (0
+    bytes)``. Both zip readers filter through this one predicate.
+    """
+    return not name.endswith("/")
 
 
 def regenerated_by_word(name: str) -> bool:
@@ -237,7 +253,8 @@ def read_parts(path: str | Path, *, retries: int = 6,
     for attempt in range(retries):
         try:
             with zipfile.ZipFile(path) as z:
-                return {n: z.read(n) for n in z.namelist()}
+                return {n: z.read(n) for n in z.namelist()
+                        if is_part_name(n)}
         except PermissionError as exc:       # sharing violation, or a lock
             last = exc
             _back_off(attempt, retries, delay)

@@ -48,6 +48,25 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S3 — `package.missing_parts` reads zip DIRECTORY entries as lost parts — 04.10
+<!-- status: open -->
+Found on Life_Expectancy's Russian translation (`Documents/revision/`,
+2026-10-04). The translated .docx was written by a tool that stores zip
+directory entries (`_rels/`, `word/`, `word/_rels/`, `word/media/`,
+`word/theme/`). They are not OPC parts, Compare never writes them, and
+`revision validate` reported all five as `LOST` and returned **VERDICT:
+FAIL** on a batch whose every substantive gate passed (reject-all ==
+baseline on paragraphs, glyphs, footnotes, links and structure; XML accept
+== Word accept; verify_tracked byte-equal both ways). `docxkit compare`
+shows the same shape as `[MEDIA REMOVED] word/media/ (0 bytes)`.
+
+Fix: `missing_parts` (src/docxkit/package.py) — and compare's MEDIA layer —
+skip names ending in `/`. Arguably `read_parts` should never return them.
+Test with a fixture zip carrying directory entries, healthy AND with a real
+part removed (the gate must still fire on the real one).
+
+---
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
@@ -827,6 +846,40 @@ pyproject cross-check anchored on `<name>\s+<number>`, while the comment
 around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
+
+### S3 — `tables.fit_columns` output cannot go through `revision build`: its widths are not reviewable
+<!-- status: open -->
+
+Measured on CC_age_gap R2, 2026-10-03. A clean edit that ran
+`fit_columns(xml, table, total=9360)` on one 20-row table built through
+Compare without complaint (527 revisions), and `revision validate` then
+FAILED: `reject-all == baseline ? structure: False`, "cell properties:
+54 cell(s) differ — table 12 row 1 cell 2 …". Word's Compare does not
+track `w:tcW` (nor `w:gridCol`), so the new widths are baked into the
+redline and rejecting everything keeps them. Nothing before validate
+says so: `fit_columns`' docstring does not mention it and `build` does
+not warn.
+
+**Fix:** either a `build` pre-check that names a table whose widths
+differ from the baseline's ("not reviewable through Compare; apply it
+untracked after acceptance"), or a line in `fit_columns`' docstring.
+**Workaround in use:** dropped `fit_columns`; the paper kept its
+autofit widths by shortening the new labels (the R2 log has it).
+
+### S2 — `compare`'s FIELD DIFFERENCES reports a footnote reference "lost" that is still there
+<!-- status: open -->
+
+Same paper and day. `docxkit compare prev.docx r2_clean.docx` printed
+`·  ['lost 1 footnote ref(s)']` under FIELD DIFFERENCES. Both files hold
+references 2–12 in `document.xml` and definitions −1…12 in
+`footnotes.xml` (grep, identical lists). The paragraph holding reference
+11 had been rewritten heavily (its old text replaced on both sides of
+the marker), so the layer appears to pair paragraphs by text and count
+the reference as lost from the old one. Informational, not gated — but
+the next reader goes looking for a lost footnote, as I did.
+
+**Fix:** count references per part, not per paired paragraph, before
+calling one lost. **Workaround:** none needed; checked by hand.
 
 ---
 

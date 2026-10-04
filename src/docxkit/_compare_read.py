@@ -37,6 +37,7 @@ from ._xml import (
 )
 from .comments import read_all as _read_comments
 from .equations import OMATH_RE, tokens
+from .package import is_part_name
 from .styles import Cascade
 
 # ------------------------------------------------------------- extraction
@@ -885,10 +886,11 @@ def load(path: str) -> Doc:
     """
     with zipfile.ZipFile(path) as z:
         raw = {n: z.read(n) for n in z.namelist()
-               if TEXT_PART_RE.match(n)
+               if is_part_name(n) and (
+               TEXT_PART_RE.match(n)
                or MEDIA_PART_RE.match(n)
                or n.startswith("word/_rels/")
-               or n in (COMMENTS_PART, STYLES_PART)}
+               or n in (COMMENTS_PART, STYLES_PART))}
     return load_parts(raw, path)
 
 

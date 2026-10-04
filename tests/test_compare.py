@@ -800,6 +800,40 @@ def test_a_lost_footnote_reference_is_counted(tmp_path):
         report["stripped_fields"][0]["lost"])
 
 
+def test_a_footnote_reference_that_moved_BLOCKS_is_not_lost(tmp_path):
+    """CC_age_gap R2 (2026-10-03): references 2-12 on both sides, and the
+    layer still printed "lost 1 footnote ref(s)". The paragraph that held
+    the reference was rewritten, so it sits in one replace block and the
+    reference turns up in another; only the PART can say nothing went."""
+    ref = '<w:r><w:footnoteReference w:id="2"/></w:r>'
+    keep = [para(run(t)) for t in ("Introduction stays the same.",
+                                   "A middle paragraph that stays.",
+                                   "The closing paragraph stays.")]
+    before = (keep[0]
+              + para(run("The old wording of the cited sentence.") + ref)
+              + keep[1]
+              + para(run("A later sentence, also old."))
+              + keep[2])
+    after = (keep[0]
+             + para(run("Entirely different words now stand here."))
+             + keep[1]
+             + para(run("A later sentence, rewritten and noted.") + ref)
+             + keep[2])
+    report = compare(*docs(tmp_path, before, after))
+    assert "footnote ref" not in str(report["stripped_fields"]), report
+
+
+def test_the_part_cap_still_lets_a_REAL_footnote_loss_through():
+    from docxkit._compare_diff import stripped_block
+
+    left, right = [_para("a", footnotes=1)], [_para("a")]
+    assert stripped_block(left, right, part_short=0) == []
+    assert stripped_block(left, right, part_short=1)[0][0] == \
+        "lost 1 footnote ref(s)"
+    # no part figure: the block's own count, as before
+    assert stripped_block(left, right)[0][0] == "lost 1 footnote ref(s)"
+
+
 def test_an_equation_present_on_one_side_only_is_reported(tmp_path):
     """The two sides are zipped by position, and the shorter one is
     padded with <none>. Without that, a paragraph that LOST an equation

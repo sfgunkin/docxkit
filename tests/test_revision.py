@@ -1100,6 +1100,62 @@ def test_the_stale_baseline_refusal_SUMMARISES_a_long_list(project):
     assert "revision ingest" in said, "the instruction survives the trim"
 
 
+def _sized(*widths: int, labels=("Label", "Value")) -> str:
+    """A one-row table with a grid and cell widths, as fit_columns writes."""
+    grid = "".join(f'<w:gridCol w:w="{w}"/>' for w in widths)
+    cells = "".join(f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/>'
+                    f"</w:tcPr>{para(run(t))}</w:tc>"
+                    for w, t in zip(widths, labels, strict=True))
+    return f"<w:tbl><w:tblGrid>{grid}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl>"
+
+
+def test_width_changes_names_a_table_whose_widths_moved_and_text_did_not():
+    from docxkit._tracked_gates import width_changes
+
+    base = _sized(4000, 5360) + _sized(3000, 6360, labels=("A", "B"))
+    edit = _sized(4000, 5360) + _sized(2000, 7360, labels=("A", "B"))
+    assert width_changes(base, edit) == [2]
+    assert width_changes(base, base) == []
+
+
+def test_width_changes_pairs_by_TEXT_so_an_inserted_table_shifts_nothing():
+    """Positional pairing would compare every table after the new one
+    with its neighbour and name them all."""
+    from docxkit._tracked_gates import width_changes
+
+    base = _sized(4000, 5360) + _sized(3000, 6360, labels=("A", "B"))
+    edit = (_sized(1000, 8360, labels=("New", "table"))
+            + _sized(4000, 5360) + _sized(3000, 6360, labels=("A", "B")))
+    assert width_changes(base, edit) == []
+
+
+def test_width_changes_leaves_a_REWORDED_table_to_the_redline():
+    from docxkit._tracked_gates import width_changes
+
+    base = _sized(4000, 5360)
+    edit = _sized(2000, 7360, labels=("Label", "Value, rewritten"))
+    assert width_changes(base, edit) == []
+
+
+def test_build_says_a_table_s_WIDTHS_cannot_go_through_compare(
+        project, monkeypatch):
+    """CC_age_gap R2 (2026-10-03): fit_columns on one table built without
+    complaint and validate failed at the end, "cell properties: 54
+    cell(s) differ". Said before Word runs."""
+    write(project.prev, make_parts(_sized(4000, 5360)))
+    write(project.working, make_parts(_sized(4000, 5360)))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(_sized(2500, 6860)))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    said: list[str] = []
+    revision.build(project, clean, progress=said.append)
+
+    widths = [ln for ln in said if "column widths changed" in ln]
+    assert widths and "table(s) 1 " in widths[0], said
+    assert "untracked after the author accepts" in widths[0]
+
+
 def test_build_says_a_NOTE_DEFINITION_is_out_of_document_order(
         project, monkeypatch):
     """Cheap, and said before Word sees the file.
