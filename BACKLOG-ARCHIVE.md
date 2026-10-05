@@ -14,6 +14,55 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — the citation audit reads every visible bookmark as a reference entry, so a paper with exhibit anchors cannot pass~~ — FIXED 05.10, `cbf7247`
+
+<!-- status: fixed -->
+
+Found on Month_of_birth 2026-10-04, the first protocol paper whose
+appendix tables and figures carry VISIBLE bookmarks (`Table_1`,
+`tbl-panel`, `figure-1`, `appendix`) plus two Word `OLE_LINK` paste marks.
+`_cite_audit._audit_findings` builds `ref_marks` as every bookmark that
+is not `_`-prefixed, `…txt` or `Eq…`, wherever it sits. So each exhibit
+anchor came back as REF WITHOUT CITE or REF WITHOUT BACKLINK: 34
+findings, none about a reference, while the same report said 91 of 91
+mentions linked and 0 broken. `docxkit citations` exits non-zero, so
+every paper script gated on it (`link_citations.py`) refuses forever: a
+permanently red gate. The appendix heading there is a Normal paragraph,
+but that is not the cause. `references()` already knows where the list
+ends ("Appendix A …"); `ref_marks` never asks it.
+
+Fix: restrict `ref_marks` to bookmarks located between the References
+heading and the first stop line, slicing by XML offset so a hoisted
+body-level entry marker still counts. Test: the real document must pass
+healthy, and REF WITHOUT CITE must survive when one entry's citations
+are unlinked. Per-paper workaround to delete:
+`exhibit_marks()` in Month_of_birth's `revision/scripts/link_citations.py`.
+
+**Closed 2026-10-05.** The fix as sketched, which was restricting `ref_marks` to
+the list, was half right, and the corpus said which half. Over 1,784
+manuscripts, location alone dropped 2,691 findings and ADDED 11,470.
+
+- Figure and table pairs use the same `<name>txt` scheme, so once
+  `Table1` stopped counting as an entry, every `Table1txt` became a
+  CITE WITHOUT REF and a MISSING REF (5,735 of each). Mention markers
+  whose target is an exhibit are now left to `crossrefs`.
+- 119 of the dropped findings were about author-year names: Elsevier
+  `bbib` stubs, a second reference list after the tables, and
+  `Soycan2024` and others, entry markers in prose that citations link
+  to. Three tests in test_citations pin that debris is still called
+  debris. An author-year name now stays a candidate wherever it sits.
+
+Final: 2,572 findings gone, 0 new, 0 author-year named. Real `mb1.docx`
+gives 0 findings healthy (34 before) and REF WITHOUT CITE Bedard2006 when
+every link to that work is retargeted. The workaround `exhibit_marks()` /
+`citation_findings()` was DELETED from Month_of_birth's
+`revision/scripts/link_citations.py`, and its gate passes on the plain
+`docxkit citations` exit code. Tests that fail without the fix:
+`test_an_EXHIBIT_anchor_past_the_list_is_not_an_entry`,
+`test_an_UNCITED_entry_is_still_reported_beside_the_exhibits`, and
+`test_a_CROSSREF_pair_past_the_list_is_left_to_crossrefs` (with the
+`cite_marks` filter alone removed).
+
 ### ~~S2 — `compare`'s FIELD DIFFERENCES reports a footnote reference "lost" that is still there~~ — FIXED 04.10, `2ce6f25`
 
 <!-- status: fixed -->

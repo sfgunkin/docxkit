@@ -828,29 +828,6 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
-### S3 — the citation audit reads every visible bookmark as a reference entry, so a paper with exhibit anchors cannot pass
-<!-- status: open -->
-
-Found on Month_of_birth 2026-10-04, the first protocol paper whose
-appendix tables and figures carry VISIBLE bookmarks (`Table_1`,
-`tbl-panel`, `figure-1`, `appendix`) plus two Word `OLE_LINK` paste marks.
-`_cite_audit._audit_findings` builds `ref_marks` as every bookmark that
-is not `_`-prefixed, `…txt` or `Eq…`, wherever it sits. So each exhibit
-anchor came back as REF WITHOUT CITE or REF WITHOUT BACKLINK: 34
-findings, none about a reference, while the same report said 91 of 91
-mentions linked and 0 broken. `docxkit citations` exits non-zero, so
-every paper script gated on it (`link_citations.py`) refuses forever: a
-permanently red gate. The appendix heading there is a Normal paragraph,
-but that is not the cause. `references()` already knows where the list
-ends ("Appendix A …"); `ref_marks` never asks it.
-
-Fix: restrict `ref_marks` to bookmarks located between the References
-heading and the first stop line, slicing by XML offset so a hoisted
-body-level entry marker still counts. Test: the real document must pass
-healthy, and REF WITHOUT CITE must survive when one entry's citations
-are unlinked. Per-paper workaround to delete:
-`exhibit_marks()` in Month_of_birth's `revision/scripts/link_citations.py`.
-
 ### S2 — an entry whose year is followed by a quote, not a full stop, is not an entry
 <!-- status: open -->
 
