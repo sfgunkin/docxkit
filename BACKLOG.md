@@ -848,6 +848,27 @@ with a bare year still does not parse. Measure over the corpus before
 and after, as `parse_reference` has drifted that way before. No
 per-paper workaround exists.
 
+### S4 — no tool says what an audit change does to the corpus's findings
+<!-- status: open -->
+
+Narrowing an audit rule is measured over the corpus before and after:
+`_no_backlink`'s docstring cites 100 manuscripts, the UNLINKED label rule
+397, and the 2026-10-05 exhibit-anchor fix 1,784. Every time this is
+hand-rolled. `tools/sweep.py` runs the routines and reports crashes and
+anomalies, but it keeps no findings, so it cannot answer "which findings
+did this change remove or add, and in which documents". On 2026-10-05
+the hand-rolled diff is what caught the fix's first version adding
+11,470 findings while removing 2,691, and dropping 119 author-year ones
+that pinned tests depended on.
+
+Workaround (scratchpad, not in any paper): `measure_cite.py` runs
+`_audit_findings` over every docx with 6 workers into JSON, and
+`diff_cite.py` reports the delta by kind with the files involved.
+Fix sketch: `tools/sweep.py --findings out.json` records
+`(kind, subject)` per document for each audit (citations, crossrefs,
+lint), and `--diff before.json` prints gone/new by kind, plus a name-shape
+breakdown of what went.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
