@@ -3107,12 +3107,17 @@ def test_EVERY_finding_reaches_a_bucket():
 
     Asserted as an INVARIANT rather than on that one name: any later
     branch that forgets its `else` fails here, whatever the damage class
-    turns out to be."""
+    turns out to be.
+
+    `Anhang` sits INSIDE the list. It used to follow an "Appendix
+    material." line, and since 2026-10-05 a bookmark past the list's stop
+    line that is not named author-year is an exhibit's anchor, not an
+    entry's, so it reports nothing at all."""
     plan = _plan(
         P(R("As Smith (2020) showed.")),
         P(R("References")),
         P(R("Smith, J. (2020). A paper.")),
-        P(bookmark("Anhang", 33) + R("Appendix material.")))
+        P(bookmark("Anhang", 33) + R("Further reading follows.")))
 
     promised, printed = _counted(plan)
     assert promised == 2

@@ -735,6 +735,37 @@ def _ends_the_list(text: str, stops: set[str]) -> bool:
     return parse_reference(text) is None
 
 
+def reference_bounds(paragraphs: list[str], *,
+                     heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
+                     stop: tuple[str, ...] = _DEFAULT_STOPS,
+                     ) -> tuple[int, int] | None:
+    """Where the reference SECTION sits: ``(heading, end)``, or None.
+
+    `heading` is the index of the heading paragraph, and `end` that of
+    the first paragraph past the list — the heading that ends it
+    (Appendices, Figures, Tables), a caption, or ``len(paragraphs)``.
+    The entries are what lies strictly between.
+
+    One reading for both callers. :func:`references` parses the entries
+    from it, and the citation audit asks it which bookmarks can be an
+    entry's marker at all; a second copy of the stop rule is how the two
+    would disagree about where the list ends.
+    """
+    wanted = {h.casefold()
+              for h in ((heading,) if isinstance(heading, str) else heading)}
+    start = next((i for i, p in enumerate(paragraphs)
+                  if p.strip().rstrip(":").casefold() in wanted), None)
+    if start is None:
+        return None
+    stops = {s.casefold() for s in stop}
+    for i in range(start + 1, len(paragraphs)):
+        text = paragraphs[i].strip()
+        if text and (_ends_the_list(text, stops)
+                     or _CAPTION_START_RE.match(text)):
+            return start, i           # caption: figures/tables at the end
+    return start, len(paragraphs)
+
+
 def references(paragraphs: list[str], *,
                heading: str | tuple[str, ...] = _DEFAULT_HEADINGS,
                stop: tuple[str, ...] = _DEFAULT_STOPS) -> list[Reference]:
@@ -743,24 +774,16 @@ def references(paragraphs: list[str], *,
     :func:`parse_reference` answers "could this paragraph be an entry?",
     and body prose containing "(2023)." can. Applied document-wide it
     finds 63 entries in a paper with 28. The reference list has to be
-    located first: from the heading paragraph to the next heading that
-    ends it (Appendices, Figures, Tables), or the end of the document.
+    located first (:func:`reference_bounds`).
     """
-    wanted = (heading,) if isinstance(heading, str) else heading
-    start = next((i for i, p in enumerate(paragraphs)
-                  if p.strip().rstrip(":").casefold()
-                  in {h.casefold() for h in wanted}), None)
-    if start is None:
+    bounds = reference_bounds(paragraphs, heading=heading, stop=stop)
+    if bounds is None:
         return []
     out: list[Reference] = []
-    for i in range(start + 1, len(paragraphs)):
+    for i in range(bounds[0] + 1, bounds[1]):
         text = paragraphs[i].strip()
         if not text:
             continue
-        if _ends_the_list(text, {s.casefold() for s in stop}):
-            break
-        if _CAPTION_START_RE.match(text):
-            break                     # figures/tables moved to the end
         ref = parse_reference(text, i)
         if ref is None:
             continue

@@ -71,6 +71,7 @@ from ._cite_grammar import lead_surname as lead_surname
 from ._cite_grammar import link_in_para as link_in_para
 from ._cite_grammar import masked_visible_text as masked_visible_text
 from ._cite_grammar import parse_reference as parse_reference
+from ._cite_grammar import reference_bounds as reference_bounds
 from ._cite_grammar import reference_head as reference_head
 from ._cite_grammar import references as references
 from ._cite_grammar import resolve_lead as resolve_lead
@@ -128,6 +129,7 @@ __all__ = [
     "masked_visible_text",
     "next_bookmark_id",
     "parse_reference",
+    "reference_bounds",
     "references",
     "remove_outer_field",
     "repair_plan",

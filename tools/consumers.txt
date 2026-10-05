@@ -104,6 +104,7 @@ docxkit.comments	reclassify
 docxkit.compare	compare
 docxkit.crossrefs	audit
 docxkit.crossrefs	find_captions
+docxkit.crossrefs	link
 docxkit.edit	_locate
 docxkit.edit	insert_in_para
 docxkit.edit	italicize

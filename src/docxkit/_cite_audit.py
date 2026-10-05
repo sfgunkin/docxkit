@@ -21,6 +21,7 @@ from ._cite_grammar import (
     citation_shape,
     find_citations,
     masked_visible_text,
+    reference_bounds,
     references,
     resolve_lead,
 )
@@ -185,6 +186,46 @@ def _reached(doc: str, paras: list[re.Match[str]],
             for name in names}
 
 
+def _outside_the_list(marks: dict[str, int], doc: str,
+                      paras: list[re.Match[str]],
+                      bounds: tuple[int, int] | None) -> set[str]:
+    """The candidate entry markers that cannot be an entry's: OUTSIDE the
+    reference list, and not named like one.
+
+    Every visible bookmark that is not a mention marker or an equation
+    used to count as an entry's, wherever it sat. Month_of_birth,
+    2026-10-04: the appendix tables and figures carry their own anchors
+    (`Table_1`, `tbl-panel`, `figure-1`) and Word left two `OLE_LINK`
+    paste marks, and each came back as REF WITHOUT CITE or REF WITHOUT
+    BACKLINK — 34 findings, none about a reference, beside "91 of 91
+    linked, 0 broken". `citations` exits non-zero on any finding, so the
+    gate could never pass: an exhibit anchor is not an entry.
+
+    An AUTHOR-YEAR name stays a candidate wherever it sits, because
+    outside the list it is still about a reference: the debris of a
+    deleted entry (`Ghost2019`, pinned in test_citations), or an entry's
+    marker that the citations link to in the middle of the prose. Over
+    the 1,784-document corpus the second is real: `Soycan2024` in five
+    drafts of the elderly poverty-lines paper. Dropped by location alone,
+    both went silent. No exhibit anchor in that corpus is author-year
+    shaped.
+
+    Sliced by XML OFFSET rather than by paragraph, because Word hoists a
+    marker from an entry's head out to body level, into the gap above
+    that entry; the slice from the heading's end to the stop line's start
+    holds those gaps. A note's bookmarks are outside it — a reference
+    list does not live in a footnote. A document whose list cannot be
+    found keeps every candidate, as before: there is no place to judge
+    against, and dropping them all would empty the audit in silence.
+    """
+    if bounds is None:
+        return set()
+    start, end = bounds
+    stop_at = paras[end].start() if end < len(paras) else len(doc)
+    inside = set(_BOOKMARK_NAME_RE.findall(doc[paras[start].end():stop_at]))
+    return {n for n in marks.keys() - inside if not _KEY_SHAPE_RE.match(n)}
+
+
 def _para_below(doc: str, paras: list[re.Match[str]], name: str) -> int:
     """The paragraph a body-level marker belongs to: the next one down, or
     `len(paras)` past the last. Its first `w:name` IS the body-level one,
@@ -307,9 +348,11 @@ def audit_links(parts: Parts, *,
 
     The papers' bookmark shape: the reference entry carries ``<name>``
     and the in-text mention ``<name>txt`` (``Halliday2020`` /
-    ``Halliday2020txt``), each end hyperlinking to the other; figure and
-    table first-mention links follow the same shape, so they audit
-    identically. Documents built on :func:`anchor_names`'s
+    ``Halliday2020txt``), each end hyperlinking to the other. Figure and
+    table first-mention links follow the same shape, but a caption past
+    the reference list's stop line is an exhibit, not an entry, and that
+    pair is left to `crossrefs` (:func:`_outside_the_list`). Documents
+    built on :func:`anchor_names`'s
     ``cite_``/``ref_`` naming still get the orphan, broken-link and
     cross-reference checks — only the ``txt``-pairing checks are
     specific to the suffix shape.
@@ -1023,6 +1066,15 @@ def _audit_findings(parts: Parts, *,
     ref_marks = {n: i for n, i in bookmarks.items()
                  if not n.startswith("_") and n not in cite_marks
                  and n not in eq_marks}
+    bounds = reference_bounds(texts, heading=heading)
+    exhibits = _outside_the_list(ref_marks, doc, paras, bounds)
+    ref_marks = {n: i for n, i in ref_marks.items() if n not in exhibits}
+    # `Table1txt` is the crossrefs half of the same `<name>txt` scheme,
+    # and `crossrefs` audits it. Left in, every exhibit mention became a
+    # CITE WITHOUT REF and a MISSING REF once its caption's bookmark
+    # stopped counting as an entry: 5,735 of each over the corpus.
+    cite_marks = {n: i for n, i in cite_marks.items()
+                  if n[:-3] not in exhibits}
 
     def where(i: int) -> str:
         return _WHERE.get(i) or f"¶{i + 1}"

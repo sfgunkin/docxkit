@@ -828,6 +828,49 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
+### S3 — the citation audit reads every visible bookmark as a reference entry, so a paper with exhibit anchors cannot pass
+<!-- status: open -->
+
+Found on Month_of_birth 2026-10-04, the first protocol paper whose
+appendix tables and figures carry VISIBLE bookmarks (`Table_1`,
+`tbl-panel`, `figure-1`, `appendix`) plus two Word `OLE_LINK` paste marks.
+`_cite_audit._audit_findings` builds `ref_marks` as every bookmark that
+is not `_`-prefixed, `…txt` or `Eq…`, wherever it sits. So each exhibit
+anchor came back as REF WITHOUT CITE or REF WITHOUT BACKLINK: 34
+findings, none about a reference, while the same report said 91 of 91
+mentions linked and 0 broken. `docxkit citations` exits non-zero, so
+every paper script gated on it (`link_citations.py`) refuses forever: a
+permanently red gate. The appendix heading there is a Normal paragraph,
+but that is not the cause. `references()` already knows where the list
+ends ("Appendix A …"); `ref_marks` never asks it.
+
+Fix: restrict `ref_marks` to bookmarks located between the References
+heading and the first stop line, slicing by XML offset so a hoisted
+body-level entry marker still counts. Test: the real document must pass
+healthy, and REF WITHOUT CITE must survive when one entry's citations
+are unlinked. Per-paper workaround to delete:
+`exhibit_marks()` in Month_of_birth's `revision/scripts/link_citations.py`.
+
+### S2 — an entry whose year is followed by a quote, not a full stop, is not an entry
+<!-- status: open -->
+
+Found 2026-10-05 while measuring the fix above over the corpus.
+`sr1_02072024_IT_ML_SC.docx` (Support for reforms) lists "Denisova, I.,
+M. Eller, T. Frye, and E. Zhuravskaya. (2012) “Everyone hates
+privatization …”". `references()` returns no Denisova entry, because
+`_REF_YEAR_RE` (`_cite_grammar.py`) requires `.` or `,` after the year
+and here a space and an opening quote follow it. The work then has no
+entry: `_marker_owner("Denisova2012", entries)` is None, and neither the
+builder nor any audit check that resolves a key to its entry can see it.
+Nothing reports the missing entry. The paper's own symptoms are
+SELF LINK and a citation landing in prose.
+
+Fix sketch: accept `(YEAR)` followed by whitespace and an opening
+quote or a capital, but ONLY with the parentheses, so that body prose
+with a bare year still does not parse. Measure over the corpus before
+and after, as `parse_reference` has drifted that way before. No
+per-paper workaround exists.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213

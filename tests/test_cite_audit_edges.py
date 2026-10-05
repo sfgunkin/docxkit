@@ -465,3 +465,117 @@ def test_SELF_LINK_names_its_PARAGRAPH_or_its_note():
     assert "(¶4)" in body_link.message
     assert "no bookmark carries yet" not in body_link.message
     assert "(fn)" in note_link.message
+
+
+# --- the list's bounds: an exhibit anchor is not an entry (2026-10-05) -------
+
+
+_CITED = ("Adams2001", "Brown2002", "Cole2003")
+
+
+def _linked_paper(after: str, *, extra_entry: str = "",
+                  prose: str = "") -> str:
+    """Three works cited and linked both ways, then whatever follows the
+    list. Three entries linking home is the floor REF WITHOUT BACKLINK
+    waits for, so an anchor read as a fourth entry would be judged."""
+    cites = "".join(P(R("see ") + _mark(f"{k}txt", 10 + n, _link(k, k)))
+                    for n, k in enumerate(_CITED))
+    entries = "".join(_entry(k, 20 + n, _field(f"{k}txt", " back"))
+                      for n, k in enumerate(_CITED))
+    return (FILLER + cites + prose
+            + P(R("References")) + entries + extra_entry + after)
+
+
+def test_an_EXHIBIT_anchor_past_the_list_is_not_an_entry():
+    """Month_of_birth, 2026-10-04: appendix anchors and Word's paste marks
+    each came back as REF WITHOUT CITE or REF WITHOUT BACKLINK, and the
+    gate on `citations` could never pass. `figure-1` is linked from the
+    prose, so read as an entry it was cited and lacked a link home."""
+    appendix = (P(R("Appendix A. Tables and figures"))
+                + P(_mark("Table_1", 50, R("Panel structure.")))
+                + P(_mark("figure-1", 51, R("Enrolment by month.")))
+                + P(_mark("OLE_LINK1", 52, R("Pasted text."))))
+    prose = P(R("As ") + _link("figure-1", "Figure 1") + R(" shows."))
+
+    findings, stats = _audit(_parts(_linked_paper(appendix, prose=prose)))
+
+    assert [(f.kind, f.subject) for f in findings] == []
+    assert stats["ref_bookmarks"] == 3
+
+
+def test_an_UNCITED_entry_is_still_reported_beside_the_exhibits():
+    """The broken half: narrowing the candidates must not narrow the list."""
+    appendix = (P(R("Appendix A. Tables"))
+                + P(_mark("Table_1", 50, R("Panel structure."))))
+    body = _linked_paper(appendix, extra_entry=_entry("Dean2004", 24))
+
+    found = [(f.kind, f.subject) for f in _audit(_parts(body))[0]]
+
+    assert found == [("REF WITHOUT CITE", "Dean2004")]
+
+
+def test_a_CROSSREF_pair_past_the_list_is_left_to_crossrefs():
+    """`Table1txt` -> `Table1` is the crossrefs half of the `<name>txt`
+    scheme. With the caption's bookmark no longer an entry, its mention
+    marker read as a citation of nothing: a CITE WITHOUT REF and a
+    MISSING REF for every exhibit, 5,735 of each over the corpus."""
+    prose = P(R("As ") + _mark("Table1txt", 40, _link("Table1", "Table 1"))
+              + R(" shows."))
+    caption = P(_mark("Table1", 41, R("Table 1. Results"))
+                + _field("Table1txt", " back"))
+
+    findings = _audit(_parts(_linked_paper(caption, prose=prose)))[0]
+
+    assert [(f.kind, f.subject) for f in findings] == []
+
+
+def test_an_AUTHOR_YEAR_bookmark_past_the_list_is_still_judged():
+    """A name shaped like an entry's is about a reference wherever it
+    sits: here the debris of an entry deleted from an appendix list."""
+    appendix = (P(R("Appendix A. Tables"))
+                + P(_mark("Ghost2004", 50, R("Some table."))))
+
+    found = [(f.kind, f.subject)
+             for f in _audit(_parts(_linked_paper(appendix)))[0]]
+
+    assert found == [("STALE BOOKMARK", "Ghost2004")]
+
+
+def test_a_marker_HOISTED_above_the_first_entry_is_inside_the_list():
+    """Word hoists an entry-head marker into the gap above the entry. The
+    list is sliced by XML offset, so that gap is inside it; sliced by
+    paragraph, a body-level marker is in none and would be dropped."""
+    body = (FILLER + P(R("Prose.")) + P(R("References"))
+            + _mark("ref_adams", 20)
+            + P(R("Adams, A. (2001). A title.")))
+
+    found = [(f.kind, f.subject) for f in _audit(_parts(body))[0]
+             if f.kind == "REF WITHOUT CITE"]
+
+    assert found == [("REF WITHOUT CITE", "ref_adams")]
+
+
+def test_with_NO_reference_list_every_candidate_is_still_judged():
+    """No list, no place to judge against: dropping every candidate would
+    empty the audit in silence."""
+    body = FILLER + P(_mark("Anhang", 20, R("Appendix material.")))
+
+    assert [f.subject for f in _kinds(_parts(body), "REF WITHOUT CITE")] == [
+        "Anhang"]
+
+
+@pytest.mark.parametrize(("paras", "bounds"), [
+    (["Intro", "References", "Adams, A. (2001). T.", "Appendix A. X",
+      "Brown, B. (2002). T."], (1, 3)),
+    (["Intro", "References:", "Adams, A. (2001). T.", "",
+      "Table 1. Results", "Brown, B. (2002). T."], (1, 4)),
+    (["Intro", "Bibliography", "Adams, A. (2001). T."], (1, 3)),
+    (["Intro", "Adams, A. (2001). T."], None),
+])
+def test_reference_bounds_ends_where_references_stops(paras, bounds):
+    from docxkit.citations import reference_bounds, references
+
+    assert reference_bounds(paras) == bounds
+    assert [r.index for r in references(paras)] == (
+        [] if bounds is None else
+        [i for i in range(bounds[0] + 1, bounds[1]) if paras[i]])
