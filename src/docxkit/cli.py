@@ -2988,10 +2988,42 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+#: The arguments that name a file the command READS, under whatever
+#: command they belong to. Each is an input wherever it appears.
+_INPUTS = ("docx", "built", "edited", "original", "clean", "spec",
+           "phrases_from")
+
+
+def _check_inputs(args: argparse.Namespace) -> None:
+    """Refuse a missing input before the command runs, as a refusal.
+
+    Twenty-five commands already said `cannot read <path>` and exited 1,
+    because `read_parts` refuses. Five did not: `pdf`, `pages` and
+    `locate` copy the input to a temp before anything reads it,
+    `compare-probe` copies both, and `anchors` opens its spec. A missing
+    path left each one as "internal error … a bug in docxkit", exit 70 —
+    sending the reader to debug the toolkit over a wrong path, and
+    indistinguishable from a real crash in a script's exit-code check
+    (Aging_Well R135, 2026-10-08). The net cannot be the exception
+    itself: on Windows `shutil.copy2` raises WinError 3 with no
+    filename, so nothing downstream knows which path was missing.
+
+    The same wording and code as `read_parts`, so a script sees ONE
+    answer to "the file is not there" from every command.
+    """
+    for dest in _INPUTS:
+        value = getattr(args, dest, None)
+        for path in value if isinstance(value, list) else [value]:
+            if isinstance(path, str) and path and not Path(path).exists():
+                raise PackageError(
+                    f"cannot read {path}: no such file or folder")
+
+
 def main() -> None:
     utf8_console()
     args = build_parser().parse_args()
     try:
+        _check_inputs(args)
         sys.exit(args.fn(args))
     except ProtocolError as exc:
         # a distinct code per refusal, so a caller can tell WHICH one it

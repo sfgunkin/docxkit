@@ -1115,6 +1115,69 @@ def test_a_bug_OUTSIDE_the_error_family_exits_INTERNAL_in_one_line(
     assert "DOCXKIT_TRACEBACK=1" in err and "Traceback" not in err
 
 
+_NEVER_RUN = ("cmd_pdf", "cmd_pages", "cmd_locate", "cmd_compare_probe",
+              "cmd_anchors")
+
+
+def _refuse_to_run(monkeypatch) -> None:
+    """The five commands that reached a copy or an open before anything
+    read the input: if one RUNS, the boundary let the path through."""
+    for name in _NEVER_RUN:
+        monkeypatch.setattr(cli, name, lambda _a, n=name: pytest.fail(
+            f"{n} ran on a missing input"))
+
+
+@pytest.mark.parametrize("argv", [
+    ["pdf", "{missing}", "{out}"],
+    ["pages", "{missing}", "--check"],
+    ["locate", "{missing}", "a phrase"],
+    ["compare-probe", "{present}", "{missing}"],
+    ["anchors", "{present}", "{missing}"],
+    ["locate", "{present}", "--phrases-from", "{missing}"],
+])
+def test_a_MISSING_input_is_refused_not_an_internal_error(
+        monkeypatch, tmp_path, argv):
+    """`pdf`, `pages`, `locate` and `compare-probe` copied the input to a
+    temp first and `anchors` opened its spec, so a wrong path exited 70
+    as "a bug in docxkit" (Aging_Well R135). It is the refusal the other
+    twenty-five commands give: `cannot read <path>`, exit 1. The input
+    that IS there is not the one named."""
+    _refuse_to_run(monkeypatch)
+    present = write(tmp_path / "paper.docx", make_parts(para(run("text"))))
+    paths = {"missing": str(tmp_path / "no" / "such.docx"),
+             "present": str(present), "out": str(tmp_path / "out.pdf")}
+    filled = [arg.format(**paths) for arg in argv]
+    monkeypatch.setattr("sys.argv", ["docxkit", *filled])
+
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+
+    missing = paths["missing"]
+    refusal = f"docxkit: cannot read {missing}: no such file or folder"
+    assert done.value.code == refusal
+
+
+def test_an_input_that_EXISTS_reaches_its_command(monkeypatch, tmp_path):
+    """The boundary refuses absence and nothing else: an output that does
+    not exist yet is not an input, and the command runs."""
+    present = write(tmp_path / "paper.docx", make_parts(para(run("text"))))
+    ran: list[str] = []
+
+    def pdf(args: argparse.Namespace) -> int:
+        ran.append(args.out)
+        return 0
+
+    monkeypatch.setattr(cli, "cmd_pdf", pdf)
+    monkeypatch.setattr("sys.argv", ["docxkit", "pdf", str(present),
+                                     str(tmp_path / "not-yet.pdf")])
+
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+
+    assert done.value.code == 0
+    assert ran == [str(tmp_path / "not-yet.pdf")]
+
+
 def test_DOCXKIT_TRACEBACK_lets_the_bug_through_as_it_is(monkeypatch):
     monkeypatch.setenv("DOCXKIT_TRACEBACK", "1")
     _main_raising(monkeypatch, ValueError("where"))
