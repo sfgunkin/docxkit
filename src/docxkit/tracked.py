@@ -379,7 +379,8 @@ def _return_spaces(parts: Parts, revised_parts: Parts, report: BuildReport,
 
 
 def _carry_rewrites(parts: Parts, original: str | Path,
-                    report: BuildReport, say: Any) -> None:
+                    revised_parts: Parts, report: BuildReport,
+                    say: Any) -> None:
     """What Compare REWRITES rather than drops, so nothing else sees it.
 
     `compare_collateral` answers "what is missing", and neither of these
@@ -388,16 +389,41 @@ def _carry_rewrites(parts: Parts, original: str | Path,
     reach the author, and both were per-paper scripts before they were
     here (HCW's `dedupe_comments.py` and the settings patch in its
     `redline.py`).
+
+    **A duplicate is not always the inputs'.** The math pass comments
+    every resolved math revision through Word, before this runs, and a
+    paragraph holding two of them gets the same rule's text twice. AFI r7
+    (2026-10-05) had no comment in either input, and every build said it
+    had de-duplicated one "present in BOTH inputs" — a cause that could
+    not be true, sending its reader to inspect two clean files. So each
+    dropped note is looked up in the inputs and named by where it was.
     """
-    if _hygiene.keep_tracking(parts, read_parts(original)):
+    original_parts = read_parts(original)
+    if _hygiene.keep_tracking(parts, original_parts):
         report.carried_properties.append("w:trackRevisions")
         say("  carried across: Track Changes was ON and Compare wrote a "
             "fresh settings.xml with it off — an author editing a "
             "'tracked' manuscript whose typing is not being recorded is "
             "the quietest way to lose a round")
     report.deduped_comments = _hygiene.dedupe_comments(parts)
+    in_original = _hygiene._comment_notes(original_parts)
+    in_revised = _hygiene._comment_notes(revised_parts)
     for note in report.deduped_comments:
-        say(f"  de-duplicated a comment present in BOTH inputs: {note}")
+        source = _dedupe_source(note in in_original, note in in_revised)
+        say(f"  de-duplicated a comment {source}: {note}")
+
+
+def _dedupe_source(in_original: bool, in_revised: bool) -> str:
+    """Where a comment the build found twice came from, as a clause."""
+    if in_original and in_revised:
+        return "present in BOTH inputs"
+    if in_original or in_revised:
+        which = "baseline" if in_original else "revised"
+        return (f"in the {which} input only, and written again by this "
+                f"build's math pass")
+    return ("in NEITHER input — this build's math pass wrote it twice "
+            "(Word comments each resolved math revision, and two in one "
+            "paragraph draw the same rule)")
 
 
 def _clear_staging(staging: Path, building: Path, published: bool,
@@ -689,7 +715,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"(Compare regenerates core.xml with only its own save "
                 f"fields; metadata is not tracked-changeable, so nothing "
                 f"else would ever report this)")
-        _carry_rewrites(parts, original, report, say)
+        _carry_rewrites(parts, original, revised_parts, report, say)
         _return_spaces(parts, revised_parts, report, say,
                        fold_space=not whitespace)
         report.dropped = compare_collateral(revised_parts, parts)

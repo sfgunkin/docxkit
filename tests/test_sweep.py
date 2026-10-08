@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
+import sys
 import zipfile
 
 import pytest
@@ -275,3 +276,151 @@ def test_the_LIMIT_env_bounds_a_sweep(monkeypatch, capsys, tmp_path, limit):
 
     out = capsys.readouterr().out
     assert f"({limit} of 5 documents, strided)" in out
+
+
+# --- findings: what an audit change does to the corpus ------------------
+
+
+def _linked(path: pathlib.Path, *anchors: str) -> None:
+    """A document whose links point at bookmarks it does not hold."""
+    body = "".join(
+        para(f'<w:hyperlink w:anchor="{a}">{run(a)}</w:hyperlink>',
+             pid=f"{i + 1:08X}")
+        for i, a in enumerate(anchors))
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("word/document.xml", document(body))
+
+
+def test_findings_are_recorded_per_audit_as_kind_and_subject(tmp_path):
+    _linked(tmp_path / "p.docx", "Smith2020", "Jones2011", "Table3")
+    found = SWEEP.findings_of((tmp_path / "p.docx").read_bytes())
+
+    assert set(found) == set(SWEEP.AUDITS)
+    broken = {s for k, s in found["citations"] if k == "BROKEN LINK"}
+    assert broken == {"Smith2020", "Jones2011", "Table3"}
+    assert found["citations"] == sorted(found["citations"])
+
+
+@pytest.mark.parametrize(("subject", "expected"), [
+    ("Table3", "exhibit"), ("figure2txt", "exhibit"),
+    ("TableA7txt", "exhibit"),
+    ("Denisova2012", "author-year key"), ("OBrien2015txt", "author-year key"),
+    ("Jackson2009a", "author-year key"),
+    ("Meltzer and Richard 1981", "in-text citation"),
+    ("Shorrocks (1978)", "in-text citation"),
+    ("WB_WDI", "other"), ("Arpino_text", "other"), ("Wikipedia", "other"),
+])
+def test_a_subject_has_a_shape(subject, expected):
+    assert SWEEP.shape(subject) == expected
+
+
+def _record(commit: str, **docs: object) -> dict[str, object]:
+    return {"commit": commit, "documents": docs}
+
+
+def test_a_diff_counts_what_went_and_what_came_by_document():
+    """Three findings at the start; one goes, two come, one stays — and
+    a document present only AFTER is counted out loud, not diffed."""
+    before = _record("aaa", a={"citations": [["BROKEN LINK", "Smith2020"],
+                                             ["BROKEN LINK", "Table3"]],
+                               "crossrefs": [], "lint": []},
+                     b={"citations": [["ORPHAN REF", "Jones2011"]],
+                        "crossrefs": [], "lint": []})
+    after = _record("bbb", a={"citations": [["BROKEN LINK", "Smith2020"]],
+                              "crossrefs": [["UNLINKED", "Table3"]],
+                              "lint": []},
+                    b={"citations": [["ORPHAN REF", "Jones2011"],
+                                     ["ORPHAN REF", "Jones2011"]],
+                       "crossrefs": [], "lint": []},
+                    c={"citations": [["ORPHAN REF", "Ng2001"]] * 7,
+                       "crossrefs": [], "lint": []})
+
+    delta = SWEEP.diff_findings(before, after)
+
+    assert [k for _, k in delta["gone"]] == [
+        ("citations", "BROKEN LINK", "Table3")]
+    assert sorted(k for _, k in delta["new"]) == [
+        ("citations", "ORPHAN REF", "Jones2011"),   # a DUPLICATE is new
+        ("crossrefs", "UNLINKED", "Table3")]
+    assert delta["changed"] == 2
+    assert delta["only"] == 1
+
+
+def test_a_diff_prints_the_commits_the_kinds_and_the_shapes(capsys):
+    before = _record("aaa", a={"citations": [["BROKEN LINK", "Table3"]] * 3
+                               + [["BROKEN LINK", "Smith2020"]] * 5,
+                               "crossrefs": [], "lint": []})
+    after = _record("bbb", a={"citations": [], "crossrefs": [], "lint": []})
+
+    SWEEP.diff_findings(before, after)
+
+    out = capsys.readouterr().out
+    assert "aaa -> bbb" in out
+    assert "GONE 8   NEW 0" in out
+    assert "author-year key 5, exhibit 3" in out
+
+
+def test_an_error_that_changes_is_reported_not_diffed(capsys):
+    before = _record("a", d="ERROR KeyError: 'word/document.xml'")
+    after = _record("b", d={"citations": [["BROKEN LINK", "X2020"]] * 5,
+                            "crossrefs": [], "lint": []})
+
+    delta = SWEEP.diff_findings(before, after)
+
+    assert delta["new"] == [] and len(delta["errors"]) == 1
+    assert "ERROR CHANGED d" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("jobs", [1, 3])
+def test_findings_end_to_end_record_then_diff(monkeypatch, capsys, tmp_path,
+                                              jobs):
+    """Record, change the corpus, record again with --diff: the delta is
+    the change. `jobs=3` runs the worker processes, which must be able
+    to import the job by name — so this module IS `sweep` for the test.
+
+    A broken link is two findings, one per audit: citations' BROKEN LINK
+    and crossrefs' DANGLING. Each is the right answer for its own audit.
+    """
+    monkeypatch.syspath_prepend(str(ROOT / "tools"))
+    monkeypatch.setitem(sys.modules, "sweep", SWEEP)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    for i, anchors in enumerate([("A2001",), ("B2002", "C2003"),
+                                 ("D2004", "E2005", "F2006")]):
+        _linked(corpus / f"p{i}.docx", *anchors)
+    before, after = tmp_path / "before.json", tmp_path / "after.json"
+
+    monkeypatch.setattr("sys.argv", ["sweep.py", str(corpus), "--findings",
+                                     str(before), "--jobs", str(jobs)])
+    assert SWEEP.main() == 0
+    record = SWEEP._load(before)
+    assert len(record["documents"]) == 3 and record["commit"]
+
+    _linked(corpus / "p1.docx", "B2002")
+    monkeypatch.setattr("sys.argv", ["sweep.py", str(corpus), "--findings",
+                                     str(after), "--diff", str(before),
+                                     "--jobs", str(jobs)])
+    capsys.readouterr()
+    assert SWEEP.main() == 0
+    out = capsys.readouterr().out
+    assert "3 documents compared, 1 changed" in out
+    assert "GONE 2   NEW 0" in out
+    assert "citations BROKEN LINK" in out and "crossrefs DANGLING" in out
+    assert "'C2003'" in out
+
+    monkeypatch.setattr("sys.argv", ["sweep.py", "--diff", str(before),
+                                     str(after)])
+    assert SWEEP.main() == 0
+    assert "GONE 2   NEW 0" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [
+    ["--diff", "before.json"],                       # nothing to compare
+    ["--diff", "a.json", "b.json", "c.json"],
+    ["--diff", "a.json", "b.json", "--findings", "c.json"],
+])
+def test_a_diff_that_cannot_mean_anything_is_refused(monkeypatch, argv):
+    monkeypatch.setattr("sys.argv", ["sweep.py", *argv])
+    with pytest.raises(SystemExit) as exc:
+        SWEEP.main()
+    assert exc.value.code == 2

@@ -246,6 +246,19 @@ committed that hour: a blank-cell fix that grew a run in EQUATION cells
 and printed the formula again as prose. A synthetic test of the reported
 case is not a measurement of the population it touches.
 
+For a change to an AUDIT, or to a reader an audit stands on
+(`parse_reference`, the citation grammar), record the findings at both
+versions and diff them:
+
+```
+python tools/sweep.py --findings before.json      # at HEAD
+python tools/sweep.py --findings after.json --diff before.json
+```
+
+It prints what went and what came by audit and kind, with the shape of
+the names involved. That breakdown is how the 2026-10-05 exhibit-anchor
+fix was caught dropping author-year findings that tests depended on.
+
 For anything Word-backed, the real check is `docxkit verify` — does Word
 read the file back as written, or repair it on open?
 

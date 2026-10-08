@@ -18,6 +18,7 @@ from docxkit.citations import (
     hyperlink_field,
     key_for,
     parse_reference,
+    reference_head,
     references,
     wrap_link_in_bookmark,
 )
@@ -234,6 +235,54 @@ def test_zotero_field_preamble_is_stripped():
 
 def test_an_entry_with_no_year_is_not_a_reference():
     assert parse_reference("A heading, not a reference entry") is None
+
+
+@pytest.mark.parametrize(("text", "surname", "year", "head"), [
+    ("Denisova, I., M. Eller, T. Frye, and E. Zhuravskaya. (2012) "
+     "“Everyone hates privatization, but why?” AER.",
+     "Denisova", "2012",
+     "Denisova, I., M. Eller, T. Frye, and E. Zhuravskaya. (2012)"),
+    ('Frye, T. (2010a) "Building States and Markets." Cambridge.',
+     "Frye", "2010a", "Frye, T. (2010a)"),
+    ("Guriev, S. (2019) Gaining Trust. Mimeo.",
+     "Guriev", "2019", "Guriev, S. (2019)"),
+    ("Иванов, И. (2018) «Доверие к реформам». Вопросы экономики.",
+     "Иванов", "2018", "Иванов, И. (2018)"),
+    ("Petrova, M. (2008) ‘Inequality and media capture’. JPubE.",
+     "Petrova", "2008", "Petrova, M. (2008)"),
+])
+def test_a_parenthesised_year_with_no_stop_after_it_is_an_entry(
+        text, surname, year, head):
+    """`(2012) “Title”` — no full stop or comma after the year. It was
+    no entry at all, so the work it lists had none and no audit could
+    say so (Support for reforms, BACKLOG S2 2026-10-05). The head is
+    what `link_all` wraps, and it ends at the bracket."""
+    ref = parse_reference(text)
+    assert ref is not None
+    assert (ref.surname, ref.year) == (surname, year)
+    assert reference_head(text) == head
+
+
+@pytest.mark.parametrize("text", [
+    "Smith, J. 2012 Everyone hates privatization.",     # bare year
+    "As Smith (2012) shows, the effect is large.",      # lowercase after
+    "Data from Smith (2012) 45 per cent of firms.",     # a number after
+])
+def test_without_its_stop_a_year_needs_BOTH_brackets_and_a_title(text):
+    """Body prose has a bare year and a space on every page, and a
+    narrative citation has a bracketed one: neither is an entry."""
+    assert parse_reference(text) is None
+    assert reference_head(text) is None
+
+
+def test_a_listed_entry_of_that_form_is_found_in_the_list():
+    doc = ["Introduction", "As Denisova et al. (2012) argue.", "References",
+           "Aksoy, C. (2020). A title. Journal.",
+           "Denisova, I., and E. Zhuravskaya. (2012) “Everyone hates "
+           "privatization.” Brookings.",
+           "Frye, T. (2010) Building States. Cambridge."]
+    assert [r.key for r in references(doc)] == [
+        "aksoy_2020", "denisova_2012", "frye_2010"]
 
 
 def test_reference_and_citation_keys_meet():

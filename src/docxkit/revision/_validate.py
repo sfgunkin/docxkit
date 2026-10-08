@@ -84,6 +84,10 @@ class ValidateReport:
     #: Links the rejected view does not have and the baseline does. See
     #: :func:`_links` for why rejecting a batch can lose one.
     lost_links: list[str] = field(default_factory=list)
+    #: Links the baseline has under one anchor and the rejected view
+    #: under ANOTHER, with the same words: a rename, not a loss. See
+    #: :func:`_lost_or_retargeted`.
+    retargeted_links: list[str] = field(default_factory=list)
     #: WHICH characters the glyph gate disagrees on. One boolean for a
     #: 68,000-character stream tells its reader only that something
     #: moved: on AFI the answer was two characters, and finding them
@@ -347,6 +351,37 @@ def math_anchors(accepted: Parts,
     return list(out)
 
 
+def _lost_or_retargeted(was: Counter[tuple[str, str]],
+                        now: Counter[tuple[str, str]],
+                        ) -> tuple[list[str], list[str]]:
+    """The links reject-all lost, and the ones it only RENAMED.
+
+    A link the baseline has as ``Box2`` and the rejected view as
+    ``Box3``, with the same words, is a rename. A round that renumbers a
+    box as tracked text renames its anchor pair untracked after the
+    promote, since Compare cannot carry bookmarks, and every link still
+    resolves on both verdicts. Reported as LOST, it was handed the
+    rejected-deletion explanation, and a reader went looking for a
+    deletion that did not exist (Aging_Well R133, 2026-10-08).
+
+    Paired on the LABEL: a lost ``(X, label)`` meets a gained
+    ``(Y, label)``, one for one. The verdict does not move — the
+    rejected view still differs from the baseline — only the line that
+    explains it.
+    """
+    gained = list((now - was).elements())
+    lost: list[str] = []
+    retargeted: list[str] = []
+    for anchor, label in sorted((was - now).elements()):
+        match = next((g for g in gained if g[1] == label), None)
+        if match is None:
+            lost.append(f"-> {anchor} ({label[:40]!r})")
+            continue
+        gained.remove(match)
+        retargeted.append(f"{anchor} -> {match[0]} ({label[:40]!r})")
+    return lost, retargeted
+
+
 def validate(path: str | Path, baseline: str | Path | None = None,
              *, use_word: bool = True,
              word_deadline: float | None = None) -> ValidateReport:
@@ -492,9 +527,8 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             # be able to disagree in one report.
             report.emptied_footnotes = emptied_footnotes(
                 rejected, base, report.moved_footnotes)
-            report.lost_links = [
-                f"-> {a} ({label[:40]!r})"
-                for a, label in sorted((was - now).elements())]
+            report.lost_links, report.retargeted_links = _lost_or_retargeted(
+                was, now)
             report.structure_diff = struct_moved
 
     if word_accept_glyph is not None:

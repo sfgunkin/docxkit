@@ -1888,24 +1888,75 @@ def test_a_part_carried_from_the_BASELINE_is_said_part_by_part(
         for name in report.carried_from_baseline], said
 
 
+def _dedupe(original: Path, *, base: tuple[str, ...] = (),
+            revised: tuple[str, ...] = ()) -> tuple[str, list[str]]:
+    """Run the carry over a redline holding one note TWICE, with the
+    given comments in each input; (the dropped note, what was said)."""
+    note = "Check this number against Table 3."
+    original.unlink()
+    with zipfile.ZipFile(original, "w") as z:
+        for name, blob in make_parts(para(run("Employment rises.")),
+                                     comment_items=tuple(
+                                         comment(i, t) for i, t in
+                                         enumerate(base, 1))).items():
+            z.writestr(name, blob)
+    revised_parts = make_parts(para(run("Employment rises.")),
+                               comment_items=tuple(
+                                   comment(i, t) for i, t in
+                                   enumerate(revised, 1)))
+    parts = make_parts(para(run("Employment rises.")), comment_items=(
+        comment(1, note), comment(2, note), comment(3, "Another note.")))
+    report = tracked.BuildReport()
+    said: list[str] = []
+
+    tracked._carry_rewrites(parts, original, revised_parts, report,
+                            said.append)
+
+    (dropped,) = report.deduped_comments
+    return dropped, said
+
+
 def test_a_comment_de_duplicated_across_the_Compare_is_said_by_name(
         sources):
     """Compare hands the author their own note twice when both inputs
     carry it, and the build drops one copy. Dropping an author's comment
     is not something to do silently: the progress line names it, and the
     report field beside it cannot stand in for that line."""
-    parts = make_parts(para(run("Employment rises.")), comment_items=(
-        comment(1, "Check this number against Table 3."),
-        comment(2, "Check this number against Table 3.")))
-    report = tracked.BuildReport()
-    said: list[str] = []
+    note = "Check this number against Table 3."
+    dropped, said = _dedupe(sources[0], base=(note, "Another note."),
+                            revised=(note,))
 
-    tracked._carry_rewrites(parts, sources[0], report, said.append)
-
-    (note,) = report.deduped_comments
-    assert "Check this number" in note, note
+    assert "Check this number" in dropped, dropped
     assert said == [f"  de-duplicated a comment present in BOTH inputs: "
-                    f"{note}"], said
+                    f"{dropped}"], said
+
+
+def test_a_duplicate_NEITHER_input_holds_is_not_blamed_on_them(sources):
+    """AFI r7: no comment in either input, and every build said it had
+    de-duplicated one "present in BOTH inputs". The math pass comments
+    each resolved math revision through Word, and two in one paragraph
+    draw the same rule — so the line names the build, not two clean
+    files. Inputs with OTHER comments are still neither."""
+    dropped, said = _dedupe(sources[0], base=("Another note.",),
+                            revised=("Something else.",))
+
+    assert len(said) == 1 and dropped in said[0]
+    assert "in NEITHER input" in said[0] and "math pass" in said[0]
+    assert "BOTH" not in said[0]
+
+
+@pytest.mark.parametrize(("in_base", "which"), [(True, "baseline"),
+                                                (False, "revised")])
+def test_a_duplicate_ONE_input_holds_names_that_input(sources, in_base,
+                                                      which):
+    note = "Check this number against Table 3."
+    dropped, said = _dedupe(sources[0],
+                            base=(note,) if in_base else (),
+                            revised=() if in_base else (note,))
+
+    assert said == [f"  de-duplicated a comment in the {which} input only, "
+                    f"and written again by this build's math pass: "
+                    f"{dropped}"], said
 
 
 def test_tidying_a_staging_directory_already_gone_raises_nothing(tmp_path):

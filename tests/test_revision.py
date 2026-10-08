@@ -4793,6 +4793,56 @@ def test_the_lost_link_line_names_the_anchor_and_forty_of_its_LABEL(tmp_path):
         '-> Gone ("United Nations Children\'s Fund report of")']
 
 
+def test_a_link_RENAMED_with_its_words_kept_is_retargeted_not_lost(tmp_path):
+    """Aging_Well R133: Box 2 became Box 3 as tracked text, and its anchor
+    pair was renamed untracked after the promote. Every link resolved on
+    both verdicts, and `validate` said LINK LOST with the rejected-
+    deletion explanation — a deletion that did not exist. The verdict
+    stands; the explanation names the rename. A link whose words went
+    with it is still LOST, and the pairing is one for one: three Box2
+    links against two Box3 ones leave one lost."""
+    def link(anchor: str, label: str) -> str:
+        return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+                "</w:r></w:hyperlink>")
+
+    baseline_path = write(tmp_path / "prev-box.docx", make_parts(
+        "".join(f"<w:p>{link('Box2', 'Box 2')}</w:p>" for _ in range(3))
+        + f"<w:p>{link('Smith2020', 'Smith (2020)')}</w:p>"
+        + f"<w:p>{link('Kept', 'kept')}</w:p>"))
+    batch = write(tmp_path / "batch-box.docx", make_parts(
+        "".join(f"<w:p>{link('Box3', 'Box 2')}</w:p>" for _ in range(2))
+        + "<w:p><w:r><w:t>Box 2</w:t></w:r></w:p>"
+        + "<w:p><w:r><w:t>Smith (2020)</w:t></w:r></w:p>"
+        + f"<w:p>{link('Kept', 'kept')}</w:p>"))
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.reject_matches_baseline is False
+    assert report.retargeted_links == ["Box2 -> Box3 ('Box 2')"] * 2
+    assert report.lost_links == ["-> Box2 ('Box 2')",
+                                 "-> Smith2020 ('Smith (2020)')"]
+
+
+def test_a_gained_link_with_OTHER_words_is_no_retarget(tmp_path):
+    """The pairing is on the label: a link lost here and an unrelated one
+    gained there are a loss and a gain, not a rename."""
+    def link(anchor: str, label: str) -> str:
+        return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+                "</w:r></w:hyperlink>")
+
+    baseline_path = write(tmp_path / "prev-other.docx", make_parts(
+        f"<w:p>{link('Box2', 'Box 2')}</w:p><w:p><w:r><w:t>Table 1</w:t>"
+        "</w:r></w:p>"))
+    batch = write(tmp_path / "batch-other.docx", make_parts(
+        "<w:p><w:r><w:t>Box 2</w:t></w:r></w:p>"
+        f"<w:p>{link('Table1', 'Table 1')}</w:p>"))
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.retargeted_links == []
+    assert report.lost_links == ["-> Box2 ('Box 2')"]
+
+
 @pytest.fixture
 def migrated(tmp_path):
     """A migrated project, for the declaration reader below."""

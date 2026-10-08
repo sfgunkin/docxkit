@@ -67,6 +67,8 @@ docxkit._xml	set_para_property
 docxkit._xml	set_run_property
 docxkit._xml	set_run_text
 docxkit._xml	visible_text
+docxkit.authors	read_authors
+docxkit.authors	set_author
 docxkit.batch	DOCUMENT
 docxkit.batch	Edit
 docxkit.batch	FOOTNOTES
@@ -80,6 +82,7 @@ docxkit.body	row
 docxkit.body	run
 docxkit.body	table
 docxkit.body	visible_text
+docxkit.citations	IGNORED_LEADS
 docxkit.citations	audit_links
 docxkit.citations	balanced_span
 docxkit.citations	delete_bookmark

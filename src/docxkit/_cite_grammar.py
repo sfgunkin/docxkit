@@ -115,7 +115,17 @@ _NARRATIVE_RE = re.compile(
 # these papers and a parser that knows only one finds almost nothing:
 #     Maestas, Nicole, ... 2023. "Title."      (AFI)
 #     Bucher-Koenen, T., and S. Kluth. (2013). "Title."   (LE, HPPA)
-_REF_YEAR_RE = re.compile(rf"\(?\b({_YEAR})\b\)?\s*[.,]")
+# and a third, with no stop after the parenthesised year at all:
+#     Denisova, I., ... and E. Zhuravskaya. (2012) “Everyone hates …”
+# which parsed as no entry, so its work had none and nothing said so
+# (Support for reforms, BACKLOG S2 2026-10-05). Accepted ONLY in
+# parentheses and only before a quote or a capital: body prose carries a
+# bare year followed by a space on every page. The two lookbehinds are
+# one `\(\d{4}[a-z]?`, split because a lookbehind must be fixed-width.
+_REF_YEAR_RE = re.compile(
+    rf"\(?\b({_YEAR})\b"
+    r"(?:\)?\s*[.,]"
+    r"|(?:(?<=\(\d{4})|(?<=\(\d{4}[a-z]))\)(?=\s+[\"'“‘«„A-ZА-ЯЁ]))")
 # Zotero leaves field-code preambles in the paragraph text of the first
 # reference when it re-runs inside Word.
 _ZOTERO_RE = (

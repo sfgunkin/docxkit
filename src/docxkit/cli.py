@@ -2170,6 +2170,11 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                       f"hyperlink and the rejected batch does not — Word's "
                       f"Compare does not rebuild a link inside a rejected "
                       f"deletion, so the words come back as plain text")
+            for link in report.retargeted_links:
+                print(f"   LINK RETARGETED {link}: the rejected batch "
+                      f"carries this link, with the same words, under a "
+                      f"new anchor — a bookmark renamed outside the "
+                      f"tracked changes, not a link lost")
     if report.accept_paths_agree is not None:
         print("== XML accept == Word accept ?",
               "OK" if report.accept_paths_agree else "MISMATCH")

@@ -1,6 +1,8 @@
 r"""Run every read-only docxkit routine over a corpus of real manuscripts.
 
     python tools/sweep.py [<root> ...] [--limit N] [--slow MS]
+    python tools/sweep.py [<root> ...] --findings after.json [--diff before.json]
+    python tools/sweep.py --diff before.json after.json
 
 A unit suite on synthetic fixtures proves the rules; this proves they
 survive contact with documents nobody wrote them for — Russian
@@ -14,6 +16,16 @@ Reports, in order of what is worth acting on:
               paragraphs, captions but no figures, citations but no
               reference list)
   SLOW        operations above the --slow threshold
+
+**What did a change to an audit do to the corpus?** ``--findings OUT``
+runs the AUDITS instead of the routines — citations, crossrefs, lint —
+and records each document's (kind, subject) findings, with the commit
+they were made at. Record once at each version; ``--diff BEFORE`` prints
+what went and what came, by audit and kind, with the shape of the names
+involved (exhibit, author-year key, in-text citation) and the documents.
+It exits 0 whatever it finds: it is a measurement, not a gate, and
+"how many findings may a change move?" has no right number.
+``--jobs N`` (default 6) runs the documents in N processes.
 
 **Where the corpus is.** With no roots on the command line this reads
 ``DOCXKIT_CORPUS`` — one or more directories, separated the way the
@@ -34,16 +46,19 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import re
 import statistics
+import subprocess
 import sys
 import time
 import traceback
 import zipfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -69,6 +84,9 @@ SKIP = re.compile(r"~\$|backup|_old|_pre_|\.tmp|userbackup|bak_",
 
 
 Routine = Callable[[], object]
+#: A findings record as `--findings` writes it: the commit, and per
+#: document either {audit: [[kind, subject], ...]} or an error string.
+Record = dict[str, Any]
 
 
 def _self_diff(raw: dict[str, bytes]) -> int:
@@ -250,6 +268,194 @@ def report(failures, skipped, anomalies, timings, results, *,
               f"{times[-1]:8.1f}{flag}")
 
 
+# --- findings: what an audit change does to the corpus ------------------
+#
+# Narrowing an audit rule is measured over the corpus before and after,
+# and until 2026-10-08 every measurement was hand-rolled: `_no_backlink`
+# over 100 manuscripts, the UNLINKED label rule over 397, the exhibit-
+# anchor fix over 1,784. The routines above keep no findings, so they
+# cannot answer "which findings did this change remove or add, and in
+# which documents" — and on 2026-10-05 the hand-rolled answer is what
+# caught a fix's first version ADDING 11,470 findings while removing
+# 2,691. Two runs, one at each version, and a diff.
+
+#: The audits whose findings are recorded. Each returns (kind, subject)
+#: pairs; `subject` is what the finding is ABOUT — a bookmark, a
+#: citation — so the same finding at both versions is the same pair.
+AUDITS = ("citations", "crossrefs", "lint")
+
+
+def findings_of(blob: bytes) -> dict[str, list[list[str]]]:
+    """Every audit's findings for one document, sorted, as JSON pairs.
+
+    crossrefs' ``linked`` bucket is the one that is not a finding: it is
+    the exhibits that are RIGHT. lint's messages carry no kind of their
+    own, so they file under one, with the message as the subject.
+    """
+    from docxkit._cite_audit import _audit_findings  # noqa: PLC0415
+
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        raw = {n: z.read(n) for n in z.namelist()}
+    doc = raw["word/document.xml"].decode("utf-8")
+    cite, _ = _audit_findings(dict(raw))
+    xref = crossrefs.audit(doc)
+    return {
+        "citations": sorted([f.kind, f.subject] for f in cite),
+        "crossrefs": sorted([kind.upper(), subject]
+                            for kind, subjects in xref.items()
+                            if kind != "linked" for subject in subjects),
+        "lint": sorted(["LINT", m] for m in lint.lint_parts(dict(raw))),
+    }
+
+
+def _findings_job(path: str) -> tuple[str, dict[str, list[list[str]]] | str]:
+    """One document's findings, or the error that stopped them.
+
+    Module level, so a worker process can import it by name.
+    """
+    try:
+        return path, findings_of(read_bytes(path, skip_if_locked=False))
+    except Exception as exc:          # recorded, and diffed
+        return path, f"ERROR {type(exc).__name__}: {exc}"
+
+
+def record_findings(paths: list[Path], out: Path, jobs: int) -> Record:
+    """Run the audits over `paths` and write what they found to `out`.
+
+    The record carries the commit it was made at and whether the tree
+    was dirty: a before/after pair is two runs at two versions, and a
+    file that cannot say which version it is a measurement of is the
+    mistake this exists to prevent.
+    """
+    docs: dict[str, object] = {}
+    names = [str(p) for p in paths]
+    if jobs > 1:
+        from concurrent.futures import ProcessPoolExecutor  # noqa: PLC0415
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            for i, (path, res) in enumerate(
+                    pool.map(_findings_job, names, chunksize=4), 1):
+                docs[path] = res
+                _progress(i, len(names))
+    else:
+        for i, name in enumerate(names, 1):
+            path, res = _findings_job(name)
+            docs[path] = res
+            _progress(i, len(names))
+    record = {"commit": _commit(), "documents": docs}
+    out.write_text(json.dumps(record, ensure_ascii=False, indent=0,
+                              sort_keys=True), encoding="utf-8")
+    errors = sum(isinstance(v, str) for v in docs.values())
+    total = sum(len(pairs) for v in docs.values() if isinstance(v, dict)
+                for pairs in v.values())
+    print(f"\nRECORDED {len(docs)} documents, {total} findings, "
+          f"{errors} error(s) -> {out}  (at {record['commit']})")
+    return record
+
+
+def _progress(done: int, total: int) -> None:
+    if done == total or done % 50 == 0:
+        print(f"  {done}/{total}", flush=True)
+
+
+def _commit() -> str:
+    """HEAD, with `+dirty` when the working tree differs from it."""
+    repo = Path(__file__).resolve().parents[1]
+    try:
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              cwd=repo, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "src"],
+                               cwd=repo, capture_output=True, text=True,
+                               check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return head + ("+dirty" if dirty else "")
+
+
+_EXHIBIT = re.compile(
+    r"^(?:table|figure|fig|box|chart|map|exhibit|panel|appendix|section|"
+    r"eq)", re.IGNORECASE)
+_KEY = re.compile(r"^[A-Za-z][A-Za-z.]*?\d{4}[a-z]?(?:_\d+)?(?:txt)?$")
+_CITATION = re.compile(r"\s.*\d{4}")
+
+
+def shape(subject: str) -> str:
+    """What KIND of name a finding is about, for the breakdown.
+
+    The question a delta raises first is "which names went?": the
+    exhibit-anchor fix was right to drop `Table4` and `figure2txt`, and
+    wrong to drop the 119 author-year keys among them.
+    """
+    if _EXHIBIT.match(subject):
+        return "exhibit"
+    if _KEY.match(subject):
+        return "author-year key"
+    if _CITATION.search(subject):
+        return "in-text citation"
+    return "other"
+
+
+def _pairs(entry: object) -> Counter[tuple[str, str, str]] | None:
+    if not isinstance(entry, dict):
+        return None
+    return Counter((audit, kind, subject)
+                   for audit, pairs in entry.items()
+                   for kind, subject in pairs)
+
+
+def diff_findings(before: Record, after: Record, *,
+                  show: int = 5) -> dict[str, Any]:
+    """Print what changed between two records; return the delta.
+
+    Compared over the documents BOTH records hold, and the ones only one
+    holds are counted out loud — two strided samples of different sizes
+    are different documents, and their difference is not the change's.
+    """
+    b_docs, a_docs = before["documents"], after["documents"]
+    common = sorted(set(b_docs) & set(a_docs))
+    only = len(set(b_docs) ^ set(a_docs))
+    gone: list[tuple[str, tuple[str, str, str]]] = []
+    new: list[tuple[str, tuple[str, str, str]]] = []
+    errors: list[tuple[str, object, object]] = []
+    changed = 0
+    for path in common:
+        b, a = _pairs(b_docs[path]), _pairs(a_docs[path])
+        if b is None or a is None:
+            if b_docs[path] != a_docs[path]:
+                errors.append((path, b_docs[path], a_docs[path]))
+            continue
+        if b != a:
+            changed += 1
+        gone += [(path, k) for k, n in (b - a).items() for _ in range(n)]
+        new += [(path, k) for k, n in (a - b).items() for _ in range(n)]
+
+    print(f"\n{'=' * 72}\nFINDINGS {before.get('commit')} -> "
+          f"{after.get('commit')}: {len(common)} documents compared, "
+          f"{changed} changed"
+          + (f", {only} in ONE record only (not compared)" if only else ""))
+    print(f"  GONE {len(gone)}   NEW {len(new)}")
+    for label, rows in (("GONE", gone), ("NEW", new)):
+        by_kind: dict[tuple[str, str], list[tuple[str, str]]] = \
+            defaultdict(list)
+        for path, (audit, kind, subject) in rows:
+            by_kind[(audit, kind)].append((path, subject))
+        for (audit, kind), hits in sorted(by_kind.items(),
+                                          key=lambda kv: -len(kv[1])):
+            shapes = Counter(shape(s) for _, s in hits)
+            files = len({p for p, _ in hits})
+            print(f"\n  {label} {len(hits):6}  {audit} {kind}  "
+                  f"({files} document(s))")
+            print("          " + ", ".join(
+                f"{s} {n}" for s, n in shapes.most_common()))
+            for path, subject in hits[:show]:
+                print(f"          {subject[:40]!r}  {Path(path).name[:40]}")
+    for path, was, now in errors:
+        print(f"\n  ERROR CHANGED {Path(path).name}\n      before: "
+              f"{str(was)[:100]}\n      after:  {str(now)[:100]}")
+    return {"gone": gone, "new": new, "errors": errors, "changed": changed,
+            "only": only}
+
+
 #: Exit code for "this did not run, and here is why" — distinct from
 #: both 0 (swept, nothing failed) and 1 (a routine raised). `gates.py`
 #: prints it as `skip`, so a chain over a machine with no corpus reads
@@ -298,7 +504,24 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--slow", type=float, default=250.0,
                     help="flag routines whose p95 exceeds this, in ms")
+    ap.add_argument("--findings", type=Path, metavar="OUT",
+                    help="record the audits' findings to OUT instead of "
+                         "running the routines")
+    ap.add_argument("--diff", type=Path, nargs="+", metavar="RECORD",
+                    help="BEFORE (with --findings), or BEFORE AFTER")
+    ap.add_argument("--jobs", type=int, default=6)
     args = ap.parse_args()
+
+    if args.diff and len(args.diff) > 2:
+        ap.error("--diff takes BEFORE, or BEFORE AFTER")
+    if args.diff and len(args.diff) == 2:
+        if args.findings or args.roots:
+            ap.error("--diff BEFORE AFTER compares two records; it sweeps "
+                     "nothing")
+        diff_findings(*(_load(p) for p in args.diff))
+        return 0
+    if args.diff and not args.findings:
+        ap.error("--diff BEFORE needs --findings OUT to compare it with")
 
     roots = corpus_roots(args.roots)
     if not roots:
@@ -336,7 +559,20 @@ def main() -> int:
     chosen = sample(paths, limit)
     if len(chosen) < len(paths):
         print(f"  ({len(chosen)} of {len(paths)} documents, strided)")
+    if args.findings:
+        # Read BEFORE the run: a bad path should cost a second, not the
+        # ten minutes of a corpus.
+        before = _load(args.diff[0]) if args.diff else None
+        after = record_findings(chosen, args.findings, max(1, args.jobs))
+        if before is not None:
+            diff_findings(before, after)
+        return 0
     return sweep(chosen, args.slow)
+
+
+def _load(path: Path) -> Record:
+    record: Record = json.loads(path.read_text(encoding="utf-8"))
+    return record
 
 
 if __name__ == "__main__":

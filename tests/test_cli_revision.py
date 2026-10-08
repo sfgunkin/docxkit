@@ -1157,6 +1157,23 @@ def test_validate_says_which_LINK_the_rejected_batch_lost(monkeypatch,
     assert "LINK LOST -> Table5" in out
 
 
+def test_validate_calls_a_renamed_anchor_RETARGETED(monkeypatch, project,
+                                                     capsys):
+    """Not "lost inside a rejected deletion": no deletion is involved and
+    the link is there, under its new name (Aging_Well R133)."""
+    def linked(anchor: str) -> str:
+        return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>Box 2</w:t>'
+                "</w:r></w:hyperlink>")
+    write(project.prev, make_parts(para(run("see"), linked("Box2"))))
+    write(project.batch, make_parts(para(run("see"), linked("Box3"))))
+    code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "LINK RETARGETED Box2 -> Box3 ('Box 2')" in out, out
+    assert "LINK LOST" not in out and "rejected deletion" not in out
+
+
 def test_validate_says_which_PART_the_batch_lost(monkeypatch, project,
                                                  capsys):
     """The reject-all gate proves the TEXT round-trips; nothing proved

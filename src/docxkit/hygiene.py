@@ -756,18 +756,10 @@ def dedupe_comments(parts: Parts) -> list[str]:
     # is what Word calls "unreadable content", which is the failure
     # this function's anchor sweep was added to prevent, arriving
     # through a different door.
-    for m in re.finditer(r"<w:comment\b[^>]*(?<!/)>.*?</w:comment>",
-                         xml, re.DOTALL):
-        author = re.search(r'w:author="([^"]*)"', m.group(0))
-        # Through `visible_text`, not a bare `w:t` scrape: one copy
-        # written by the author's Word and one restored by an earlier
-        # round from another writer differ in ESCAPING — `&quot;`
-        # against a literal `"` — and two spellings of one note are the
-        # duplicate this exists to find, not two notes.
-        text = visible_text(m.group(0)).split()
-        key = (author.group(1) if author else "", " ".join(text))
+    for m in _COMMENT_RE.finditer(xml):
+        key = _comment_key(m.group(0))
         if key in seen and key[1]:
-            dropped.append(f"{key[0]}: {key[1][:60]}")
+            dropped.append(_comment_note(key))
             if cid := re.search(r'w:id="(\d+)"', m.group(0)):
                 gone.append(cid.group(1))
             out.append(xml[at:m.start()])
@@ -780,6 +772,45 @@ def dedupe_comments(parts: Parts) -> list[str]:
     parts[COMMENTS] = "".join(out).encode("utf-8")
     _drop_comment_anchors(parts, gone)
     return dropped
+
+
+# `(?<!/)>` — the guard PARA_RE and RUN_RE both carry; see the note in
+# `dedupe_comments` for what an EMPTY comment does without it.
+_COMMENT_RE = re.compile(r"<w:comment\b[^>]*(?<!/)>.*?</w:comment>",
+                         re.DOTALL)
+
+
+def _comment_key(comment_xml: str) -> tuple[str, str]:
+    """What makes two comments the SAME note: author and collapsed text.
+
+    Through `visible_text`, not a bare `w:t` scrape: one copy written by
+    the author's Word and one restored by an earlier round from another
+    writer differ in ESCAPING — `&quot;` against a literal `"` — and two
+    spellings of one note are the duplicate `dedupe_comments` exists to
+    find, not two notes.
+    """
+    author = re.search(r'w:author="([^"]*)"', comment_xml)
+    return (author.group(1) if author else "",
+            " ".join(visible_text(comment_xml).split()))
+
+
+def _comment_note(key: tuple[str, str]) -> str:
+    """How a de-duplicated comment is NAMED in a report."""
+    return f"{key[0]}: {key[1][:60]}"
+
+
+def _comment_notes(parts: Parts) -> set[str]:
+    """Every comment of a package, named as `dedupe_comments` names one.
+
+    So a caller can ask where a dropped note CAME from by asking which
+    input holds it — the same key and the same name, rather than a
+    second reading of what makes two comments one.
+    """
+    xml = parts.get(COMMENTS, b"").decode("utf-8", "replace")
+    return {_comment_note(key)
+            for key in map(_comment_key,
+                           (m.group(0) for m in _COMMENT_RE.finditer(xml)))
+            if key[1]}
 
 
 def _drop_comment_anchors(parts: Parts, ids: list[str]) -> None:
