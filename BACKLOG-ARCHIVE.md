@@ -14,6 +14,191 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `revision validate`'s reject-all calls an untracked anchor RENAME a link "lost inside a rejected deletion"~~ — FIXED 08.10, `b873060`
+
+<!-- status: fixed -->
+
+Measured 2026-10-08 on Aging_Well R133. The round renumbered a box (Box 2 →
+Box 3) as tracked text and, untracked after the promote (Compare cannot carry
+bookmarks), renamed its anchor pair `Box2`/`Box2txt` → `Box3`/`Box3txt` and
+retargeted its four links. Every link still resolves on BOTH verdicts
+(`citations` and `crossrefs --audit` run on an XML reject-all: 0 broken, 0
+dangling links to `Box3`). `validate`'s reject-all layer printed:
+
+    LINK LOST -> Box2 ('Box 2'): ... Word's Compare does not rebuild a link
+    inside a rejected deletion, so the words come back as plain text      (x4)
+    STRUCTURE bookmarkStart: lost 'Box2' / gained 'Box3', 'Box3txt', ...
+
+No deletion is involved and the words do not come back as plain text: the
+links are there, under the new name. The diagnosis is the one written for a
+different event (a link inside a `w:del`), applied to any target-name
+mismatch, so a reader chasing it looks for a deletion that does not exist.
+
+Suggested fix: pair LOST/GAINED links by label text and position before
+naming them; a lost `X` and a gained `Y` with the same label at the same place
+is a RENAME, reported as `LINK RETARGETED Box2 -> Box3 ('Box 2')`, with the
+rejected-deletion sentence kept for a lost link that has no counterpart.
+Severity S4: the verdict (reject-all ≠ baseline on apparatus) is right; the
+explanation is wrong. Workaround in use: gate the materialised reject-all
+view with `citations`/`crossrefs` by hand and read the names.
+
+**Closed 2026-10-08.** `_validate._lost_or_retargeted` pairs each lost
+`(anchor, label)` with a gained one carrying the same label, one for
+one. A paired link is reported in `ValidateReport.retargeted_links` and
+printed as `LINK RETARGETED Box2 -> Box3 ('Box 2')`: the rejected batch
+carries the link under a new anchor, which is a bookmark renamed outside
+the tracked changes. A lost link with no counterpart keeps the
+rejected-deletion explanation. The verdict does not move, because
+`detail["links"]` still compares the multisets.
+
+Pairing is on the label only. `_links` keeps no position, and a gained
+link with the same words is what the reader would see in place of the
+lost one. Tests: `test_a_link_RENAMED_with_its_words_kept_is_retargeted_not_lost`
+(three Box2 links against two Box3 ones leave one lost, and a citation
+link whose words went is still lost),
+`test_a_gained_link_with_OTHER_words_is_no_retarget`, and the CLI's
+`test_validate_calls_a_renamed_anchor_RETARGETED`, which also asserts
+that no "rejected deletion" line is printed. The workaround was a manual
+check, with no script to delete.
+
+### ~~S4 — `tracked.build` says a de-duplicated comment was "present in BOTH inputs" when neither input had one~~ — FIXED 08.10, `b873060`
+
+<!-- status: fixed -->
+
+Found 2026-10-05 on AFI r7 (`revision/scripts/r7_redline.py`). Both
+inputs had **0 comments** — `word/comments.xml` absent from
+`revision/build/prev.docx` and from `revision/build/r7_polfix.docx`,
+counted by a read of each package — yet both builds printed
+`de-duplicated a comment present in BOTH inputs: <author>: r7 / Table A5
+rows 4–6 …`, naming a comment the `classify` rules had just written.
+`_carry_rewrites` (`tracked.py:398-400`) runs
+`_hygiene.dedupe_comments(parts)` over the OUTPUT and attributes every
+duplicate it removes to the inputs. With no comment in either input, the
+duplicate must have arisen inside the build — the comment text is one of
+the paper's `classify` rules (the ¶ with the two resolved maths
+revisions), so the annotate pass is the likely source, NOT traced. The
+message names a cause that cannot be true and sends the reader to inspect
+two clean files. The result itself was right: 47 comments, verified in
+Word.
+
+Fix sketch: count each removed comment's text in the two inputs'
+`comments.xml` and say "present in both inputs" only when it is; otherwise
+"written twice by this build's annotate pass" with the rule that matched.
+Workaround in use: none needed — the census script confirmed the inputs
+were clean.
+
+**Closed 2026-10-08.** Traced, and the source is not the annotate pass.
+`_carry_rewrites` runs BEFORE `annotate`. The duplicate comes from the
+math pass: with `resolve_math`, `_comment_and_accept_math_revisions`
+comments every resolved math revision through Word, and the r7 rule's
+paragraph ("(p = 0.722;") holds the two slopes, so it carried two Word
+comments with the same rule text.
+
+Each dropped note is now looked up in both inputs' `comments.xml`
+through `hygiene._comment_notes`. That helper uses the same
+`_comment_key` / `_comment_note` that `dedupe_comments` uses, factored
+out so there is one reading of what makes two comments one. The line
+says "present in BOTH inputs" only when both inputs hold the note. For
+one input it says "in the baseline/revised input only, and written again
+by this build's math pass", and for neither it says "in NEITHER input —
+this build's math pass wrote it twice". `_carry_rewrites` takes the
+revised parts, which `build` already holds.
+
+The old test pinned the false message: it asserted "present in BOTH
+inputs" over an original with no comments. It now writes the note into
+both inputs. New tests: `test_a_duplicate_NEITHER_input_holds_is_not_blamed_on_them`
+and `test_a_duplicate_ONE_input_holds_names_that_input` (baseline,
+revised). No workaround existed.
+
+### ~~S4 — no tool says what an audit change does to the corpus's findings~~ — FIXED 08.10, `b873060`
+
+<!-- status: fixed -->
+
+Narrowing an audit rule is measured over the corpus before and after:
+`_no_backlink`'s docstring cites 100 manuscripts, the UNLINKED label rule
+397, and the 2026-10-05 exhibit-anchor fix 1,784. Every time this is
+hand-rolled. `tools/sweep.py` runs the routines and reports crashes and
+anomalies, but it keeps no findings, so it cannot answer "which findings
+did this change remove or add, and in which documents". On 2026-10-05
+the hand-rolled diff is what caught the fix's first version adding
+11,470 findings while removing 2,691, and dropping 119 author-year ones
+that pinned tests depended on.
+
+Workaround (scratchpad, not in any paper): `measure_cite.py` runs
+`_audit_findings` over every docx with 6 workers into JSON, and
+`diff_cite.py` reports the delta by kind with the files involved.
+Fix sketch: `tools/sweep.py --findings out.json` records
+`(kind, subject)` per document for each audit (citations, crossrefs,
+lint), and `--diff before.json` prints gone/new by kind, plus a name-shape
+breakdown of what went.
+
+**Closed 2026-10-08.** `tools/sweep.py --findings OUT` runs the audits
+(citations, crossrefs and lint) instead of the routines, and records each
+document's `(kind, subject)` findings with the commit and a `+dirty`
+mark for an edited `src`. `--diff BEFORE` with it, or `--diff BEFORE
+AFTER` alone, prints what went and what came, by audit and kind. Each
+kind gets a shape breakdown (exhibit, author-year key, in-text citation,
+other), the number of documents and the first few subjects. Documents
+held by only one record are counted and left out of the diff, and a
+changed error is reported rather than diffed. `--jobs N` (default 6) runs
+documents in worker processes. Exits 0 whatever it finds, because it is
+a measurement and not a gate.
+
+Its first use measured the S2 year fix above, over 1,741 documents.
+Tests: seven new in `tests/test_sweep.py` (twenty cases), covering the
+record, the shapes, a diff that counts duplicates and a one-record
+document, an error changing, the end-to-end record-then-diff at
+`jobs=1` and `jobs=3`, and the three argument combinations that are
+refused. The scratchpad
+workaround (`measure_cite.py`, `diff_cite.py`) was never in a paper.
+
+### ~~S2 — an entry whose year is followed by a quote, not a full stop, is not an entry~~ — FIXED 08.10, `b873060`
+
+<!-- status: fixed -->
+
+Found 2026-10-05 while measuring the fix above over the corpus.
+`sr1_02072024_IT_ML_SC.docx` (Support for reforms) lists "Denisova, I.,
+M. Eller, T. Frye, and E. Zhuravskaya. (2012) “Everyone hates
+privatization …”". `references()` returns no Denisova entry, because
+`_REF_YEAR_RE` (`_cite_grammar.py`) requires `.` or `,` after the year
+and here a space and an opening quote follow it. The work then has no
+entry: `_marker_owner("Denisova2012", entries)` is None, and neither the
+builder nor any audit check that resolves a key to its entry can see it.
+Nothing reports the missing entry. The paper's own symptoms are
+SELF LINK and a citation landing in prose.
+
+Fix sketch: accept `(YEAR)` followed by whitespace and an opening
+quote or a capital, but ONLY with the parentheses, so that body prose
+with a bare year still does not parse. Measure over the corpus before
+and after, as `parse_reference` has drifted that way before. No
+per-paper workaround exists.
+
+**Closed 2026-10-08.** `_REF_YEAR_RE` takes a third form: `(YEAR)` with
+no stop after it, but only when the year is bracketed on BOTH sides and
+followed by whitespace and an opening quote (`"`, `'`, `“`, `‘`, `«`, `„`)
+or a capital (Latin or Cyrillic). A bare year followed by a space, and a
+narrative `Smith (2012) shows`, still do not parse. `reference_head`
+reads the same expression, so the head ends at the bracket.
+
+Measured over the corpus with the new `sweep --findings/--diff` (1,741
+documents, d3db18b → fix): 103 documents changed, 153 findings gone and
+60 new. Gone: 140 STALE BOOKMARK, which are entry markers that now have
+their entry, and 13 UNLINKED whose label grew to the full institutional
+name (`Network 2020` → `Tax Justice Network 2020`). New: 16 MISPLACED
+MARKER, 15 ORPHAN REF, 14 REF WITHOUT CITE and 2 REF WITHOUT BACKLINK,
+all on entries that were invisible before and so could not be audited
+(`Brender2005`, `Badiee2017`, `Draxen2000` beside `Drazen2000`). The
+13 UNLINKED with longer labels are the other 13 new findings. A
+paragraph-level diff of `references()` old vs new over the same corpus
+found 165 distinct newly parsed paragraphs, every one a reference-list
+entry, and no paragraph that parsed before and stopped parsing.
+
+Tests that fail without the fix:
+`test_a_parenthesised_year_with_no_stop_after_it_is_an_entry` (5 cases)
+and `test_a_listed_entry_of_that_form_is_found_in_the_list`. Kept green
+by it: `test_without_its_stop_a_year_needs_BOTH_brackets_and_a_title`.
+No per-paper workaround existed.
+
 ### ~~S3 — the citation audit reads every visible bookmark as a reference entry, so a paper with exhibit anchors cannot pass~~ — FIXED 05.10, `cbf7247`
 
 <!-- status: fixed -->
