@@ -275,6 +275,33 @@ def test_without_its_stop_a_year_needs_BOTH_brackets_and_a_title(text):
     assert reference_head(text) is None
 
 
+@pytest.mark.parametrize("heading", [
+    "Appendix A. Results from the LiTS (2016) Survey",
+    "Appendix B: The Census (2010) Microdata",
+    "Data availability (2024) Statement",
+])
+def test_a_HEADING_with_a_bracketed_year_still_ends_the_list(heading):
+    """The unstopped year form parses these as entries, and an entry
+    never ends the list — so the list ran on into the appendix, where
+    "(Jensen 1906)" in prose became an entry (review of 2026-10-08)."""
+    from docxkit.citations import reference_bounds
+    doc = ["References", "Smith, J. 2010. Title. Journal.",
+           "Frye, T. (2010) Building States. Cambridge.",
+           heading, "Prose citing Jensen, J. (1906) Sur les fonctions."]
+    assert reference_bounds(doc) == (0, 3)
+    assert [r.key for r in references(doc)] == ["smith_2010", "frye_2010"]
+
+
+def test_an_author_NAMED_like_a_stop_word_keeps_the_list_open():
+    """The rule `_ends_the_list` has always kept: a reference is never a
+    heading. In the unstopped form only the surname may be the stop."""
+    doc = ["References", "Smith, J. 2010. Title. Journal.",
+           "Tables, J. (2010) “Tabulating the census.” Journal.",
+           "Funding, A. 2011. Grants. Press."]
+    assert [r.surname for r in references(doc)] == [
+        "Smith", "Tables", "Funding"]
+
+
 def test_a_listed_entry_of_that_form_is_found_in_the_list():
     doc = ["Introduction", "As Denisova et al. (2012) argue.", "References",
            "Aksoy, C. (2020). A title. Journal.",

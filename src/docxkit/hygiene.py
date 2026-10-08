@@ -22,6 +22,7 @@ from __future__ import annotations
 import html
 import posixpath
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from ._xml import (
@@ -737,10 +738,18 @@ def dedupe_comments(parts: Parts) -> list[str]:
     parts and never looked at `document.xml`. A claim of Word
     verification sitting above a defect is worse than no claim.
     """
+    return [_comment_note(key) for key in _dedupe_comment_keys(parts)]
+
+
+def _dedupe_comment_keys(parts: Parts) -> list[tuple[str, str]]:
+    """:func:`dedupe_comments`, answering with the FULL key of each
+    dropped copy rather than its 60-character name — what a caller needs
+    to ask where the copy came from without two notes that share a
+    prefix reading as one."""
     xml = parts.get(COMMENTS, b"").decode("utf-8", "replace")
     if not xml:
         return []
-    dropped: list[str] = []
+    dropped: list[tuple[str, str]] = []
     gone: list[str] = []
     seen: set[tuple[str, str]] = set()
     out, at = [], 0
@@ -759,7 +768,7 @@ def dedupe_comments(parts: Parts) -> list[str]:
     for m in _COMMENT_RE.finditer(xml):
         key = _comment_key(m.group(0))
         if key in seen and key[1]:
-            dropped.append(_comment_note(key))
+            dropped.append(key)
             if cid := re.search(r'w:id="(\d+)"', m.group(0)):
                 gone.append(cid.group(1))
             out.append(xml[at:m.start()])
@@ -799,18 +808,14 @@ def _comment_note(key: tuple[str, str]) -> str:
     return f"{key[0]}: {key[1][:60]}"
 
 
-def _comment_notes(parts: Parts) -> set[str]:
-    """Every comment of a package, named as `dedupe_comments` names one.
-
-    So a caller can ask where a dropped note CAME from by asking which
-    input holds it — the same key and the same name, rather than a
-    second reading of what makes two comments one.
-    """
+def _comment_counts(parts: Parts) -> Counter[tuple[str, str]]:
+    """How many times a package holds each comment, by the key
+    `dedupe_comments` reads — so a caller can ask where a dropped copy
+    CAME from with the same reading of what makes two comments one."""
     xml = parts.get(COMMENTS, b"").decode("utf-8", "replace")
-    return {_comment_note(key)
-            for key in map(_comment_key,
-                           (m.group(0) for m in _COMMENT_RE.finditer(xml)))
-            if key[1]}
+    return Counter(key for key in map(
+        _comment_key, (m.group(0) for m in _COMMENT_RE.finditer(xml)))
+        if key[1])
 
 
 def _drop_comment_anchors(parts: Parts, ids: list[str]) -> None:

@@ -126,6 +126,11 @@ _REF_YEAR_RE = re.compile(
     rf"\(?\b({_YEAR})\b"
     r"(?:\)?\s*[.,]"
     r"|(?:(?<=\(\d{4})|(?<=\(\d{4}[a-z]))\)(?=\s+[\"'“‘«„A-ZА-ЯЁ]))")
+# The two stopped forms alone. A HEADING can carry the third form —
+# "Appendix A. Results from the LiTS (2016) Survey" — so `_ends_the_list`
+# asks which form made a paragraph an entry before letting it keep the
+# list open.
+_REF_YEAR_STOPPED_RE = re.compile(rf"\(?\b({_YEAR})\b\)?\s*[.,]")
 # Zotero leaves field-code preambles in the paragraph text of the first
 # reference when it re-runs inside Word.
 _ZOTERO_RE = (
@@ -734,6 +739,17 @@ def _ends_the_list(text: str, stops: set[str]) -> bool:
     first word, because the back-matter headings are two words ("Data
     availability", "Author contributions") and a first-word test can only
     ever see one of them.
+
+    An entry in the UNSTOPPED form — "Denisova, I. (2012) “Title”" — is
+    weaker evidence, because a heading carries it too: "Appendix A.
+    Results from the LiTS (2016) Survey" parses as an entry filed under
+    "Appendix A". Read that way, the heading kept the list open into the
+    appendix, which is the Jensen failure above arriving through the
+    year form added for Denisova (review of 2026-10-08). So that form
+    keeps the list open only for an author whose surname is the stop
+    word followed by its COMMA — "Tables, J. (2010) “Title”". The comma
+    is the evidence: "Data availability (2024) Statement" files under
+    the stop word too, with nothing after it.
     """
     flat = text.rstrip(":").casefold()
     if flat in stops:
@@ -742,7 +758,12 @@ def _ends_the_list(text: str, stops: set[str]) -> bool:
                and (len(flat) == len(stop) or not flat[len(stop)].isalnum())
                for stop in stops):
         return False
-    return parse_reference(text) is None
+    ref = parse_reference(text)
+    if ref is None:
+        return True
+    if _REF_YEAR_STOPPED_RE.search(text):
+        return False
+    return not any(flat.startswith(stop + ",") for stop in stops)
 
 
 def reference_bounds(paragraphs: list[str], *,

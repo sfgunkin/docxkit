@@ -1889,10 +1889,11 @@ def test_a_part_carried_from_the_BASELINE_is_said_part_by_part(
 
 
 def _dedupe(original: Path, *, base: tuple[str, ...] = (),
-            revised: tuple[str, ...] = ()) -> tuple[str, list[str]]:
+            revised: tuple[str, ...] = (),
+            note: str = "Check this number against Table 3.",
+            ) -> tuple[str, list[str]]:
     """Run the carry over a redline holding one note TWICE, with the
     given comments in each input; (the dropped note, what was said)."""
-    note = "Check this number against Table 3."
     original.unlink()
     with zipfile.ZipFile(original, "w") as z:
         for name, blob in make_parts(para(run("Employment rises.")),
@@ -1909,8 +1910,8 @@ def _dedupe(original: Path, *, base: tuple[str, ...] = (),
     report = tracked.BuildReport()
     said: list[str] = []
 
-    tracked._carry_rewrites(parts, original, revised_parts, report,
-                            said.append)
+    tracked._carry_rewrites(parts, tracked.read_parts(original),
+                            revised_parts, report, said.append)
 
     (dropped,) = report.deduped_comments
     return dropped, said
@@ -1954,9 +1955,39 @@ def test_a_duplicate_ONE_input_holds_names_that_input(sources, in_base,
                             base=(note,) if in_base else (),
                             revised=() if in_base else (note,))
 
-    assert said == [f"  de-duplicated a comment in the {which} input only, "
+    assert said == [f"  de-duplicated a comment in the {which} input, "
                     f"and written again by this build's math pass: "
                     f"{dropped}"], said
+
+
+@pytest.mark.parametrize(("in_base", "which"), [(True, "baseline"),
+                                                (False, "revised")])
+def test_a_duplicate_an_input_ALREADY_HELD_twice_is_that_inputs(
+        sources, in_base, which):
+    """The author's own file carried the note twice; Compare carried
+    both. The math pass wrote nothing, and saying it did is the false
+    cause the line was rewritten to remove (review of 2026-10-08)."""
+    note = "Check this number against Table 3."
+    twice = (note, note, "Another note.")
+    dropped, said = _dedupe(sources[0],
+                            base=twice if in_base else (),
+                            revised=() if in_base else twice)
+
+    assert said == [f"  de-duplicated a comment already held twice by the "
+                    f"{which} input: {dropped}"], said
+
+
+def test_two_notes_sharing_SIXTY_characters_are_not_one(sources):
+    """The report names a note by its first sixty characters; the
+    provenance must not. A baseline comment that BEGINS like the
+    duplicated rule is a different comment, and the duplicate is still
+    in neither input."""
+    rule = "Check this number against Table 3. " + "x" * 40
+    dropped, said = _dedupe(sources[0], note=rule,
+                            base=(rule + " and the baseline's own tail.",))
+
+    assert len(said) == 1 and dropped in said[0]
+    assert "in NEITHER input" in said[0], said
 
 
 def test_tidying_a_staging_directory_already_gone_raises_nothing(tmp_path):

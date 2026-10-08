@@ -291,6 +291,11 @@ def findings_of(blob: bytes) -> dict[str, list[list[str]]]:
     crossrefs' ``linked`` bucket is the one that is not a finding: it is
     the exhibits that are RIGHT. lint's messages carry no kind of their
     own, so they file under one, with the message as the subject.
+
+    crossrefs reads the notes too, as `docxkit crossrefs --audit` does:
+    a work cited only in a footnote keeps its bookmark there, and the
+    body alone reports it DANGLING — a finding no reader of the command
+    ever sees, recorded on every run (review of 2026-10-08).
     """
     from docxkit._cite_audit import _audit_findings  # noqa: PLC0415
 
@@ -298,7 +303,9 @@ def findings_of(blob: bytes) -> dict[str, list[list[str]]]:
         raw = {n: z.read(n) for n in z.namelist()}
     doc = raw["word/document.xml"].decode("utf-8")
     cite, _ = _audit_findings(dict(raw))
-    xref = crossrefs.audit(doc)
+    notes = [raw[n].decode("utf-8") for n in
+             ("word/footnotes.xml", "word/endnotes.xml") if n in raw]
+    xref = crossrefs.audit(doc, also=notes)
     return {
         "citations": sorted([f.kind, f.subject] for f in cite),
         "crossrefs": sorted([kind.upper(), subject]
@@ -319,27 +326,33 @@ def _findings_job(path: str) -> tuple[str, dict[str, list[list[str]]] | str]:
         return path, f"ERROR {type(exc).__name__}: {exc}"
 
 
-def record_findings(paths: list[Path], out: Path, jobs: int) -> Record:
+def record_findings(paths: list[Path], out: Path, jobs: int, *,
+                    roots: Sequence[str | Path] = ()) -> Record:
     """Run the audits over `paths` and write what they found to `out`.
 
     The record carries the commit it was made at and whether the tree
     was dirty: a before/after pair is two runs at two versions, and a
     file that cannot say which version it is a measurement of is the
     mistake this exists to prevent.
+
+    Documents are keyed by :func:`document_key` — relative to their
+    root — so two records of one corpus meet whichever way the root was
+    spelled.
     """
     docs: dict[str, object] = {}
     names = [str(p) for p in paths]
+    keys = {name: document_key(Path(name), roots) for name in names}
     if jobs > 1:
         from concurrent.futures import ProcessPoolExecutor  # noqa: PLC0415
         with ProcessPoolExecutor(max_workers=jobs) as pool:
             for i, (path, res) in enumerate(
                     pool.map(_findings_job, names, chunksize=4), 1):
-                docs[path] = res
+                docs[keys[path]] = res
                 _progress(i, len(names))
     else:
         for i, name in enumerate(names, 1):
             path, res = _findings_job(name)
-            docs[path] = res
+            docs[keys[path]] = res
             _progress(i, len(names))
     record = {"commit": _commit(), "documents": docs}
     out.write_text(json.dumps(record, ensure_ascii=False, indent=0,
@@ -352,19 +365,43 @@ def record_findings(paths: list[Path], out: Path, jobs: int) -> Record:
     return record
 
 
+def document_key(path: Path, roots: Sequence[str | Path]) -> str:
+    """A document's name in a record: its path under the root holding it.
+
+    Not the path as the root was TYPED. `D:\\corpus` from the
+    environment and `D:/corpus` on the command line are one corpus, and
+    keyed raw the two records shared no document, so the diff compared
+    nothing and said so in one line (review of 2026-10-08). With several
+    roots the root's own name leads, so two roots' `paper.docx` stay two.
+    """
+    resolved = path.resolve()
+    for root in roots:
+        base = Path(root).resolve()
+        if resolved.is_relative_to(base):
+            rel = resolved.relative_to(base).as_posix()
+            return f"{base.name}/{rel}" if len(roots) > 1 else rel
+    return resolved.as_posix()
+
+
 def _progress(done: int, total: int) -> None:
     if done == total or done % 50 == 0:
         print(f"  {done}/{total}", flush=True)
 
 
 def _commit() -> str:
-    """HEAD, with `+dirty` when the working tree differs from it."""
+    """HEAD, with `+dirty` when what decides the findings differs from it.
+
+    That is `src`, and this file: `findings_of` chooses which audits run
+    and which buckets count, so an edit to it between two records is a
+    change the diff would otherwise attribute to `src`.
+    """
     repo = Path(__file__).resolve().parents[1]
     try:
         head = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                               cwd=repo, capture_output=True, text=True,
                               check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "--", "src"],
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", "src",
+                                "tools/sweep.py"],
                                cwd=repo, capture_output=True, text=True,
                                check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
@@ -372,10 +409,15 @@ def _commit() -> str:
     return head + ("+dirty" if dirty else "")
 
 
+# The exhibit word must END there: `Figlio2010` and `Boxell2017` are
+# authors. Two lowercase letters after it mean the word goes on;
+# `TableA7` and `figure2txt` do not.
 _EXHIBIT = re.compile(
-    r"^(?:table|figure|fig|box|chart|map|exhibit|panel|appendix|section|"
-    r"eq)", re.IGNORECASE)
-_KEY = re.compile(r"^[A-Za-z][A-Za-z.]*?\d{4}[a-z]?(?:_\d+)?(?:txt)?$")
+    r"^(?i:table|figure|fig|box|chart|map|exhibit|panel|appendix|section|"
+    r"eq)(?![a-z]{2})")
+# Any script's letters: `Mühlbach2020` and a Cyrillic surname are keys.
+_KEY = re.compile(r"^[^\W\d_](?:[^\W\d_]|\.)*?\d{4}[a-z]?"
+                  r"(?:_\d+)?(?:txt)?$")
 _CITATION = re.compile(r"\s.*\d{4}")
 
 
@@ -386,10 +428,10 @@ def shape(subject: str) -> str:
     exhibit-anchor fix was right to drop `Table4` and `figure2txt`, and
     wrong to drop the 119 author-year keys among them.
     """
-    if _EXHIBIT.match(subject):
-        return "exhibit"
     if _KEY.match(subject):
         return "author-year key"
+    if _EXHIBIT.match(subject):
+        return "exhibit"
     if _CITATION.search(subject):
         return "in-text citation"
     return "other"
@@ -563,7 +605,8 @@ def main() -> int:
         # Read BEFORE the run: a bad path should cost a second, not the
         # ten minutes of a corpus.
         before = _load(args.diff[0]) if args.diff else None
-        after = record_findings(chosen, args.findings, max(1, args.jobs))
+        after = record_findings(chosen, args.findings, max(1, args.jobs),
+                                roots=roots)
         if before is not None:
             diff_findings(before, after)
         return 0

@@ -23,7 +23,7 @@ import sys
 import zipfile
 
 import pytest
-from conftest import document, para, run
+from conftest import NS, document, para, run
 
 import docxkit
 
@@ -309,9 +309,59 @@ def test_findings_are_recorded_per_audit_as_kind_and_subject(tmp_path):
     ("Meltzer and Richard 1981", "in-text citation"),
     ("Shorrocks (1978)", "in-text citation"),
     ("WB_WDI", "other"), ("Arpino_text", "other"), ("Wikipedia", "other"),
+    # authors whose names BEGIN with an exhibit word (review 2026-10-08)
+    ("Figlio2010", "author-year key"), ("Boxell2017txt", "author-year key"),
+    ("Mapp2015", "author-year key"), ("Chartier2019", "author-year key"),
+    ("Panelli2004", "author-year key"), ("Eqbal2012", "author-year key"),
+    # and in any script
+    ("Mühlbach2020", "author-year key"), ("Иванов2019txt", "author-year key"),
+    ("Tables1", "exhibit"), ("Section3_text", "exhibit"), ("Figlio", "other"),
 ])
 def test_a_subject_has_a_shape(subject, expected):
     assert SWEEP.shape(subject) == expected
+
+
+def test_crossrefs_findings_read_the_NOTES_as_the_command_does(tmp_path):
+    """A work cited only in a footnote keeps its bookmark there. Read
+    from the body alone, its entry's link is DANGLING — a finding
+    `docxkit crossrefs --audit` never reports."""
+    note_mark = ('<w:bookmarkStart w:id="9" w:name="Ng2001txt"/>'
+                 '<w:bookmarkEnd w:id="9"/>')
+    body = para(f'<w:hyperlink w:anchor="Ng2001txt">{run("Ng")}'
+                "</w:hyperlink>")
+    notes = (f'<w:footnotes {NS}><w:footnote w:id="2">'
+             f"{para(note_mark + run('Ng (2001).'))}</w:footnote>"
+             "</w:footnotes>")
+    with zipfile.ZipFile(tmp_path / "n.docx", "w") as zf:
+        zf.writestr("word/document.xml", document(body))
+        zf.writestr("word/footnotes.xml", notes)
+
+    found = SWEEP.findings_of((tmp_path / "n.docx").read_bytes())
+
+    assert ["DANGLING", "Ng2001txt"] not in found["crossrefs"], found
+
+
+def test_a_document_is_keyed_under_its_ROOT_however_it_was_spelled(tmp_path):
+    corpus = tmp_path / "corpus"
+    (corpus / "sub").mkdir(parents=True)
+    doc = corpus / "sub" / "paper.docx"
+    spellings = [str(corpus), str(corpus).replace("\\", "/"),
+                 str(tmp_path / "corpus" / "sub" / "..")]
+
+    keys = {SWEEP.document_key(doc, [root]) for root in spellings}
+
+    assert keys == {"sub/paper.docx"}
+
+
+def test_with_several_roots_the_ROOT_name_keeps_two_papers_apart(tmp_path):
+    for name in ("alpha", "beta", "gamma"):
+        (tmp_path / name).mkdir()
+    roots = [tmp_path / n for n in ("alpha", "beta", "gamma")]
+
+    keys = [SWEEP.document_key(root / "paper.docx", roots) for root in roots]
+
+    assert keys == ["alpha/paper.docx", "beta/paper.docx",
+                    "gamma/paper.docx"]
 
 
 def _record(commit: str, **docs: object) -> dict[str, object]:
@@ -394,7 +444,8 @@ def test_findings_end_to_end_record_then_diff(monkeypatch, capsys, tmp_path,
                                      str(before), "--jobs", str(jobs)])
     assert SWEEP.main() == 0
     record = SWEEP._load(before)
-    assert len(record["documents"]) == 3 and record["commit"]
+    assert sorted(record["documents"]) == ["p0.docx", "p1.docx", "p2.docx"]
+    assert record["commit"]
 
     _linked(corpus / "p1.docx", "B2002")
     monkeypatch.setattr("sys.argv", ["sweep.py", str(corpus), "--findings",

@@ -6,6 +6,7 @@ is part of :mod:`docxkit.revision`; import from there.
 from __future__ import annotations
 
 import html
+import re
 import shutil
 import tempfile
 from collections import Counter
@@ -351,8 +352,13 @@ def math_anchors(accepted: Parts,
     return list(out)
 
 
+#: A year, with its disambiguating letter: "2010a" carries no WORD.
+_YEARS_RE = re.compile(r"\d{4}[a-z]?")
+
+
 def _lost_or_retargeted(was: Counter[tuple[str, str]],
                         now: Counter[tuple[str, str]],
+                        targets: Counter[str],
                         ) -> tuple[list[str], list[str]]:
     """The links reject-all lost, and the ones it only RENAMED.
 
@@ -368,8 +374,18 @@ def _lost_or_retargeted(was: Counter[tuple[str, str]],
     ``(Y, label)``, one for one. The verdict does not move — the
     rejected view still differs from the baseline — only the line that
     explains it.
+
+    "Not a link lost" is a strong thing to print, so the pairing must
+    earn it (review of 2026-10-08). The label has to carry a WORD: an
+    empty one, or a year-only citation label like ``2010``, is shared
+    by unrelated links, and pairing on it turns a real loss into a
+    rename. And the new anchor has to EXIST in the rejected view
+    (`targets`): a gained link pointing nowhere is not a link that
+    still resolves.
     """
-    gained = list((now - was).elements())
+    gained = [g for g in (now - was).elements()
+              if any(ch.isalpha() for ch in _YEARS_RE.sub("", g[1]))
+              and targets[g[0]]]
     lost: list[str] = []
     retargeted: list[str] = []
     for anchor, label in sorted((was - now).elements()):
@@ -528,7 +544,7 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             report.emptied_footnotes = emptied_footnotes(
                 rejected, base, report.moved_footnotes)
             report.lost_links, report.retargeted_links = _lost_or_retargeted(
-                was, now)
+                was, now, bookmark_names(rejected))
             report.structure_diff = struct_moved
 
     if word_accept_glyph is not None:

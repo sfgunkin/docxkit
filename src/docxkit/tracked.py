@@ -378,7 +378,7 @@ def _return_spaces(parts: Parts, revised_parts: Parts, report: BuildReport,
         say(f"  {note} (Compare deleted it with the full stop)")
 
 
-def _carry_rewrites(parts: Parts, original: str | Path,
+def _carry_rewrites(parts: Parts, original_parts: Parts,
                     revised_parts: Parts, report: BuildReport,
                     say: Any) -> None:
     """What Compare REWRITES rather than drops, so nothing else sees it.
@@ -396,34 +396,50 @@ def _carry_rewrites(parts: Parts, original: str | Path,
     (2026-10-05) had no comment in either input, and every build said it
     had de-duplicated one "present in BOTH inputs" — a cause that could
     not be true, sending its reader to inspect two clean files. So each
-    dropped note is looked up in the inputs and named by where it was.
+    dropped note is COUNTED in the redline and in each input, on its full
+    key, and named by where its copies came from.
     """
-    original_parts = read_parts(original)
     if _hygiene.keep_tracking(parts, original_parts):
         report.carried_properties.append("w:trackRevisions")
         say("  carried across: Track Changes was ON and Compare wrote a "
             "fresh settings.xml with it off — an author editing a "
             "'tracked' manuscript whose typing is not being recorded is "
             "the quietest way to lose a round")
-    report.deduped_comments = _hygiene.dedupe_comments(parts)
-    in_original = _hygiene._comment_notes(original_parts)
-    in_revised = _hygiene._comment_notes(revised_parts)
-    for note in report.deduped_comments:
-        source = _dedupe_source(note in in_original, note in in_revised)
+    made = _hygiene._comment_counts(parts)
+    dropped = _hygiene._dedupe_comment_keys(parts)
+    report.deduped_comments = [_hygiene._comment_note(k) for k in dropped]
+    in_original = _hygiene._comment_counts(original_parts)
+    in_revised = _hygiene._comment_counts(revised_parts)
+    for key, note in zip(dropped, report.deduped_comments, strict=True):
+        source = _dedupe_source(made[key], in_original[key],
+                                in_revised[key])
         say(f"  de-duplicated a comment {source}: {note}")
 
 
-def _dedupe_source(in_original: bool, in_revised: bool) -> str:
-    """Where a comment the build found twice came from, as a clause."""
+def _dedupe_source(copies: int, in_original: int, in_revised: int) -> str:
+    """Where the copies of a comment the build found twice came from.
+
+    COUNTS, not membership: Compare carries each input's comments, so
+    the inputs explain at most ``in_original + in_revised`` copies and
+    only what is left over was written by the build. A note the revised
+    input already held twice is that input's duplicate, and blaming the
+    math pass for it was the same false cause this exists to remove
+    (review of 2026-10-08).
+    """
+    held = in_original + in_revised
+    if copies > held:
+        if not held:
+            return ("in NEITHER input — this build's math pass wrote it "
+                    "twice (Word comments each resolved math revision, "
+                    "and two in one paragraph draw the same rule)")
+        which = ("baseline and revised inputs" if in_original and in_revised
+                 else "baseline input" if in_original else "revised input")
+        return (f"in the {which}, and written again by this build's math "
+                f"pass")
     if in_original and in_revised:
         return "present in BOTH inputs"
-    if in_original or in_revised:
-        which = "baseline" if in_original else "revised"
-        return (f"in the {which} input only, and written again by this "
-                f"build's math pass")
-    return ("in NEITHER input — this build's math pass wrote it twice "
-            "(Word comments each resolved math revision, and two in one "
-            "paragraph draw the same rule)")
+    which = "baseline" if in_original else "revised"
+    return f"already held twice by the {which} input"
 
 
 def _clear_staging(staging: Path, building: Path, published: bool,
@@ -451,7 +467,7 @@ def _clear_staging(staging: Path, building: Path, published: bool,
 
 
 def _carry_parts(parts: Parts, revised_parts: Parts,
-                 original: str | Path, *, carry: tuple[str, ...],
+                 original_parts: Parts, *, carry: tuple[str, ...],
                  report: BuildReport, say: Callable[[str], None]) -> None:
     """Put back what Compare dropped, from the clean copy or the baseline.
 
@@ -495,7 +511,7 @@ def _carry_parts(parts: Parts, revised_parts: Parts,
             f"baseline's type map rather than appended beside whatever "
             f"Compare re-typed)")
     report.carried_from_baseline = _hygiene.restore_parts(
-        parts, read_parts(original), prefixes=carry)
+        parts, original_parts, prefixes=carry)
     for name in report.carried_from_baseline:
         say(f"  carried from the BASELINE: {name} (the clean copy no "
             f"longer has it either — `strip_parts` is how to mean "
@@ -696,11 +712,15 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # carry over? Checked against the REVISED input, which is the
         # document the redline is supposed to be able to reproduce.
         revised_parts = read_parts(revised)
+        # The baseline ONCE, for every reader below. It was read four
+        # times — the carry, the rewrites, the refusability gate and the
+        # glyph restore — and none of them writes to it.
+        original_parts = read_parts(original)
         # The data store is not referenced from the body, so putting it
         # back is three mechanical edits and no judgment — which is
         # exactly the sort of thing that belongs here rather than in a
         # paper's script directory, hand-run after every single build.
-        _carry_parts(parts, revised_parts, original, carry=carry,
+        _carry_parts(parts, revised_parts, original_parts, carry=carry,
                      report=report, say=say)
         # And the same argument one level down, on the FIELDS of
         # docProps/core.xml: Word rebuilds that part with its own four
@@ -715,7 +735,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                 f"(Compare regenerates core.xml with only its own save "
                 f"fields; metadata is not tracked-changeable, so nothing "
                 f"else would ever report this)")
-        _carry_rewrites(parts, original, revised_parts, report, say)
+        _carry_rewrites(parts, original_parts, revised_parts, report, say)
         _return_spaces(parts, revised_parts, report, say,
                        fold_space=not whitespace)
         report.dropped = compare_collateral(revised_parts, parts)
@@ -748,8 +768,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # every other signal here reads as success while it does — LI7
         # shipped one, and found it two rounds later with a hand-written
         # difflib script.
-        base_parts = read_parts(original)
-        report.unrejectable = untracked(parts, base_parts)
+        report.unrejectable = untracked(parts, original_parts)
         # What a MOVE can duplicate, and what neither view can undo.
         # Word's Compare answers a moved block by writing the table
         # TWICE and marking neither copy: on DSI (2026-08-19) a redline
@@ -767,19 +786,19 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         skip = ("bookmarkStart",)
         report.structure_diff = (
             [f"rejected: {d}" for d in structure_diff(
-                structure_counts(base_parts),
+                structure_counts(original_parts),
                 structure_counts(rejected), skip=skip)]
             + [f"rejected: {d}" for d in bookmark_changes(
-                base_parts, rejected, revised_parts)]
+                original_parts, rejected, revised_parts)]
             + [f"rejected: {d}" for d in cell_property_changes(
-                base_parts, rejected)]
+                original_parts, rejected)]
             + [f"accepted: {d}" for d in cell_property_changes(
                 revised_parts, accepted)]
             + [f"accepted: {d}" for d in structure_diff(
                 structure_counts(revised_parts),
                 structure_counts(accepted), skip=skip)]
             + [f"accepted: {d}" for d in bookmark_changes(
-                revised_parts, accepted, base_parts)])
+                revised_parts, accepted, original_parts)])
         # The carriers those counts do not hold: a hyperlink is not in
         # STRUCTURE_TAGS, because Word legitimately re-represents a
         # field-form link as an element and counting the tag would
@@ -841,7 +860,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # what a source really spells that way (see the docstring for
         # what is deliberately not inferred).
         report.restored_glyphs = _hygiene.restore_math_glyphs(
-            parts, revised_parts, read_parts(original))
+            parts, revised_parts, original_parts)
         for note in report.restored_glyphs:
             say(f"  restored math glyph — {note}")
 
@@ -886,7 +905,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         # bookmark against: it has no clean copy, and only this call does.
         _guard.stamp(out, original=original.name, revised=revised.name,
                      base_sha256=_guard.sha256(original),
-                     bookmarks_added=bookmark_additions(base_parts,
+                     bookmarks_added=bookmark_additions(original_parts,
                                                         revised_parts))
         return report
     finally:

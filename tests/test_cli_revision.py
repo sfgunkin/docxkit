@@ -1165,7 +1165,10 @@ def test_validate_calls_a_renamed_anchor_RETARGETED(monkeypatch, project,
         return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>Box 2</w:t>'
                 "</w:r></w:hyperlink>")
     write(project.prev, make_parts(para(run("see"), linked("Box2"))))
-    write(project.batch, make_parts(para(run("see"), linked("Box3"))))
+    write(project.batch, make_parts(
+        para(run("see"), linked("Box3"))
+        + para('<w:bookmarkStart w:id="5" w:name="Box3"/>'
+               '<w:bookmarkEnd w:id="5"/>', pid="22222222")))
     code, _ = run_cli(monkeypatch, "revision", "validate", "--no-word",
                       "--paper", str(project.root))
     out = capsys.readouterr().out

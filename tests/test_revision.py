@@ -4813,7 +4813,9 @@ def test_a_link_RENAMED_with_its_words_kept_is_retargeted_not_lost(tmp_path):
         "".join(f"<w:p>{link('Box3', 'Box 2')}</w:p>" for _ in range(2))
         + "<w:p><w:r><w:t>Box 2</w:t></w:r></w:p>"
         + "<w:p><w:r><w:t>Smith (2020)</w:t></w:r></w:p>"
-        + f"<w:p>{link('Kept', 'kept')}</w:p>"))
+        + f"<w:p>{link('Kept', 'kept')}</w:p>"
+        + '<w:p><w:bookmarkStart w:id="5" w:name="Box3"/>'
+          '<w:bookmarkEnd w:id="5"/></w:p>'))
 
     report = revision.validate(batch, baseline_path, use_word=False)
 
@@ -4821,6 +4823,54 @@ def test_a_link_RENAMED_with_its_words_kept_is_retargeted_not_lost(tmp_path):
     assert report.retargeted_links == ["Box2 -> Box3 ('Box 2')"] * 2
     assert report.lost_links == ["-> Box2 ('Box 2')",
                                  "-> Smith2020 ('Smith (2020)')"]
+
+
+def _box(anchor: str, label: str) -> str:
+    return (f'<w:hyperlink w:anchor="{anchor}"><w:r><w:t>{label}</w:t>'
+            "</w:r></w:hyperlink>")
+
+
+def _mark(name: str, bid: int) -> str:
+    return (f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
+            f'<w:bookmarkEnd w:id="{bid}"/>')
+
+
+@pytest.mark.parametrize("label", ["", "2010", "(2010a)"])
+def test_a_label_with_NO_WORD_never_pairs(tmp_path, label):
+    """An empty label, or a year-only citation label, is shared by
+    unrelated links; pairing on it printed "not a link lost" over a real
+    loss (review of 2026-10-08)."""
+    baseline_path = write(tmp_path / "prev-year.docx", make_parts(
+        f"<w:p>{_box('Smith2010', label)}</w:p>"
+        f"<w:p>{_mark('Jones2010', 7)}</w:p>"))
+    batch = write(tmp_path / "batch-year.docx", make_parts(
+        f"<w:p><w:r><w:t>{label}</w:t></w:r></w:p>"
+        f"<w:p>{_box('Jones2010', label)}{_mark('Jones2010', 7)}</w:p>"))
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.retargeted_links == []
+    assert report.lost_links == [f"-> Smith2010 ({label!r})"]
+
+
+def test_a_gained_link_to_NO_BOOKMARK_is_no_retarget(tmp_path):
+    """A rename means every link still resolves. A gained link whose
+    anchor the rejected view does not define is dangling, not renamed —
+    the pair needs the new target to exist."""
+    baseline_path = write(tmp_path / "prev-dangle.docx", make_parts(
+        f"<w:p>{_box('Box2', 'Box 2')}</w:p>"))
+    dangling = write(tmp_path / "batch-dangle.docx", make_parts(
+        f"<w:p>{_box('Box3', 'Box 2')}</w:p>"))
+    resolving = write(tmp_path / "batch-resolve.docx", make_parts(
+        f"<w:p>{_box('Box3', 'Box 2')}</w:p><w:p>{_mark('Box3', 3)}</w:p>"))
+
+    lost = revision.validate(dangling, baseline_path, use_word=False)
+    renamed = revision.validate(resolving, baseline_path, use_word=False)
+
+    assert (lost.retargeted_links, lost.lost_links) == (
+        [], ["-> Box2 ('Box 2')"])
+    assert (renamed.retargeted_links, renamed.lost_links) == (
+        ["Box2 -> Box3 ('Box 2')"], [])
 
 
 def test_a_gained_link_with_OTHER_words_is_no_retarget(tmp_path):
