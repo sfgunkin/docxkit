@@ -869,6 +869,58 @@ Fix sketch: `tools/sweep.py --findings out.json` records
 lint), and `--diff before.json` prints gone/new by kind, plus a name-shape
 breakdown of what went.
 
+### S4 — `tracked.build` says a de-duplicated comment was "present in BOTH inputs" when neither input had one
+<!-- status: open -->
+
+Found 2026-10-05 on AFI r7 (`revision/scripts/r7_redline.py`). Both
+inputs had **0 comments** — `word/comments.xml` absent from
+`revision/build/prev.docx` and from `revision/build/r7_polfix.docx`,
+counted by a read of each package — yet both builds printed
+`de-duplicated a comment present in BOTH inputs: <author>: r7 / Table A5
+rows 4–6 …`, naming a comment the `classify` rules had just written.
+`_carry_rewrites` (`tracked.py:398-400`) runs
+`_hygiene.dedupe_comments(parts)` over the OUTPUT and attributes every
+duplicate it removes to the inputs. With no comment in either input, the
+duplicate must have arisen inside the build — the comment text is one of
+the paper's `classify` rules (the ¶ with the two resolved maths
+revisions), so the annotate pass is the likely source, NOT traced. The
+message names a cause that cannot be true and sends the reader to inspect
+two clean files. The result itself was right: 47 comments, verified in
+Word.
+
+Fix sketch: count each removed comment's text in the two inputs'
+`comments.xml` and say "present in both inputs" only when it is; otherwise
+"written twice by this build's annotate pass" with the rule that matched.
+Workaround in use: none needed — the census script confirmed the inputs
+were clean.
+
+### S4 — `revision validate`'s reject-all calls an untracked anchor RENAME a link "lost inside a rejected deletion"
+<!-- status: open -->
+
+Measured 2026-10-08 on Aging_Well R133. The round renumbered a box (Box 2 →
+Box 3) as tracked text and, untracked after the promote (Compare cannot carry
+bookmarks), renamed its anchor pair `Box2`/`Box2txt` → `Box3`/`Box3txt` and
+retargeted its four links. Every link still resolves on BOTH verdicts
+(`citations` and `crossrefs --audit` run on an XML reject-all: 0 broken, 0
+dangling links to `Box3`). `validate`'s reject-all layer printed:
+
+    LINK LOST -> Box2 ('Box 2'): ... Word's Compare does not rebuild a link
+    inside a rejected deletion, so the words come back as plain text      (x4)
+    STRUCTURE bookmarkStart: lost 'Box2' / gained 'Box3', 'Box3txt', ...
+
+No deletion is involved and the words do not come back as plain text: the
+links are there, under the new name. The diagnosis is the one written for a
+different event (a link inside a `w:del`), applied to any target-name
+mismatch, so a reader chasing it looks for a deletion that does not exist.
+
+Suggested fix: pair LOST/GAINED links by label text and position before
+naming them; a lost `X` and a gained `Y` with the same label at the same place
+is a RENAME, reported as `LINK RETARGETED Box2 -> Box3 ('Box 2')`, with the
+rejected-deletion sentence kept for a lost link that has no counterpart.
+Severity S4: the verdict (reject-all ≠ baseline on apparatus) is right; the
+explanation is wrong. Workaround in use: gate the materialised reject-all
+view with `citations`/`crossrefs` by hand and read the names.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
