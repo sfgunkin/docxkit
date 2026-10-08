@@ -68,7 +68,7 @@ from .package import (
 # that import it from there.
 from .save import edit_in_place
 
-__version__ = "2026.9.29.1"
+__version__ = "2026.10.8"
 
 __all__ = [
     "DOCUMENT",

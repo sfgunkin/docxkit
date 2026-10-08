@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docxkit"
-version = "2026.9.29.1"
+version = "2026.10.8"
 description = "Shared toolkit for working with Word .docx manuscripts: surgical XML editing, multi-layer diffing, tracked-changes deliverables, and author-edit ingestion."
 readme = "README.md"
 # PEP 639: an SPDX expression, not the {text = ...} table. setuptools has
