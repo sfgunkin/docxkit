@@ -14,6 +14,54 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — `docxkit pdf` / `pages` call a missing INPUT file "an internal error … a bug in docxkit"~~ — FIXED 09.10, `ab972ab`
+
+<!-- status: fixed -->
+
+Measured 2026-10-08 (HEAD `f070488`) on Aging_Well R135, when a scratch copy
+had not been written (the script before it stopped on an assertion):
+
+    $ docxkit pdf C:\nope\missing.docx C:\nope\out.pdf
+    docxkit: internal error — FileNotFoundError: [WinError 3] The system cannot find the path specified
+      This is a bug in docxkit, not a finding about your document. Set DOCXKIT_TRACEBACK=1 to see where it is.
+    exit 70
+
+`docxkit pages C:\nope\missing.docx --check` exits 1 on the same traceback.
+With `DOCXKIT_TRACEBACK=1` the raise is `shutil.copy2(path, target)`: the
+input is copied to a temp before anyone checks it exists. The message sends
+the reader to debug docxkit when the fault is a wrong path, and exit 70
+(internal) is indistinguishable from a real crash in a script's exit-code
+check.
+
+Fix sketch: check the input path at the CLI boundary for every command that
+takes a manuscript (`pdf`, `pages`, and any other that copies first) and
+exit 2 with `no such file: <path>`; keep 70 for genuine internal errors.
+Workaround in use: none needed — the path was the caller's mistake; noticed
+because three renders in a row reported "internal error".
+
+**Closed 2026-10-09.** Wider than filed. A probe of every command that
+takes a file found five that exited 70 on a missing input: `pdf`,
+`pages` and `locate` (each copies the input to a temp first),
+`compare-probe` (copies both), and `anchors` (opens its spec file). The
+other 25 already refused through `read_parts` with `cannot read <path>`,
+exit 1.
+
+`cli._check_inputs` runs in `main()` before the command and checks every
+argument that names an input: `docx`, `built`, `edited`, `original`,
+`clean`, `spec` and `--phrases-from`. Each is an input wherever it
+appears. A missing one raises the same `PackageError` text, so all 29
+commands now give one answer, exit 1. The fix sketch asked for exit 2,
+but 2 is `ExitCode.MATH_RESOLVED`, and 1 is what the 25 already returned
+and what papers' scripts already read. The exception could not be the
+net: on Windows `shutil.copy2` raises WinError 3 with no `filename`.
+
+Tests that fail without the fix:
+`test_a_MISSING_input_is_refused_not_an_internal_error` (6 cases: the
+five commands plus `locate --phrases-from`, each with the command
+replaced by a fail so that running it at all is a failure). Kept green
+by it: `test_an_input_that_EXISTS_reaches_its_command`, where an output
+that does not exist yet is not refused. No workaround existed in a paper.
+
 ### ~~S4 — `revision validate`'s reject-all calls an untracked anchor RENAME a link "lost inside a rejected deletion"~~ — FIXED 08.10, `b873060`
 
 <!-- status: fixed -->

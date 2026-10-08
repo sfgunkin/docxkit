@@ -828,30 +828,6 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
-### S4 — `docxkit pdf` / `pages` call a missing INPUT file "an internal error … a bug in docxkit"
-<!-- status: open -->
-
-Measured 2026-10-08 (HEAD `f070488`) on Aging_Well R135, when a scratch copy
-had not been written (the script before it stopped on an assertion):
-
-    $ docxkit pdf C:\nope\missing.docx C:\nope\out.pdf
-    docxkit: internal error — FileNotFoundError: [WinError 3] The system cannot find the path specified
-      This is a bug in docxkit, not a finding about your document. Set DOCXKIT_TRACEBACK=1 to see where it is.
-    exit 70
-
-`docxkit pages C:\nope\missing.docx --check` exits 1 on the same traceback.
-With `DOCXKIT_TRACEBACK=1` the raise is `shutil.copy2(path, target)`: the
-input is copied to a temp before anyone checks it exists. The message sends
-the reader to debug docxkit when the fault is a wrong path, and exit 70
-(internal) is indistinguishable from a real crash in a script's exit-code
-check.
-
-Fix sketch: check the input path at the CLI boundary for every command that
-takes a manuscript (`pdf`, `pages`, and any other that copies first) and
-exit 2 with `no such file: <path>`; keep 70 for genuine internal errors.
-Workaround in use: none needed — the path was the caller's mistake; noticed
-because three renders in a row reported "internal error".
-
 ### S3 — `test_WITHDRAW_refuses_a_RESCUE_that_is_not_the_baselines_bytes[below]` fails at random: the "same content on every run" is not
 <!-- status: open -->
 
