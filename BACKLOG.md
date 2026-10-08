@@ -852,6 +852,25 @@ exit 2 with `no such file: <path>`; keep 70 for genuine internal errors.
 Workaround in use: none needed — the path was the caller's mistake; noticed
 because three renders in a row reported "internal error".
 
+### S3 — `test_WITHDRAW_refuses_a_RESCUE_that_is_not_the_baselines_bytes[below]` fails at random: the "same content on every run" is not
+<!-- status: open -->
+
+Hit 2026-10-09 in the gate chain (1 failed, 9,390 passed), then passed five
+times in a row alone. `_content_hashing` (`tests/test_workflow_states.py`)
+calls `build(n)` until a sha256 sorts below (or above) a given digest, and its
+docstring says the result "is the same content on every run". It is not:
+`_a_docx` writes through `conftest.write`, which calls `ZipFile.writestr`
+with a bare name, so every entry carries `time.localtime()` and the bytes, and
+both digests, change every two seconds. When the rescue's digest lands near
+the bottom of the range, none of the 1,000 tries sorts below it and the helper
+raises "no content hashed to the side asked for". A randomly red gate is the
+S3 shape: the next reader re-runs it instead of reading it.
+
+Fix sketch: build fixtures with a fixed `ZipInfo(name, date_time=(2026, 1, 1,
+0, 0, 0))` in `conftest.write` (or in `_a_docx` alone, if a test elsewhere
+depends on the timestamp), so the helper's promise holds and the loop's
+answer is the same on every run. Workaround: re-run.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
