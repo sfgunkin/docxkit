@@ -828,6 +828,53 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
+### S2 — `revision init` registers a project in a TEMP folder, so every probe script pollutes the user's paper registry
+<!-- status: open -->
+
+Measured 2026-10-10: `C:\Users\Ezhik\AppData\Local\docxkit\papers.txt` had
+98 lines, 12 of them papers. The rest were `paper.toml` paths under
+`%TEMP%` — `probe*_`, `tmp*\P`, `revision_promote_defect_1_*`, scratchpad
+`angleC\work*`, `verify2\tmp\*` — left by standalone scripts (review probes,
+reproductions) that call `revision.init` without setting `DOCXKIT_PAPERS`.
+pytest is isolated by `conftest._isolated_paper_registry`; nothing else is.
+`revision status --all` then surveys each one: missing ones as missing
+papers, live ones as if they were manuscripts.
+
+Fix: `_registry.register` refuses (returns False, silently or with a note)
+a config under `tempfile.gettempdir()`, unless `DOCXKIT_PAPERS` is set
+explicitly — a scratch project is never a paper to watch. Test: init a
+project under `tmp_path` with the redirect REMOVED and the registry
+pointed at a file via monkeypatched `registry_path`; it must not be added.
+
+Workaround in use: set `os.environ["DOCXKIT_PAPERS"]` to a scratch file in
+any script that scaffolds a project; prune the registry by hand.
+
+### S2 — the mechanical reject restores `w:delText` but not `w:delInstrText`, so a deleted FIELD-form link does not come back
+<!-- status: open -->
+
+Reported by the 2026-10-10 code review (measured against Word 16's real
+Reject All): `revisions.py` around line 880 turns `w:delText` back into
+`w:t` and leaves `w:delInstrText` as it is. A field-form link (`HYPERLINK
+\l` / `REF` in `instrText`) inside a deletion is therefore not restored by
+docxkit's reject, while Word's Reject All restores it. Gate 5 reports
+`links: False` and `links_in_deletions` finds nothing on such a batch, and
+the docstrings that blame Compare for not rebuilding links describe this
+model rather than Word.
+
+Fix: restore `w:delInstrText` -> `w:instrText` beside `w:delText` in the
+reject pass, and check every reader of the rejected view. Test: a `w:del`
+holding a complete fldChar HYPERLINK field; `reject` must yield a live
+field whose anchor `internal_links` finds.
+
+### S4 — `revision ingest --check` help says exit 2; it exits 5
+<!-- status: open -->
+
+`cli.py` (the `--check` help, ~line 2891) says "exit 2 when the hand-back
+LOST a link, a note, …"; `cmd_revision_ingest` returns
+`HandbackLoss.exit_code`, which is 5, and that is the number a paper's gate
+list has to read. Fix the help string and pin it against
+`HandbackLoss.exit_code` in `test_cli_revision`.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
