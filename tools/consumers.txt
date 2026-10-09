@@ -98,6 +98,7 @@ docxkit.citations	respan_link
 docxkit.citations	retarget_self_link
 docxkit.citations	rewrap_marker
 docxkit.citations	to_narrative
+docxkit.citations	to_parenthetical
 docxkit.citations	wrap_link_in_bookmark
 docxkit.comments	RevisionContext
 docxkit.comments	add_at
@@ -165,8 +166,10 @@ docxkit.revision	internal_links
 docxkit.revision	load_paper
 docxkit.revision	rescue_path
 docxkit.revision	state
+docxkit.revision._config	load_paper
 docxkit.revisions	accept
 docxkit.revisions	counts
+docxkit.save	edit_in_place
 docxkit.tables	BooktabsPlan
 docxkit.tables	Table
 docxkit.tables	_RUN_RE
