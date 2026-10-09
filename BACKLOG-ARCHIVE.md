@@ -14,6 +14,39 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `test_WITHDRAW_refuses_a_RESCUE_that_is_not_the_baselines_bytes[below]` fails at random: the "same content on every run" is not~~ — FIXED 09.10, `f23e7f9`
+
+<!-- status: fixed -->
+
+Hit 2026-10-09 in the gate chain (1 failed, 9,390 passed), then passed five
+times in a row alone. `_content_hashing` (`tests/test_workflow_states.py`)
+calls `build(n)` until a sha256 sorts below (or above) a given digest, and its
+docstring says the result "is the same content on every run". It is not:
+`_a_docx` writes through `conftest.write`, which calls `ZipFile.writestr`
+with a bare name, so every entry carries `time.localtime()` and the bytes, and
+both digests, change every two seconds. When the rescue's digest lands near
+the bottom of the range, none of the 1,000 tries sorts below it and the helper
+raises "no content hashed to the side asked for". A randomly red gate is the
+S3 shape: the next reader re-runs it instead of reading it.
+
+Fix sketch: build fixtures with a fixed `ZipInfo(name, date_time=(2026, 1, 1,
+0, 0, 0))` in `conftest.write` (or in `_a_docx` alone, if a test elsewhere
+depends on the timestamp), so the helper's promise holds and the loop's
+answer is the same on every run. Workaround: re-run.
+
+**Closed 2026-10-09.** As filed. `conftest.write` now builds each entry
+with `docxkit._xml.zip_entry`, the library's own fixed-stamp, deflated
+entry, instead of a bare name. That covers every fixture `write` builds,
+not only `_a_docx`, and no test relied on the clock: the full chain stays
+green at 9,392 passed. With the stamp fixed, every `_content_hashing`
+search in test_workflow_states ends within 7 tries (counted per call),
+the same on every run. The helper's promise now holds.
+
+Test that fails without the fix:
+`test_a_fixture_docx_is_the_SAME_BYTES_whatever_the_clock`. It moves
+`time.time` a day between two builds of the same content, because two
+builds inside one second matched even before the fix.
+
 ### ~~S4 — `docxkit pdf` / `pages` call a missing INPUT file "an internal error … a bug in docxkit"~~ — FIXED 09.10, `ab972ab`
 
 <!-- status: fixed -->
