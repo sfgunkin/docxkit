@@ -219,9 +219,18 @@ def make_parts(body: str, *, comment_items: tuple[str, ...] = (),
 
 
 def write(path, parts: dict[str, bytes]) -> str:
+    """`parts` as a .docx at `path`, with the stamp docxkit writes.
+
+    A bare name in `writestr` stamps the entry with the clock, so the
+    same parts gave different bytes every two seconds, and a test that
+    searched for content hashing below a fixture's digest failed at
+    random (2026-10-09, `_content_hashing` in test_workflow_states).
+    """
+    from docxkit._xml import zip_entry
+
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for name, blob in parts.items():
-            z.writestr(name, blob)
+            z.writestr(zip_entry(name), blob)
     return str(path)
 
 

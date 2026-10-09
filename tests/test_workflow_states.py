@@ -352,6 +352,26 @@ def _some_bytes(n: int) -> bytes:
     return b"a copy that stopped part way %d" % n
 
 
+def test_a_fixture_docx_is_the_SAME_BYTES_whatever_the_clock(
+        tmp_path, monkeypatch):
+    """`_content_hashing` promises the same content on every run, and
+    the digests it compares, the fixture's and the one it searches for,
+    are both of documents `write` built. While `write` stamped entries
+    with the clock, both moved every two seconds, and a rescue whose
+    digest landed near the bottom of the range left none of the 1,000
+    tries below it: the RESCUE test failed at random. The clock moves
+    a day between the two builds here, because two builds inside one
+    second matched even then."""
+    import time
+
+    a_day_later = iter([1_000_000_000.0, 1_000_086_400.0])
+    monkeypatch.setattr(time, "time",
+                        lambda: next(a_day_later, 1_000_086_400.0))
+    build = _a_docx(tmp_path / "scratch.docx", "the same sentence")
+
+    assert build(3) == build(3)
+
+
 def test_WITHDRAW_takes_back_the_NEWEST_of_several_kept_redlines(
         promoted_round):
     """`build/redlines/` is the record of every round, so from the second
