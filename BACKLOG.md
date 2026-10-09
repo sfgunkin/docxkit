@@ -828,6 +828,58 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
+### S4 — `revision withdraw` crashes (exit 70, "internal error") when Word holds the manuscript, instead of refusing
+<!-- status: open -->
+
+Measured on HPPA_Index, 2026-10-09: the author opened the promoted
+proposal in Word, then `docxkit revision withdraw --why …` printed
+`internal error — PermissionError: [Errno 13] Permission denied:
+'…\revision\working.docx'` and exited 70. Nothing was written (hash and
+ledger unchanged), so no damage — but the message calls it a docxkit bug
+and sends the user to a traceback, where `promote` and `edit_in_place`
+answer the same state with a `DocumentLocked` refusal naming the cure.
+
+Diagnosis: `_promote.withdraw` computes `_guard.sha256(live)` (and
+compares it with the newest redline) BEFORE its own
+`package.is_locked(live)` check, and Word's share mode denies the read.
+The lock check is there; it is just ordered after the first read.
+
+Fix: move the `is_locked` check above the first hash, and — since
+`status`/`ingest` already read a locked file via a snapshot — consider
+hashing a snapshot copy so the "has the author SAVED it?" verdict still
+comes out when Word merely has it open. Test: a fixture that holds the
+file open with a deny-read share mode (or monkeypatch `sha256` to raise
+PermissionError) must produce `DocumentLocked`, exit != 70.
+
+Workaround in use: none needed — close Word and re-run.
+
+### S4 — `revision baseline` calls a footnote the accepted batch itself deleted a LOSS, and refuses
+<!-- status: open -->
+
+Measured on HPPA_Index, 2026-10-09: a one-purpose batch deleted footnote 8
+(reference + definition, built and validated by `revision ship`, promoted).
+The author accepted it in Word. `ingest --check` then exited 5 with
+`LOST (1): footnote 'Binary variables reduce…'`, and `baseline` refused
+until given `--accept-loss 'footnote:Binary variables…'`.
+
+The deletion is the promoted redline's own content — its stamp is beside
+the manuscript (`working.docx.buildinfo.json`) and the kept redline holds
+the footnote in `w:delText`. The loss gate exists for what WORD ate; a
+deletion the protocol proposed and the author accepted is the opposite
+case. Every footnote-dropping round now needs a hand-typed
+`--accept-loss`, which is exactly the habit the S3 `--accept-loss` note
+warns trains people to pass it without checking.
+
+Fix: in `_losses`, discount a loss whose item appears as a tracked
+DELETION in the newest kept redline that the baseline is closing (same
+footnote text in `w:delText`, same anchor inside a `w:del`); report it as
+"deleted by the batch, accepted" instead. Test: build a batch that deletes
+a footnote, accept it via `revisions.accept`, run baseline — no refusal;
+delete a DIFFERENT footnote by hand on top — refusal names only that one.
+
+Workaround in use: `--accept-loss` after confirming the lost item is the
+batch's own deletion (the redline's `w:delText` carries the same text).
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
