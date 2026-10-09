@@ -81,6 +81,11 @@ PRIVATE = {
     ("docxkit._xml", "set_run_property"),
     ("docxkit._xml", "set_run_text"),
     ("docxkit._xml", "visible_text"),
+    # 2026-10-09, four HPPA_Index scripts already in `scripts/applied/`
+    # (spent). The public spelling has always existed —
+    # `docxkit.revision.load_paper` — so this is a path to move off, not
+    # machinery to promote.
+    ("docxkit.revision._config", "load_paper"),
 }
 
 #: The four promoted on 2026-09-01, with the public path they now have.
