@@ -310,6 +310,32 @@ def test_WITHDRAW_refuses_while_word_holds_the_manuscript(promoted_round,
     assert paper.working.read_bytes() == before
 
 
+def test_WITHDRAW_asks_about_the_lock_BEFORE_it_reads_the_manuscript(
+        promoted_round, monkeypatch):
+    """The test above fakes the lock and leaves the file READABLE, which
+    is not what Word does: its share mode denies the read too. Measured
+    on HPPA_Index, 2026-10-09 — `withdraw` hashed the manuscript before
+    asking `is_locked`, the hash raised PermissionError, and the CLI
+    printed "internal error" and exited 70 where `promote` answers the
+    same state with `DocumentLocked` and the cure."""
+    from docxkit.errors import DocumentLocked
+
+    paper = promoted_round.paper
+    held, real = paper.working.resolve(), guard.sha256
+
+    def denied(path):
+        if Path(path).resolve() == held:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(guard, "sha256", denied)
+    monkeypatch.setattr(revision.package, "is_locked",
+                        lambda p: Path(p).resolve() == held)
+
+    with pytest.raises(DocumentLocked, match="open in Word"):
+        revision.withdraw(paper, why="open in Word")
+
+
 # --- which digest sorts first, and which redline is read -----------------
 #
 # From the first valid `revision/_promote` sweep (2026-09-18). Every

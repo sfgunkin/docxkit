@@ -414,6 +414,14 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"nothing has been promoted onto {live.name}: "
             f"{paper.redline_dir.name}/ keeps no redline `promote` wrote, "
             f"so there is no proposal here to withdraw.")
+    # Asked BEFORE the first read of the manuscript. Word's share mode
+    # denies the read as well as the write, so a hash taken first raises
+    # a bare PermissionError that the CLI reports as an internal error
+    # (exit 70) instead of the refusal below (HPPA_Index, 2026-10-09).
+    if package.is_locked(live):
+        raise DocumentLocked(
+            f"{live.name} is open in Word. Close it first — a copy made "
+            f"now would be overwritten the moment Word saves.")
     newest, live_hash = kept[-1], _guard.sha256(live)
     if _guard.sha256(newest) != live_hash:
         raise ProtocolError(
@@ -426,10 +434,6 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"withdrawing would have done — and then\n"
             f"    docxkit revision baseline   (record what they decided)\n"
             f"{newest.name} keeps this proposal's markup either way.")
-    if package.is_locked(live):
-        raise DocumentLocked(
-            f"{live.name} is open in Word. Close it first — a copy made "
-            f"now would be overwritten the moment Word saves.")
 
     base_hash = _guard.sha256(paper.prev)
     built_on = _guard.base_of(live)
