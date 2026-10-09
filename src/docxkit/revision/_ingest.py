@@ -11,7 +11,7 @@ from typing import Any
 
 from .. import package
 from ._common import SAVE_NOISE
-from ._losses import Loss, Relabelled, losses, relabelled_links
+from ._losses import Loss, Relabelled, by_the_batch, losses, relabelled_links
 from ._state import State, _state, state
 
 # --------------------------------------------------------------- ingest
@@ -46,6 +46,10 @@ class IngestReport:
     #: Was `working` read from a COPY, because the author has it open in
     #: Word? See :func:`docxkit.package.readable`.
     from_snapshot: bool = False
+    #: What the hand-back no longer carries BECAUSE the batch proposed
+    #: deleting it and the author accepted — not in `lost`, and so not a
+    #: reason for `--check` to fail. See :func:`by_the_batch`.
+    deleted: list[Loss] = field(default_factory=list)
 
     @property
     def style_edit(self) -> bool:
@@ -63,8 +67,13 @@ class IngestReport:
         return not any(self.content.values()) and not self.changed_parts
 
 
-def ingest(working: str | Path, prev: str | Path) -> IngestReport:
+def ingest(working: str | Path, prev: str | Path, *,
+           proposal: str | Path | None = None) -> IngestReport:
     """Compare the author's file against the last accepted truth.
+
+    `proposal` is the kept redline the manuscript grew out of
+    (:func:`closing_redline`), when the caller knows it: a loss that
+    redline proposed is reported as `deleted`, not `lost`.
 
     **Read-only**, and that is what makes it safe to run before every
     task without asking. Silently rebuilding over an author's edits is
@@ -101,8 +110,14 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
     # out of the snapshot: one read, and a path the caller can open.
     working_state = _state(working_parts, working, snapshot)
     parts = package.changed_parts(prev_parts, working_parts)
+    lost = losses(working_parts, prev_parts)
+    deleted: list[Loss] = []
+    if proposal is not None:
+        lost, deleted = by_the_batch(lost, package.read_parts(proposal),
+                                     prev_parts)
     return IngestReport(
-        lost=losses(working_parts, prev_parts),
+        lost=lost,
+        deleted=deleted,
         relabelled=relabelled_links(working_parts, prev_parts),
         working=working,
         prev=prev,

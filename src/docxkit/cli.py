@@ -1734,11 +1734,23 @@ def _say_lost(lost: Sequence[object]) -> None:
           "named with\n   --accept-loss.")
 
 
+def _say_deleted(deleted: Sequence[object]) -> None:
+    """The batch's own deletions: gone, accepted, and not a refusal."""
+    print(f"\n== DELETED BY THE BATCH ({len(deleted)}) ==")
+    for loss in deleted:
+        print("   ", loss)
+    print("   The promoted redline proposed these deletions and the author "
+          "accepted\n   them, so `revision baseline` does not refuse. Check "
+          "each against the\n   redline if the author REJECTED a deletion — "
+          "Word may have eaten it anyway.")
+
+
 def cmd_revision_ingest(args: argparse.Namespace) -> int:
     """What did the author change while I was away? (read-only)"""
-    from .revision import ingest
+    from .revision import closing_redline, ingest
     paper = _paper(args)
-    report = ingest(paper.working, paper.prev)
+    report = ingest(paper.working, paper.prev,
+                    proposal=closing_redline(paper))
     print(f"{paper.name}: {paper.prev.name} -> {paper.working.name}")
     if report.from_snapshot:
         print(_SNAPSHOT_NOTE)
@@ -1769,6 +1781,8 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
 
     if report.lost:
         _say_lost(report.lost)
+    if report.deleted:
+        _say_deleted(report.deleted)
 
     if report.relabelled:
         print(f"\n== RE-LABELLED ({len(report.relabelled)}) ==")
@@ -1804,6 +1818,7 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
             "changed_parts": report.changed_parts,
             "working_pending": report.working_state.pending,
             "lost": [loss.key for loss in report.lost],
+            "deleted_by_batch": [loss.key for loss in report.deleted],
         })
     # HandbackLoss.exit_code: `ingest --check` and the `baseline` refusal
     # report the same finding, so a script reads one number for it
@@ -2319,6 +2334,8 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
                       log=not args.no_log)
     for token in accepted:
         print(f"  accepted loss: {token}")
+    for loss in report.deleted:
+        print(f"  deleted by the batch, accepted: {loss}")
     print(f"baseline updated: {report.prev}")
     if report.verdict is not None and report.row:
         print(f"\nlogged: {report.row.strip()}")

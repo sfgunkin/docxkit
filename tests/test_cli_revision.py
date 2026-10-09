@@ -396,6 +396,47 @@ def test_ingest_check_EXITS_on_a_hand_back_that_lost_something(monkeypatch,
     assert "LOST" in capsys.readouterr().out
 
 
+def test_ingest_check_PASSES_a_deletion_the_promoted_batch_proposed(
+        monkeypatch, project, capsys):
+    """HPPA_Index, 2026-10-09: the batch deleted footnote 8, the author
+    accepted it, and `--check` exited 5 over the batch's own proposal.
+    It is reported in a section of its own, and does not fail the
+    check."""
+    from test_revision import promote_a_note_deletion, two_notes
+
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))
+    report = project.root / "ingest.json"
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest", "--check",
+                      "--paper", str(project.root), "--json", str(report))
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "== LOST" not in out, out
+    assert "== DELETED BY THE BATCH (1) ==" in out
+    assert "Binary variables" in out
+    said = json.loads(report.read_text(encoding="utf-8"))
+    assert said["lost"] == []
+    assert said["deleted_by_batch"][0].startswith("footnote:Binary")
+
+
+def test_baseline_records_the_batchs_deletion_and_SAYS_so(monkeypatch,
+                                                         project, capsys):
+    from test_revision import promote_a_note_deletion, two_notes
+
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))
+
+    code, _ = run_cli(monkeypatch, "revision", "baseline",
+                      "--paper", str(project.root))
+    out = capsys.readouterr().out
+
+    assert code == 0, out
+    assert "deleted by the batch, accepted: footnote 'Binary" in out
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
 def test_ingest_without_check_still_only_REPORTS(monkeypatch, project,
                                                  capsys):
     """Read-only and exit 0 stays the default: `ingest` is the command

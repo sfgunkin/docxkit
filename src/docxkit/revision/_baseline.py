@@ -15,7 +15,14 @@ from ..errors import BaselinePending, DocumentLocked, HandbackLoss
 from ..hygiene import restore_math_glyphs
 from . import _ledger, _timing
 from ._config import Paper
-from ._losses import _names, _unmet, losses
+from ._losses import (
+    Loss,
+    _names,
+    _unmet,
+    by_the_batch,
+    closing_redline,
+    losses,
+)
 from ._state import State, state
 from ._verdict import Verdict, log_batch, verdict
 
@@ -44,6 +51,11 @@ class BaselineReport:
     no verdict to write, or when the log has no table to take it — the
     caller says so, rather than this writing a table nobody asked for
     (see :func:`log_batch`)."""
+    deleted: tuple[Loss, ...] = ()
+    """Losses the batch itself proposed and the author accepted, which
+    did not block (see :func:`by_the_batch`). Reported, so the one case
+    that check cannot see — a rejected deletion Word ate anyway — is in
+    front of the reader rather than nowhere."""
 
 
 def _only_in_word(current: State) -> str:
@@ -150,13 +162,22 @@ def baseline(paper: Paper, *, force: bool = False,
             f"baseline copied mid-save is a zip nothing can reject "
             f"against.")
     repaired: Parts | None = None
+    deleted: list[Loss] = []
     if paper.prev.exists():
         work, base = (package.read_parts(paper.working),
                       package.read_parts(paper.prev))
         if repair_math and restore_math_glyphs(work, base):
             repaired = work        # written below, once every gate has passed
         gone = losses(work, base)
-        if stale := _unmet(accept_loss, gone):
+        # What the batch proposed deleting is the author's decision, not
+        # Word's damage, and does not block (HPPA_Index, 2026-10-09).
+        if (proposal := closing_redline(paper)) is not None:
+            gone, deleted = by_the_batch(gone, package.read_parts(proposal),
+                                         base)
+        # Against both lists: naming the batch's deletion is what every
+        # round had to do before this, and refusing that as "has NOT
+        # lost" would break the scripts that still pass it.
+        if stale := _unmet(accept_loss, gone + deleted):
             raise HandbackLoss(
                 f"--accept-loss named {', '.join(stale)}, which "
                 f"{paper.working.name} has NOT lost. A declared loss that "
@@ -230,4 +251,5 @@ def baseline(paper: Paper, *, force: bool = False,
                    reverted=recorded.reverted if recorded else None,
                    authored=recorded.authored if recorded else None,
                    note=note or None)
-    return BaselineReport(prev=paper.prev, verdict=recorded, row=row)
+    return BaselineReport(prev=paper.prev, verdict=recorded, row=row,
+                          deleted=tuple(deleted))

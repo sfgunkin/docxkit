@@ -151,6 +151,8 @@ from ._losses import _link_changes as _link_changes
 from ._losses import _lost_notes as _lost_notes
 from ._losses import _names as _names
 from ._losses import _norm as _norm
+from ._losses import by_the_batch as by_the_batch
+from ._losses import closing_redline as closing_redline
 from ._losses import emptied_footnotes as emptied_footnotes
 from ._losses import glyph_runs as glyph_runs
 from ._losses import links_in_deletions as links_in_deletions
@@ -217,6 +219,8 @@ __all__ = [
     "WorkingPending",
     "baseline",
     "build",
+    "by_the_batch",
+    "closing_redline",
     "doctor",
     "drift",
     "emptied_footnotes",

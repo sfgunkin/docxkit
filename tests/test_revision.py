@@ -3537,6 +3537,190 @@ def test_a_PREFIX_of_the_loss_identifies_it(project):
     assert project.prev.read_bytes() == project.working.read_bytes()
 
 
+# ----------------------------- a deletion the BATCH proposed is not a loss --
+#
+# HPPA_Index, 2026-10-09: a one-purpose batch deleted footnote 8, reference
+# and definition; it was built, validated and promoted, and the author
+# accepted it. `ingest --check` then exited 5 with `LOST (1)` and
+# `baseline` refused until given `--accept-loss` — for the batch's own
+# proposal. A gate that refuses every footnote-dropping round trains the
+# reader to pass the exemption without looking.
+
+_BINARY = ("Binary variables reduce measurement error by simplifying the "
+           "coding of the responses.")
+_WEIGHTS = "The survey weights follow the national census frame."
+
+
+def two_notes(*, drop: tuple[int, ...] = ()) -> dict[str, bytes]:
+    """A body citing notes 8 and 9, less the ones in `drop`."""
+    kept = [(n, t) for n, t in ((8, _BINARY), (9, _WEIGHTS)) if n not in drop]
+    return make_parts(para(run("body "), *(_ref(n) for n, _t in kept)),
+                      footnotes=notes("footnotes",
+                                      *(note(t, nid=n) for n, t in kept)))
+
+
+def promote_a_note_deletion(paper) -> None:
+    """Baseline with notes 8 and 9, and a PROMOTED batch deleting note 8:
+    its reference inside a `w:del`, its definition as `w:delText` — the
+    shape HPPA's kept redline has."""
+    write(paper.prev, two_notes())
+    write(paper.working, two_notes())
+    gone_ref = ('<w:del w:id="93" w:author="Revision" '
+                'w:date="2026-10-09T00:00:00Z">'
+                '<w:r><w:footnoteReference w:id="8"/></w:r></w:del>')
+    definition = (f'<w:footnote w:id="8">{para(dele(_BINARY, rid=94))}'
+                  "</w:footnote>")
+    paper.batch.parent.mkdir(parents=True, exist_ok=True)
+    write(paper.batch, make_parts(
+        para(run("body "), gone_ref, _ref(9)),
+        footnotes=notes("footnotes", definition, note(_WEIGHTS, nid=9))))
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    revision.promote(paper)
+
+
+def test_a_note_the_BATCH_deleted_and_the_author_accepted_does_not_block(
+        project):
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))      # accepted in Word
+
+    # still a loss to the raw comparison — it is the baseline's call
+    assert [x.kind for x in losses(package.read_parts(project.working),
+                                   package.read_parts(project.prev))
+            ] == ["footnote"]
+    report = revision.baseline(project)
+
+    assert project.prev.read_bytes() == project.working.read_bytes()
+    assert [x.key for x in report.deleted] == [f"footnote:{_BINARY}"]
+
+
+def test_ingest_reports_the_batchs_deletion_APART_from_what_was_lost(
+        project):
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))
+
+    report = revision.ingest(project.working, project.prev,
+                             proposal=revision.closing_redline(project))
+
+    assert report.lost == []
+    assert [x.key for x in report.deleted] == [f"footnote:{_BINARY}"]
+
+
+def test_a_DIFFERENT_note_lost_on_top_still_refuses_and_names_only_it(
+        project):
+    """The discount is per loss, not a switch: the note Word ate beside
+    the batch's own deletion is still refused, and it is the only one
+    the refusal names."""
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8, 9)))
+
+    with pytest.raises(HandbackLoss) as exc:
+        revision.baseline(project)
+
+    said = str(exc.value)
+    assert "lost 1 thing(s)" in said, said
+    assert _WEIGHTS[:30] in said and _BINARY[:30] not in said
+
+
+def test_two_notes_with_the_SAME_words_are_never_put_down_to_the_batch():
+    """A batch that deleted one of two identical notes cannot say WHICH:
+    `_lost_notes` counts it as "1 more, unnamed", and an unnamed loss is
+    never discounted. So a hand-back missing both keeps both as lost —
+    the cautious answer, where pairing on the words would have excused
+    one the batch never touched."""
+    twice = make_parts(para(run("body "), _ref(8), _ref(9)),
+                       footnotes=notes("footnotes", note(_BINARY, nid=8),
+                                       note(_BINARY, nid=9)))
+    proposal = make_parts(
+        para(run("body "), _ref(9)),
+        footnotes=notes("footnotes", note(_BINARY, nid=9)))
+    gone = losses(make_parts(para(run("body ")),
+                             footnotes=notes("footnotes")), twice)
+
+    lost, deleted = revision.by_the_batch(gone, proposal, twice)
+
+    assert len(gone) == 2
+    assert lost == gone and deleted == []
+
+
+def test_a_LINK_the_batch_removed_is_paired_one_for_one():
+    """Links CAN repeat with the same key — one anchor, one label, cited
+    twice — and the batch removing one excuses one, not both."""
+    def cites(n: int) -> dict[str, bytes]:
+        link = ('<w:hyperlink w:anchor="ref_Lari2023">'
+                "<w:r><w:t>Lari (2023)</w:t></w:r></w:hyperlink>")
+        return make_parts("".join(para(run("see "), link) for _ in range(n))
+                          + para(run("end")))
+
+    gone = losses(cites(0), cites(2))
+    lost, deleted = revision.by_the_batch(gone, cites(1), cites(2))
+
+    assert len(gone) == 2
+    assert len(lost) == 1 and len(deleted) == 1
+
+
+def test_an_UNNAMED_note_loss_is_never_put_down_to_the_batch():
+    """`_lost_notes` names a note by text and falls back to a COUNT when
+    it cannot; two counts agreeing says nothing about which note went."""
+    unnamed = revision.Loss("footnote", "1 more, unnamed — 2 footnotes "
+                                        "before, 1 now")
+    lost, deleted = revision.by_the_batch([unnamed], two_notes(drop=(8,)),
+                                          two_notes())
+
+    assert lost == [unnamed] and deleted == []
+
+
+def test_with_NO_stamp_the_proposal_cannot_be_named_and_the_loss_blocks(
+        project):
+    """Not knowing which proposal this was must never read as "the batch
+    did it"."""
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))
+    guard.stamp_path(project.working).unlink()
+
+    assert revision.closing_redline(project) is None
+    with pytest.raises(HandbackLoss):
+        revision.baseline(project)
+
+
+def test_a_stamp_about_ANOTHER_baseline_names_no_proposal(project):
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))
+    write(project.prev, two_notes(drop=(9,)))       # the truth moved on
+
+    assert revision.closing_redline(project) is None
+
+
+def test_a_stamp_NO_kept_redline_answers_to_names_no_proposal(project):
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))
+    for kept in project.redlines():
+        kept.unlink()
+
+    assert revision.closing_redline(project) is None
+
+
+def test_the_NEWEST_kept_redline_with_the_stamped_bytes_is_the_one(project):
+    """Promoted, withdrawn, promoted again: two kept copies, and the one
+    the manuscript's stamp records is the later."""
+    promote_a_note_deletion(project)
+    first = project.redlines()[-1]
+    older = first.with_name(first.name.replace("redline_", "redline_0"))
+    older.write_bytes(b"an older proposal")
+
+    assert revision.closing_redline(project) == first
+
+
+def test_naming_the_batchs_deletion_with_accept_loss_is_NOT_stale(project):
+    """Every such round passed `--accept-loss` before this, and a script
+    that still does must not be refused as naming something not lost."""
+    promote_a_note_deletion(project)
+    write(project.working, two_notes(drop=(8,)))
+
+    revision.baseline(project, accept_loss=("footnote:Binary variables",))
+
+    assert project.prev.read_bytes() == project.working.read_bytes()
+
+
 
 # ---------------------------------------------- naming the glyph that moved --
 #
