@@ -358,6 +358,25 @@ class WithdrawReport:
     why: str
 
 
+def _readable_hash(path: Path) -> str:
+    """`guard.sha256`, with Word's deny-read answered as a refusal.
+
+    A file Word holds may refuse the read as well as the write. That is
+    a state the user can fix, not a defect, so it is :class:`DocumentLocked`
+    — and only when `is_locked` agrees: a PermissionError on a file
+    nothing holds is something else, and is not dressed up as Word.
+    """
+    try:
+        return _guard.sha256(path)
+    except PermissionError:
+        if package.is_locked(path):
+            raise DocumentLocked(
+                f"{path.name} is open in Word, which will not let it be "
+                f"read. Close it and run this again — nothing has been "
+                f"changed.") from None
+        raise
+
+
 def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
     """Take back a promoted proposal the author has not opened.
 
@@ -414,16 +433,16 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"nothing has been promoted onto {live.name}: "
             f"{paper.redline_dir.name}/ keeps no redline `promote` wrote, "
             f"so there is no proposal here to withdraw.")
-    # Asked BEFORE the first read of the manuscript. Word's share mode
-    # denies the read as well as the write, so a hash taken first raises
-    # a bare PermissionError that the CLI reports as an internal error
-    # (exit 70) instead of the refusal below (HPPA_Index, 2026-10-09).
-    if package.is_locked(live):
-        raise DocumentLocked(
-            f"{live.name} is open in Word. Close it first — a copy made "
-            f"now would be overwritten the moment Word saves.")
-    newest, live_hash = kept[-1], _guard.sha256(live)
-    if _guard.sha256(newest) != live_hash:
+    # Every read before the first write goes through `_readable_hash`:
+    # Word can deny the READ as well as the write, and a bare
+    # PermissionError reached the CLI as "internal error", exit 70
+    # (HPPA_Index, 2026-10-09). Hashing first, rather than asking
+    # `is_locked` first, keeps the more useful answer for the common
+    # case: a manuscript the author SAVED and still has open is readable,
+    # and "it has been adjudicated" is what they need to hear — "close
+    # it first" sent them to close Word only to learn that.
+    newest, live_hash = kept[-1], _readable_hash(live)
+    if _readable_hash(newest) != live_hash:
         raise ProtocolError(
             f"{live.name} is no longer the batch the last promote put on it "
             f"({newest.name}): it has been opened and saved since, or that "
@@ -434,12 +453,28 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"withdrawing would have done — and then\n"
             f"    docxkit revision baseline   (record what they decided)\n"
             f"{newest.name} keeps this proposal's markup either way.")
+    if package.is_locked(live):
+        raise DocumentLocked(
+            f"{live.name} is open in Word. Close it first — a copy made "
+            f"now would be overwritten the moment Word saves.")
+    # The staged batch is decided — and its lock asked — BEFORE the
+    # manuscript is touched. Unlinking a batch Word holds raised after
+    # the copy below had landed and the stamp was gone: withdraw died
+    # half done, with no ledger event, and a re-run then called the
+    # restored manuscript "opened and saved since" (review, 2026-10-10).
+    removed = (paper.batch.is_file()
+               and _readable_hash(paper.batch) == live_hash)
+    if removed and package.is_locked(paper.batch):
+        raise DocumentLocked(
+            f"{paper.batch.name} is the proposal being withdrawn, and it is "
+            f"open in Word. Close it first — withdrawing removes it, and "
+            f"nothing has been changed yet.")
 
-    base_hash = _guard.sha256(paper.prev)
+    base_hash = _readable_hash(paper.prev)
     built_on = _guard.base_of(live)
     proved = built_on == base_hash or (
         built_on is None
-        and any(_guard.sha256(r) == base_hash for r in rescues(paper)))
+        and any(_readable_hash(r) == base_hash for r in rescues(paper)))
     if not proved:
         raise ProtocolError(
             f"{newest.name} was not built on {paper.prev.name} as it stands "
@@ -459,7 +494,6 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"proposal")
     _guard.stamp_path(live).unlink(missing_ok=True)
 
-    removed = paper.batch.is_file() and _guard.sha256(paper.batch) == live_hash
     if removed:
         paper.batch.unlink()
         _guard.stamp_path(paper.batch).unlink(missing_ok=True)

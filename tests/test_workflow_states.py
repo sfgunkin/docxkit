@@ -310,30 +310,92 @@ def test_WITHDRAW_refuses_while_word_holds_the_manuscript(promoted_round,
     assert paper.working.read_bytes() == before
 
 
-def test_WITHDRAW_asks_about_the_lock_BEFORE_it_reads_the_manuscript(
-        promoted_round, monkeypatch):
-    """The test above fakes the lock and leaves the file READABLE, which
-    is not what Word does: its share mode denies the read too. Measured
-    on HPPA_Index, 2026-10-09 — `withdraw` hashed the manuscript before
-    asking `is_locked`, the hash raised PermissionError, and the CLI
-    printed "internal error" and exited 70 where `promote` answers the
-    same state with `DocumentLocked` and the cure."""
-    from docxkit.errors import DocumentLocked
+def _word_holds(monkeypatch, path: Path, *, deny_read: bool) -> None:
+    """Fake Word holding `path`: locked, and — as its share mode can —
+    refusing the read too when `deny_read`."""
+    held, real = path.resolve(), guard.sha256
 
-    paper = promoted_round.paper
-    held, real = paper.working.resolve(), guard.sha256
+    def sha256(p):
+        if deny_read and Path(p).resolve() == held:
+            raise PermissionError(13, "Permission denied", str(p))
+        return real(p)
 
-    def denied(path):
-        if Path(path).resolve() == held:
-            raise PermissionError(13, "Permission denied", str(path))
-        return real(path)
-
-    monkeypatch.setattr(guard, "sha256", denied)
+    monkeypatch.setattr(guard, "sha256", sha256)
     monkeypatch.setattr(revision.package, "is_locked",
                         lambda p: Path(p).resolve() == held)
 
-    with pytest.raises(DocumentLocked, match="open in Word"):
+
+def test_WITHDRAW_answers_a_manuscript_Word_will_not_let_it_READ_as_locked(
+        promoted_round, monkeypatch):
+    """The test above fakes the lock and leaves the file READABLE. Word
+    can deny the read as well — HPPA_Index, 2026-10-09: the hash raised a
+    bare PermissionError and the CLI printed "internal error", exit 70,
+    where `promote` answers the same state with `DocumentLocked`."""
+    from docxkit.errors import DocumentLocked
+
+    paper = promoted_round.paper
+    before = paper.working.read_bytes()
+    _word_holds(monkeypatch, paper.working, deny_read=True)
+
+    with pytest.raises(DocumentLocked, match="will not let it be read"):
         revision.withdraw(paper, why="open in Word")
+
+    assert paper.working.read_bytes() == before
+
+
+def test_WITHDRAW_of_a_SAVED_manuscript_still_open_says_it_was_adjudicated(
+        promoted_round, monkeypatch):
+    """Word shares an open file for reading on a local path, so the
+    common case is readable. The author saved and kept it open: what
+    they need to hear is that withdrawing is no longer possible, not
+    "close it first" — which sent them to close Word only to learn that
+    (review of 71a6a1c, 2026-10-10)."""
+    paper = promoted_round.paper
+    write(paper.working, make_parts(para(run("the author's save"))))
+    _word_holds(monkeypatch, paper.working, deny_read=False)
+
+    with pytest.raises(ProtocolError, match="no longer the batch"):
+        revision.withdraw(paper, why="saved and open")
+
+
+def test_WITHDRAW_refuses_BEFORE_writing_when_Word_holds_the_staged_batch(
+        promoted_round, monkeypatch):
+    """`batch.docx` was unlinked AFTER the manuscript had been restored
+    and its stamp removed, so a batch open in Word killed withdraw half
+    done: no ledger event, batch still staged, and a re-run called the
+    restored manuscript "opened and saved since"."""
+    from docxkit.errors import DocumentLocked
+
+    paper = promoted_round.paper
+    before, lines = paper.working.read_bytes(), len(_ledger_lines(paper))
+    _word_holds(monkeypatch, paper.batch, deny_read=False)
+
+    with pytest.raises(DocumentLocked, match="nothing has been changed"):
+        revision.withdraw(paper, why="batch open in Word")
+
+    assert paper.working.read_bytes() == before
+    assert guard.stamp_path(paper.working).exists()
+    assert paper.batch.exists()
+    assert len(_ledger_lines(paper)) == lines
+
+
+def test_a_PERMISSION_error_on_a_file_nothing_holds_is_not_called_Word(
+        promoted_round, monkeypatch):
+    """Only a file `is_locked` agrees is held becomes DocumentLocked; any
+    other PermissionError is something else and is not dressed up."""
+    paper = promoted_round.paper
+    held, real = paper.working.resolve(), guard.sha256
+
+    def sha256(p):
+        if Path(p).resolve() == held:
+            raise PermissionError(13, "Permission denied", str(p))
+        return real(p)
+
+    monkeypatch.setattr(guard, "sha256", sha256)
+    monkeypatch.setattr(revision.package, "is_locked", lambda _p: False)
+
+    with pytest.raises(PermissionError):
+        revision.withdraw(paper, why="an ACL, not Word")
 
 
 # --- which digest sorts first, and which redline is read -----------------
