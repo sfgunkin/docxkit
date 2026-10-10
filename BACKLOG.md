@@ -875,6 +875,73 @@ LOST a link, a note, …"; `cmd_revision_ingest` returns
 list has to read. Fix the help string and pin it against
 `HandbackLoss.exit_code` in `test_cli_revision`.
 
+### S4 — `revision baseline` calls a footnote the accepted batch itself deleted a LOSS, and refuses
+
+<!-- status: open -->
+
+Measured on HPPA_Index, 2026-10-09: a one-purpose batch deleted footnote 8
+(reference + definition, built and validated by `revision ship`, promoted).
+The author accepted it in Word. `ingest --check` then exited 5 with
+`LOST (1): footnote 'Binary variables reduce…'`, and `baseline` refused
+until given `--accept-loss 'footnote:Binary variables…'`.
+
+The deletion is the promoted redline's own content — its stamp is beside
+the manuscript (`working.docx.buildinfo.json`) and the kept redline holds
+the footnote in `w:delText`. The loss gate exists for what WORD ate; a
+deletion the protocol proposed and the author accepted is the opposite
+case. Every footnote-dropping round now needs a hand-typed
+`--accept-loss`, which is exactly the habit the S3 `--accept-loss` note
+warns trains people to pass it without checking.
+
+Fix: in `_losses`, discount a loss whose item appears as a tracked
+DELETION in the newest kept redline that the baseline is closing (same
+footnote text in `w:delText`, same anchor inside a `w:del`); report it as
+"deleted by the batch, accepted" instead. Test: build a batch that deletes
+a footnote, accept it via `revisions.accept`, run baseline — no refusal;
+delete a DIFFERENT footnote by hand on top — refusal names only that one.
+
+Workaround in use: `--accept-loss` after confirming the lost item is the
+batch's own deletion (the redline's `w:delText` carries the same text).
+
+**Attempted 2026-10-09 in `344f49c`, reverted 2026-10-10 in `4deb0f9`.**
+It discounted a hand-back loss whose `Loss.key` also appeared in
+`losses(accepted_view(kept redline), prev)`. A `/code-review max` (15
+findings, each confirmed by a verifier, several reproduced with real
+Word) showed that makes REAL losses permanent where baseline refused:
+
+- a key is not an identity. A repeated citation shares one link key, so
+  Word stripping one copy was excused against the batch's deletion of
+  another that the author KEPT (rejected the deletion);
+- `_lost_notes` names a note best-effort (`sorted(missing)[:gone]`, which
+  includes a REWORDED note's old text), so a reworded note paired with
+  the proposal and a different note Word ate passed;
+- nothing checked that the round was ADJUDICATED: a still-pending
+  deletion read as accepted, `ingest --check` passed an unopened
+  proposal, and `baseline --force` would install it;
+- a link whose deletion the author rejected but which came back as
+  plain text (proposal `words=False`, hand-back `words=True`) was
+  excused;
+- the stamp beside the manuscript is not invalidated when a promote is
+  undone by hand, so an old redline kept excusing later losses;
+- `closing_redline` hashed kept redlines and prev raw (exit 70 when one
+  is open in Word), matched only the CURRENT stamp hash (a manuscript
+  restamped after promote never matched — Aging_Well restamps every
+  round), and re-hashed every kept redline on every ingest/baseline;
+- it answered "which batch did this grow out of" independently of
+  `_verdict._proposal`, so the console could excuse deletions while
+  log.md recorded "no batch to compare against";
+- the accepted-view proxy still refused common shapes: a bookmark lifted
+  out of a deleted note (house `cite_*_1` convention), and a batch that
+  replaces a note or moves a citation proposes no net deletion at all.
+
+A redesign has to: match the actual tracked deletion in the redline (the
+note's reference inside a `w:del`, its text in `w:delText`), not a
+derived key; require 0 pending revisions; keep a loss LOST whenever its
+words survive in the hand-back; reuse `_verdict`'s identification of the
+proposal (and the stamp's `repairs[].was` chain); read through a
+lock-translating helper; and run only when there are losses at all.
+Until then the workaround below stands.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213

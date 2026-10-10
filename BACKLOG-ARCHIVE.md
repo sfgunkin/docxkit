@@ -14,60 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S4 — `revision baseline` calls a footnote the accepted batch itself deleted a LOSS, and refuses~~ — FIXED 09.10, `344f49c`
-
-<!-- status: fixed -->
-
-Measured on HPPA_Index, 2026-10-09: a one-purpose batch deleted footnote 8
-(reference + definition, built and validated by `revision ship`, promoted).
-The author accepted it in Word. `ingest --check` then exited 5 with
-`LOST (1): footnote 'Binary variables reduce…'`, and `baseline` refused
-until given `--accept-loss 'footnote:Binary variables…'`.
-
-The deletion is the promoted redline's own content — its stamp is beside
-the manuscript (`working.docx.buildinfo.json`) and the kept redline holds
-the footnote in `w:delText`. The loss gate exists for what WORD ate; a
-deletion the protocol proposed and the author accepted is the opposite
-case. Every footnote-dropping round now needs a hand-typed
-`--accept-loss`, which is exactly the habit the S3 `--accept-loss` note
-warns trains people to pass it without checking.
-
-Fix: in `_losses`, discount a loss whose item appears as a tracked
-DELETION in the newest kept redline that the baseline is closing (same
-footnote text in `w:delText`, same anchor inside a `w:del`); report it as
-"deleted by the batch, accepted" instead. Test: build a batch that deletes
-a footnote, accept it via `revisions.accept`, run baseline — no refusal;
-delete a DIFFERENT footnote by hand on top — refusal names only that one.
-
-Workaround in use: `--accept-loss` after confirming the lost item is the
-batch's own deletion (the redline's `w:delText` carries the same text).
-
-**Closed 2026-10-09.** As filed, measured on the redline's ACCEPTED view
-rather than by matching `w:delText`: `revision.by_the_batch` runs `losses`
-between the kept redline's accepted view and the baseline, and a
-hand-back loss with the same key is the batch's own deletion, paired one
-for one. `revision.closing_redline` finds that redline from the stamp
-`promote` carried onto the manuscript (`guard.base_of` must name this
-baseline; a kept redline must have the bytes `guard.recorded_hash` names),
-so it works while Word holds the file and answers None when unsure.
-Only link/footnote/endnote/bookmark losses are discounted, never a note
-`_lost_notes` could only count. `ingest` and `baseline` report them as
-`deleted`, the CLI in its own "DELETED BY THE BATCH" section that does not
-fail `--check`; naming one with `--accept-loss` is still accepted.
-Checked read-only on the HPPA kept redline named above: it moves the
-footnote from lost to deleted.
-
-Tests that fail without the fix:
-`test_a_note_the_BATCH_deleted_and_the_author_accepted_does_not_block`,
-`test_ingest_reports_the_batchs_deletion_APART_from_what_was_lost`
-(test_revision) and
-`test_ingest_check_PASSES_a_deletion_the_promoted_batch_proposed`
-(test_cli_revision), plus eight on the edges (a different note lost on
-top, same-words notes, repeated links, unnamed losses, the three ways no
-proposal is named, the newest redline winning, `--accept-loss` not
-stale).
-
-### ~~S4 — `revision withdraw` crashes (exit 70, "internal error") when Word holds the manuscript, instead of refusing~~ — FIXED 09.10, `71a6a1c`
+### ~~S4 — `revision withdraw` crashes (exit 70, "internal error") when Word holds the manuscript, instead of refusing~~ — FIXED 09.10, `71a6a1c`; reworked 10.10, `7f738f4`
 
 <!-- status: fixed -->
 
@@ -104,6 +51,15 @@ Test that fails without the fix:
 (test_workflow_states). It denies the READ on the manuscript, as Word's
 share mode does. The older lock test faked `is_locked` and left the file
 readable, which is why it never saw this.
+
+**Reworked 2026-10-10 in `7f738f4`** after a code review. Asking
+`is_locked` first changed the answer for a manuscript the author SAVED and
+kept open (Word shares it for reading): "close it first" instead of "it
+has been adjudicated". Now every read before the first write goes through
+`_readable_hash`, which calls Word's deny-read `DocumentLocked`, and the
+lock check sits after the adjudicated refusal again. The same review found
+`batch.docx` unlinked after the manuscript had been restored; the batch is
+now decided and its lock checked before anything is written.
 
 ### ~~S3 — `test_WITHDRAW_refuses_a_RESCUE_that_is_not_the_baselines_bytes[below]` fails at random: the "same content on every run" is not~~ — FIXED 09.10, `f23e7f9`
 
