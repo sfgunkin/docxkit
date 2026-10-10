@@ -26,7 +26,6 @@ __all__ = [
     "carry",
     "check",
     "describes",
-    "recorded_hash",
     "restamp",
     "sha256",
     "stamp",
@@ -235,20 +234,6 @@ def base_of(out: str | Path) -> str | None:
     than assume either.
     """
     got = _recorded(out).get("base_sha256")
-    return got if isinstance(got, str) and got else None
-
-
-def recorded_hash(out: str | Path) -> str | None:
-    """The hash the stamp beside `out` records, if there is one.
-
-    The bytes the build wrote — or, after `revision promote` has carried
-    the batch's stamp onto the manuscript, the batch's bytes, which is
-    what makes a manuscript the author has since saved in Word traceable
-    to the kept redline it grew out of (`revision.closing_redline`). It
-    is a claim about the bytes the stamp was WRITTEN for, not about the
-    file now: :func:`describes` is the question "are they still the same".
-    """
-    got = _recorded(out).get("sha256")
     return got if isinstance(got, str) and got else None
 
 

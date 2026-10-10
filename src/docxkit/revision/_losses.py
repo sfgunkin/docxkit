@@ -14,16 +14,12 @@ from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     # lxml arrives through `_tracked_gates._root`, lazily; named here so
     # the stubs see the walks in `_glyph` and `_counts`.
     from lxml.etree import _Element
 
     from ..footnotes import Footnote
-    from ._config import Paper
 
-from .. import guard as _guard
 from .. import tracked
 from .._xml import (
     BOOKMARK_NAME_RE,
@@ -465,91 +461,9 @@ def _lost_notes(working: Parts,
         out += [Loss(kind, text) for text in named]
         if len(named) < gone:
             out.append(Loss(kind,
-                            f"{gone - len(named)} {_UNNAMED} — "
+                            f"{gone - len(named)} more, unnamed — "
                             f"{len(was)} {kind}s before, {len(now)} now"))
     return out
-
-
-#: How :func:`_lost_notes` words a note it could only COUNT. Named once
-#: because :func:`by_the_batch` must never discount one: "1 more,
-#: unnamed" says nothing about WHICH note went, so two such entries
-#: matching is a coincidence of counts, not the same note.
-_UNNAMED = "more, unnamed"
-
-#: The losses a batch can PROPOSE, and which are matched on their key.
-#: Comments are a count and glyphs are Word's doing, never a batch's.
-_PROPOSABLE = frozenset({"link", "footnote", "endnote", "bookmark"})
-
-
-def closing_redline(paper: Paper) -> Path | None:
-    """The kept redline the manuscript grew out of, or None if unsure.
-
-    Asked so that a loss the BATCH proposed is not refused as one Word
-    caused. Both questions have to answer yes, and neither reads the
-    manuscript's own bytes, so it works while Word holds the file:
-
-    * the stamp beside the manuscript names THIS baseline
-      (`guard.base_of`) — `promote` carries the batch's stamp onto it,
-      and a Word save does not touch the stamp file;
-    * a redline `promote` kept has the bytes that stamp records
-      (`guard.recorded_hash`). The NEWEST such copy, since a batch
-      promoted, withdrawn and promoted again leaves two.
-
-    None — and every loss then blocks, as before — when the manuscript
-    carries no stamp, a stamp about another baseline, or one no kept
-    redline answers to. Not knowing which proposal this was must never
-    read as "the batch did it".
-    """
-    live, prev = paper.working, paper.prev
-    if not prev.is_file() or _guard.base_of(live) != _guard.sha256(prev):
-        return None
-    want = _guard.recorded_hash(live)
-    if want is None:
-        return None
-    for redline in reversed(paper.redlines()):
-        if _guard.sha256(redline) == want:
-            return redline
-    return None
-
-
-def by_the_batch(gone: list[Loss], proposal: Parts,
-                 prev: Parts) -> tuple[list[Loss], list[Loss]]:
-    """Split `gone` into what is LOST and what the batch itself deleted.
-
-    The loss gate exists for what Word ate. A deletion the protocol
-    PROPOSED, built and validated, promoted, and the author ACCEPTED is
-    the opposite case — and it was refused all the same. HPPA_Index,
-    2026-10-09: a one-purpose batch deleted footnote 8, the author
-    accepted it, and `ingest --check` exited 5 with `LOST (1)` while
-    `baseline` refused until given `--accept-loss`. Every
-    footnote-dropping round needed a hand-typed exemption, which is the
-    habit that waves the next real loss through.
-
-    What the batch proposed is measured the same way the hand-back is:
-    :func:`losses` between the redline's ACCEPTED view and the baseline.
-    A loss with the same key there is the batch's own deletion. Paired
-    one for one, so a note the batch deleted and a second one Word ate
-    with the same text still leaves one LOST.
-
-    The one thing this cannot see: an author who REJECTED the deletion
-    in a session where Word then ate the same note anyway. Rare, and the
-    reason the second list is reported by both commands rather than
-    dropped — it is a finding the reader can check, not a silence.
-    """
-    proposed = Counter(loss.key
-                       for loss in losses(tracked.accepted_view(proposal),
-                                          prev)
-                       if loss.kind in _PROPOSABLE
-                       and _UNNAMED not in loss.what)
-    lost: list[Loss] = []
-    deleted: list[Loss] = []
-    for loss in gone:
-        if proposed[loss.key] > 0:
-            proposed[loss.key] -= 1
-            deleted.append(loss)
-        else:
-            lost.append(loss)
-    return lost, deleted
 
 
 def _unmet(accepted: tuple[str, ...], found: list[Loss]) -> list[str]:
