@@ -929,14 +929,18 @@ def test_the_diff_reads_in_TAG_order_not_dict_order():
 
 def test_counts_that_are_EQUAL_and_large_are_not_a_difference():
     """`!=`, not `is not`. Python caches small integers and creates the
-    rest, so two counts of 300 are equal and are not the same object —
+    rest, so two large counts are equal and are not the same object —
     and under `is not` every long manuscript reports a structural change
     that did not happen, which `build` raises on under `reject_check`.
-    A paper with 300 table rows is an ordinary paper."""
+    A paper with 300 table rows is an ordinary paper.
+
+    The count is 100 000, not 300, because the cache moves: 3.14 cached
+    up to 256, 3.15 up to 1024, and at 300 the precondition below failed
+    on 3.15 — the test went red while the code it guards was right."""
     from docxkit.tracked import structure_diff
 
-    was = {"tr": len(range(300))}
-    now = {"tr": len([0] * 300)}
+    was = {"tr": len(range(100_000))}
+    now = {"tr": len([0] * 100_000)}
 
     assert was["tr"] == now["tr"] and was["tr"] is not now["tr"]
     assert structure_diff(was, now) == []
