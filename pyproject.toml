@@ -300,7 +300,14 @@ max-complexity = 20
 "src/docxkit/tracked.py" = ["PLC0414"]
 # pymupdf is an optional extra and `word` is Windows-only: `import
 # docxkit` must not need either.
-"src/docxkit/pages.py" = ["PLC0415"]
+#
+# RUF071 (ruff 0.17, 2026-10-10) assumes `os.path.commonprefix` is handed
+# PATHS and means `commonpath`. Here, and in test_byte_invariant below, it
+# is handed TEXT — a caption against a rendered page, an XML string
+# against its rewrite — and the character-by-character prefix is the
+# point. `commonpath` would split on separators and answer something else.
+"src/docxkit/pages.py" = ["PLC0415", "RUF071"]
+"tests/test_byte_invariant.py" = ["RUF071"]
 # `revision/_init.py` holds the log.md and paper.toml TEMPLATES it
 # writes into a migrating project. Their line length is the generated
 # file's business — a markdown table row cannot be wrapped without
