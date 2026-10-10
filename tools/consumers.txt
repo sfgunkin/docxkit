@@ -111,9 +111,11 @@ docxkit.crossrefs	find_captions
 docxkit.crossrefs	link
 docxkit.edit	_locate
 docxkit.edit	insert_in_para
+docxkit.edit	internal_links
 docxkit.edit	italicize
 docxkit.edit	preserve_space
 docxkit.edit	remove_link
+docxkit.edit	remove_links
 docxkit.edit	rep
 docxkit.edit	replace_in_para
 docxkit.edit	replace_keeping_links
