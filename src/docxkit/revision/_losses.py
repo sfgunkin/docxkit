@@ -481,6 +481,74 @@ def _lost_notes(working: Parts,
     return out
 
 
+#: The kinds a batch can propose deleting, so the only ones
+#: :func:`batch_deletions` may excuse. A glyph Word flattened or a
+#: comment count is never a batch's proposal.
+BATCH_KINDS = ("footnote", "endnote", "bookmark", "link")
+
+
+def _structure(parts: Parts, kind: str) -> Counter[object]:
+    """Everything of `kind` in `parts`, as the multiset `losses` reads."""
+    if kind in ("footnote", "endnote"):
+        part = FOOTNOTES if kind == "footnote" else ENDNOTES
+        return Counter(f.text for f in _notes(parts, part, kind))
+    if kind == "bookmark":
+        return Counter(_bookmarks(parts))
+    return Counter(_links(parts))
+
+
+def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
+                    proposal: Parts) -> tuple[list[Loss], list[Loss]]:
+    """``(deleted by the batch, still lost)``: `gone`, split in two.
+
+    HPPA_Index, 2026-10-09: a batch deleted footnote 8, the author
+    accepted it, and `baseline` refused with ``LOST (1)`` until it was
+    handed ``--accept-loss`` for the batch's own proposal. The loss gate
+    is there for what WORD ate, and an exemption typed every round is the
+    habit that waves the next real loss through.
+
+    **One loss is never matched to one deletion**, which is what the
+    first attempt did (344f49c, reverted in 4deb0f9): a `Loss.key` is
+    not an identity. A repeated citation shares one key, and a reworded
+    note's old text is named as lost beside the note Word really ate.
+    So a whole KIND is excused or none of it, and only when the files
+    prove the hand-back is the proposal with every change of that kind
+    accepted:
+
+    * the proposal's REJECTED view holds exactly what `prev` holds, so
+      it was built on this truth;
+    * its ACCEPTED view holds exactly what `working` holds, so nothing
+      else of that kind came or went. A note the author reworded, a
+      deletion rejected, a link Word stripped, any of these breaks the
+      equality, and every loss of that kind then blocks as before.
+
+    Then ``prev - working`` is exactly what the batch removed. A LINK is
+    excused only when its words are gone too: Word strips a link and
+    keeps its label, so a link whose label survives is the one shape a
+    rejected deletion and a stripped copy of the same citation share.
+
+    The views have to read the structure the way Word does, and that was
+    measured (2026-10-12) with Word's Accept All and Reject All on 116
+    kept redlines: notes on all of them, links on all but one (a doubled
+    nested field), and bookmarks once `revisions` dropped the ones Word
+    drops with their content. A disagreement makes a kind unequal, so
+    it refuses rather than excuses.
+    """
+    from ..tracked import accepted_view, rejected_view
+
+    kinds = {loss.kind for loss in gone if loss.kind in BATCH_KINDS}
+    if not kinds:
+        return [], list(gone)
+    accepted, rejected = accepted_view(proposal), rejected_view(proposal)
+    proven = {kind for kind in kinds
+              if _structure(rejected, kind) == _structure(prev, kind)
+              and _structure(accepted, kind) == _structure(working, kind)}
+    deleted = [loss for loss in gone if loss.kind in proven
+               and not (loss.kind == "link" and loss.words)]
+    return deleted, [loss for loss in gone
+                     if not any(loss is d for d in deleted)]
+
+
 def _unmet(accepted: tuple[str, ...], found: list[Loss]) -> list[str]:
     """Declared losses that did NOT happen.
 

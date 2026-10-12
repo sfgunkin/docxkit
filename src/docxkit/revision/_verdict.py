@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from .. import guard as _guard
 from .. import package, revisions, tracked
 from .._xml import Parts
+from ..errors import DocxKitError
 from ._common import TEXT_PARTS, _today
 from ._config import Paper
-from ._losses import _bookmarks, _links
+from ._losses import BATCH_KINDS, Loss, _bookmarks, _links, batch_deletions
+from ._state import _state
 
 
 @dataclass(frozen=True)
@@ -215,6 +218,33 @@ def _proposal(paper: Paper) -> Path | None:
     if _guard.base_of(batch) != _guard.sha256(paper.prev):
         return None
     return batch if _promoted(paper, batch) else None
+
+
+def deleted_by_batch(paper: Paper, working: Parts, prev: Parts,
+                     gone: Sequence[Loss]) -> tuple[list[Loss], list[Loss]]:
+    """``(deleted by the batch, still lost)`` for this paper's hand-back.
+
+    :func:`batch_deletions` decides; this finds what it needs, and the
+    reverted first attempt is why each step is here. The proposal is the
+    one :func:`_proposal` names, so the console and `log.md` agree on
+    which batch the round grew out of. It runs only when there is a loss
+    of a kind a batch can propose, so a clean hand-back hashes nothing.
+    It refuses while revisions are PENDING: an unopened proposal is not
+    an accepted one. And a file it cannot read (a redline Word holds, a
+    package mid-save) leaves every loss where it was.
+    """
+    if not any(loss.kind in BATCH_KINDS for loss in gone):
+        return [], list(gone)
+    if not _state(working, paper.working, False).is_truth:
+        return [], list(gone)
+    try:
+        batch = _proposal(paper)
+        proposal = package.read_parts(batch) if batch is not None else None
+    except (OSError, DocxKitError):
+        return [], list(gone)
+    if proposal is None:
+        return [], list(gone)
+    return batch_deletions(gone, working, prev, proposal)
 
 
 def verdict(paper: Paper) -> Verdict:

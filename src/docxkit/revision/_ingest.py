@@ -11,8 +11,10 @@ from typing import Any
 
 from .. import package
 from ._common import SAVE_NOISE
+from ._config import Paper
 from ._losses import Loss, Relabelled, losses, relabelled_links
 from ._state import State, _state, state
+from ._verdict import deleted_by_batch
 
 # --------------------------------------------------------------- ingest
 
@@ -46,6 +48,12 @@ class IngestReport:
     #: Was `working` read from a COPY, because the author has it open in
     #: Word? See :func:`docxkit.package.readable`.
     from_snapshot: bool = False
+    #: What went because the promoted batch PROPOSED it and the author
+    #: accepted it: notes, bookmarks and links that are gone and are not
+    #: losses. Taken out of `lost`, and filled only when `ingest` is given
+    #: the paper; see :func:`deleted_by_batch`. LAST, so no field before
+    #: it moved.
+    deleted: list[Loss] = field(default_factory=list)
 
     @property
     def style_edit(self) -> bool:
@@ -63,8 +71,14 @@ class IngestReport:
         return not any(self.content.values()) and not self.changed_parts
 
 
-def ingest(working: str | Path, prev: str | Path) -> IngestReport:
+def ingest(working: str | Path, prev: str | Path, *,
+           paper: Paper | None = None) -> IngestReport:
     """Compare the author's file against the last accepted truth.
+
+    `paper` lets the report tell a loss from the batch's own accepted
+    deletion (:attr:`IngestReport.deleted`); without it every structure
+    the hand-back no longer has is a loss, as `baseline` would read it
+    if it had no batch to compare against.
 
     **Read-only**, and that is what makes it safe to run before every
     task without asking. Silently rebuilding over an author's edits is
@@ -101,8 +115,14 @@ def ingest(working: str | Path, prev: str | Path) -> IngestReport:
     # out of the snapshot: one read, and a path the caller can open.
     working_state = _state(working_parts, working, snapshot)
     parts = package.changed_parts(prev_parts, working_parts)
+    lost = losses(working_parts, prev_parts)
+    deleted: list[Loss] = []
+    if paper is not None:
+        deleted, lost = deleted_by_batch(paper, working_parts, prev_parts,
+                                         lost)
     return IngestReport(
-        lost=losses(working_parts, prev_parts),
+        lost=lost,
+        deleted=deleted,
         relabelled=relabelled_links(working_parts, prev_parts),
         working=working,
         prev=prev,

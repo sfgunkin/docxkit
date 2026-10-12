@@ -142,6 +142,7 @@ from ._init import _declare as _declare
 from ._init import _set_key as _set_key
 from ._init import _value_end as _value_end
 from ._init import init as init
+from ._losses import BATCH_KINDS as BATCH_KINDS
 from ._losses import Loss as Loss
 from ._losses import Relabelled as Relabelled
 from ._losses import _counts as _counts
@@ -151,6 +152,7 @@ from ._losses import _link_changes as _link_changes
 from ._losses import _lost_notes as _lost_notes
 from ._losses import _names as _names
 from ._losses import _norm as _norm
+from ._losses import batch_deletions as batch_deletions
 from ._losses import emptied_footnotes as emptied_footnotes
 from ._losses import glyph_runs as glyph_runs
 from ._losses import losses as losses
@@ -185,10 +187,12 @@ from ._validate import math_anchors as math_anchors
 from ._validate import render_accepted as render_accepted
 from ._validate import validate as validate
 from ._verdict import Verdict as Verdict
+from ._verdict import deleted_by_batch as deleted_by_batch
 from ._verdict import log_batch as log_batch
 from ._verdict import verdict as verdict
 
 __all__ = [
+    "BATCH_KINDS",
     "REGISTRY_ENV",
     "RESCUE_KEEP",
     "SAVE_NOISE",
@@ -215,7 +219,9 @@ __all__ = [
     "WithdrawReport",
     "WorkingPending",
     "baseline",
+    "batch_deletions",
     "build",
+    "deleted_by_batch",
     "doctor",
     "drift",
     "emptied_footnotes",

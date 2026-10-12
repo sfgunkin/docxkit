@@ -15,9 +15,9 @@ from ..errors import BaselinePending, DocumentLocked, HandbackLoss
 from ..hygiene import restore_math_glyphs
 from . import _ledger, _timing
 from ._config import Paper
-from ._losses import _names, _unmet, losses
+from ._losses import Loss, _names, _unmet, losses
 from ._state import State, state
-from ._verdict import Verdict, log_batch, verdict
+from ._verdict import Verdict, deleted_by_batch, log_batch, verdict
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,10 @@ class BaselineReport:
     no verdict to write, or when the log has no table to take it — the
     caller says so, rather than this writing a table nobody asked for
     (see :func:`log_batch`)."""
+    deleted: tuple[Loss, ...] = ()
+    """What the hand-back no longer has because the batch proposed it
+    and the author accepted it (:func:`deleted_by_batch`). Recorded, not
+    refused; LAST, so no field before it moved."""
 
 
 def _only_in_word(current: State) -> str:
@@ -116,6 +120,11 @@ def baseline(paper: Paper, *, force: bool = False,
     exactly the case `force` would be reached for by reflex, and the
     acknowledgement costs one anchor.
 
+    What the promoted batch itself deleted, and the author accepted, is
+    not a loss and needs no flag. It is reported in
+    :attr:`BaselineReport.deleted`, and only when the files prove it
+    (:func:`deleted_by_batch`); in every doubtful case it stays a loss.
+
     `repair_math` is the one loss this tool may put back itself, and
     the reason it may is that it is not an author's decision: Word
     downgrades an equation's U+2212 on accept-and-save, `build` already
@@ -150,13 +159,17 @@ def baseline(paper: Paper, *, force: bool = False,
             f"baseline copied mid-save is a zip nothing can reject "
             f"against.")
     repaired: Parts | None = None
+    deleted: list[Loss] = []
     if paper.prev.exists():
         work, base = (package.read_parts(paper.working),
                       package.read_parts(paper.prev))
         if repair_math and restore_math_glyphs(work, base):
             repaired = work        # written below, once every gate has passed
-        gone = losses(work, base)
-        if stale := _unmet(accept_loss, gone):
+        found = losses(work, base)
+        deleted, gone = deleted_by_batch(paper, work, base, found)
+        # Against everything FOUND: a flag naming the batch's own deletion
+        # names something really gone, so it is not a stale exemption.
+        if stale := _unmet(accept_loss, found):
             raise HandbackLoss(
                 f"--accept-loss named {', '.join(stale)}, which "
                 f"{paper.working.name} has NOT lost. A declared loss that "
@@ -229,5 +242,9 @@ def baseline(paper: Paper, *, force: bool = False,
                    kept=recorded.kept if recorded else None,
                    reverted=recorded.reverted if recorded else None,
                    authored=recorded.authored if recorded else None,
-                   note=note or None)
-    return BaselineReport(prev=paper.prev, verdict=recorded, row=row)
+                   note=note or None,
+                   # what was NOT refused for being the batch's own
+                   # deletion — the one decision here no flag recorded
+                   deleted=[loss.key for loss in deleted] or None)
+    return BaselineReport(prev=paper.prev, verdict=recorded, row=row,
+                          deleted=tuple(deleted))

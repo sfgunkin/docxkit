@@ -1734,11 +1734,21 @@ def _say_lost(lost: Sequence[object]) -> None:
           "named with\n   --accept-loss.")
 
 
+def _say_deleted(deleted: Sequence[object]) -> None:
+    """What went because the batch proposed it — said, never refused."""
+    print(f"\n== DELETED BY THE BATCH ({len(deleted)}) ==")
+    for loss in deleted:
+        print("   ", loss)
+    print("   The promoted batch proposed these and the author accepted "
+          "it whole, so\n   they are not losses: `baseline` records them "
+          "and does not refuse.")
+
+
 def cmd_revision_ingest(args: argparse.Namespace) -> int:
     """What did the author change while I was away? (read-only)"""
     from .revision import ingest
     paper = _paper(args)
-    report = ingest(paper.working, paper.prev)
+    report = ingest(paper.working, paper.prev, paper=paper)
     print(f"{paper.name}: {paper.prev.name} -> {paper.working.name}")
     if report.from_snapshot:
         print(_SNAPSHOT_NOTE)
@@ -1769,6 +1779,9 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
 
     if report.lost:
         _say_lost(report.lost)
+
+    if report.deleted:
+        _say_deleted(report.deleted)
 
     if report.relabelled:
         print(f"\n== RE-LABELLED ({len(report.relabelled)}) ==")
@@ -1804,6 +1817,7 @@ def cmd_revision_ingest(args: argparse.Namespace) -> int:
             "changed_parts": report.changed_parts,
             "working_pending": report.working_state.pending,
             "lost": [loss.key for loss in report.lost],
+            "deleted": [loss.key for loss in report.deleted],
         })
     # HandbackLoss.exit_code: `ingest --check` and the `baseline` refusal
     # report the same finding, so a script reads one number for it
@@ -2319,6 +2333,8 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
                       log=not args.no_log)
     for token in accepted:
         print(f"  accepted loss: {token}")
+    for loss in report.deleted:
+        print(f"  deleted by the batch: {loss}")
     print(f"baseline updated: {report.prev}")
     if report.verdict is not None and report.row:
         print(f"\nlogged: {report.row.strip()}")
