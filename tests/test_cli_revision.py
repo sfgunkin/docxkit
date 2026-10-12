@@ -1142,9 +1142,9 @@ def test_validate_names_a_moved_footnote_anchor(monkeypatch, project,
 
 def test_validate_says_which_LINK_the_rejected_batch_lost(monkeypatch,
                                                           project, capsys):
-    """The words come back and the hyperlink does not: Word's Compare
-    does not rebuild a link inside a rejected deletion. Parental Style
-    T4(3) came back two links short with reject-all reporting OK."""
+    """The words come back and the hyperlink does not: it went with no
+    tracked change around it. Parental Style T4(3) came back two links
+    short with reject-all reporting OK."""
     linked = ('<w:hyperlink w:anchor="Table5"><w:r><w:t>Table 5</w:t>'
               "</w:r></w:hyperlink>")
     write(project.prev, make_parts(para(run("see"), linked)))

@@ -153,14 +153,21 @@ def _counts(root: _Element | None) -> dict[str, int]:
 def _links(parts: Parts) -> Counter[tuple[str, str]]:
     """``(anchor, label)`` for every internal link, every text part.
 
-    The fourth thing gate 5 compares, and the one it was blind to.
-    Rejecting a batch that DELETED linked text restores the sentence as
-    PLAIN TEXT: Word's Compare does not rebuild a hyperlink inside a
-    rejected deletion, so the words come back and the link does not.
-    Parental Style T4(3) came back 227 links against the baseline's 229,
-    with `reject-all` reporting OK and `citations` ALL CHECKS PASSED —
-    both later mentions, so nothing dangled — and the author two links
-    short with nothing anywhere saying so (2026-08-12).
+    The fourth thing gate 5 compares, and the one it was blind to: the
+    words of a link can come back from reject-all without the link, and
+    paragraphs and glyphs both compare TEXT. Parental Style T4(3) came
+    back 227 links against the baseline's 229, with `reject-all`
+    reporting OK and `citations` ALL CHECKS PASSED — both later
+    mentions, so nothing dangled — and the author two links short with
+    nothing anywhere saying so (2026-08-12).
+
+    That measurement, and Aging_Well R24's after it, were taken through
+    THIS package's reject, and until 2026-10-12 it did not restore a
+    deleted field's ``w:delInstrText`` — which is how Compare writes
+    almost every link it deletes. Word's Reject All does restore it. So
+    "Compare does not rebuild a link inside a rejected deletion", which
+    this docstring said, was the model's defect and not Word's; a link
+    still LOST here is one that went with no tracked change around it.
 
     Counted as a MULTISET of pairs, not as a total: a link that survives
     at a different place is not a link that was lost, and a total hides
@@ -547,6 +554,12 @@ def links_in_deletions(parts: Parts) -> list[tuple[str, str]]:
     the end of the ladder the author has a batch they have to throw
     away, and the only thing they can do with the finding is what this
     would have told them before they made it.
+
+    **The premise above is in doubt** (2026-10-12): the R24 failure was
+    most likely the reject's unrestored ``w:delInstrText`` — see
+    :func:`_links` — and this reads only the ELEMENT form, which the
+    reject always restored, while missing the field form it did not.
+    Open in BACKLOG.md.
     """
     found: list[tuple[str, str]] = []
     for _name, xml in text_parts(parts):

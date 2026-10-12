@@ -876,9 +876,14 @@ def _apply_content(root: _Element, vanish: tuple[str, ...],
             if mode == ORIGINAL:
                 # restore this deletion's text to ordinary runs; global
                 # conversion would also de-track the deletions a
-                # predicate chose to LEAVE
-                for dt in list(el.iter(W + "delText")):
-                    dt.tag = W + "t"
+                # predicate chose to LEAVE. A deleted FIELD's instruction
+                # is `w:delInstrText`, and left as it is the field comes
+                # back with no instruction any reader sees: a deleted
+                # `HYPERLINK \l` stayed dead where Word's Reject All
+                # restores it (review of 2026-10-10)
+                for dt in list(el.iter(W + "delText", W + "delInstrText")):
+                    dt.tag = W + ("t" if dt.tag == W + "delText"
+                                  else "instrText")
             _unwrap(el)
     return touched
 

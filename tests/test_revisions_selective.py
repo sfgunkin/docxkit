@@ -59,6 +59,47 @@ def test_unselected_deletions_keep_their_deltext_on_reject():
     assert "hers" in out and "<w:delText>his</w:delText>" in out
 
 
+def del_field_by(author: str, anchor: str, rid: int) -> str:
+    """A deleted fldChar HYPERLINK, the way Compare writes one."""
+    return (f'<w:del w:id="{rid}" w:author="{author}" '
+            f'w:date="2026-07-30T00:00:00Z">'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:delInstrText xml:space="preserve"> HYPERLINK \\l '
+            f'"{anchor}" \\h </w:delInstrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f"<w:r><w:delText>{anchor}</w:delText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:del>')
+
+
+def test_a_rejected_deletion_brings_back_its_FIELD_form_link():
+    """Word writes a deleted field's instruction as `w:delInstrText`.
+    Rejecting turned `w:delText` back into `w:t` and left the
+    instruction as it was, so the field came back with nothing any
+    reader sees in it: Aging_Well's 2026-10-10 batch failed gate 5 on
+    eleven such links (`links: False`, Banerjee2023, Box3, Figure2 …)
+    that Word's own Reject All restores."""
+    from docxkit._xml import internal_links
+
+    body = doc(para(run("see "), del_field_by("Alice", "Smith2020", 1),
+                    run(" here")))
+    out = reject(body)
+
+    assert internal_links(out) == [("Smith2020", "Smith2020")]
+    assert "delInstrText" not in out
+
+
+def test_an_unselected_deleted_field_keeps_its_delInstrText():
+    """The same per-revision restore as `w:delText`: Bob's deletion is
+    left pending, so its instruction stays deleted with it."""
+    body = doc(para(run("A "), del_field_by("Alice", "Hers", 1),
+                    del_field_by("Bob", "His", 2)))
+    out = reject(body, where=by_author("Alice"))
+
+    assert "<w:instrText" in out and "Hers" in out.split("<w:instrText")[1]
+    assert out.count("<w:delInstrText") == 1
+    assert '"His"' in out.split("<w:delInstrText")[1]
+
+
 def test_whitespace_only_accepts_respacing_and_nothing_else():
     body = doc(para(run("Word"),
                     ins_by("R1", " ", 1),          # respacing noise

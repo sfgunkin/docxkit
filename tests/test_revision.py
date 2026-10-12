@@ -2830,12 +2830,12 @@ def test_validate_fails_on_a_part_the_batch_lost(tmp_path):
 
 
 def test_validate_reject_all_counts_the_LINKS(tmp_path):
-    """Rejecting a batch that deleted linked text gives the words back
-    as PLAIN TEXT: Word's Compare does not rebuild a hyperlink inside a
-    rejected deletion. Parental Style T4(3) came back 227 links against
-    the baseline's 229 with reject-all reporting OK, `citations` ALL
-    CHECKS PASSED (later mentions, so nothing dangled), and the author
-    two links short with nothing anywhere saying so (2026-08-12)."""
+    """A link can go with its words still there, and the text arms of
+    the gate cannot see that. Parental Style T4(3) came back 227 links
+    against the baseline's 229 with reject-all reporting OK, `citations`
+    ALL CHECKS PASSED (later mentions, so nothing dangled), and the
+    author two links short with nothing anywhere saying so (2026-08-12).
+    See `_losses._links` for what that measurement was."""
     linked = ('<w:hyperlink w:anchor="Table5"><w:r><w:t>Table 5</w:t>'
               "</w:r></w:hyperlink>")
     baseline_path = write(tmp_path / "prev.docx", make_parts(
@@ -2850,6 +2850,42 @@ def test_validate_reject_all_counts_the_LINKS(tmp_path):
     assert report.reject_detail["links"] is False
     assert not report.ok
     assert report.lost_links and "Table5" in report.lost_links[0]
+
+
+def test_a_deleted_FIELD_link_passes_reject_all_when_rejecting_restores_it(
+        tmp_path):
+    """Compare writes a link it deletes as a field, its instruction in
+    `w:delInstrText`. The reject used to leave that instruction deleted,
+    so gate 5 called every such link LOST: Aging_Well's 2026-10-10 batch
+    failed on eleven of them against its real baseline, and passes with
+    the instruction restored. Three links, so a fix that restored only
+    the first, or any one, still fails."""
+    def field(anchor: str, *, deleted: bool) -> str:
+        instr, text = ("delInstrText", "delText") if deleted else (
+            "instrText", "t")
+        return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                f'<w:r><w:{instr} xml:space="preserve"> HYPERLINK \\l '
+                f'"{anchor}" \\h </w:{instr}></w:r>'
+                '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                f"<w:r><w:{text}>{anchor}</w:{text}></w:r>"
+                '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+    anchors = ("Table1", "Figure2", "Box3")
+    baseline_path = write(tmp_path / "prev.docx", make_parts(
+        "".join(para(run("see"), field(a, deleted=False), run("now."),
+                     pid=f"{i + 1:08X}") for i, a in enumerate(anchors))))
+    batch = write(tmp_path / "batch.docx", make_parts(
+        "".join(para(run("see"),
+                     f'<w:del w:id="{i + 1}" w:author="R" '
+                     'w:date="2026-10-10T00:00:00Z">'
+                     + field(a, deleted=True) + "</w:del>",
+                     run("now."), pid=f"{i + 1:08X}")
+                for i, a in enumerate(anchors))))
+
+    report = revision.validate(batch, baseline_path, use_word=False)
+
+    assert report.reject_detail["links"] is True, report.lost_links
+    assert report.lost_links == []
 
 
 def test_a_link_the_baseline_never_had_is_also_a_mismatch(tmp_path):

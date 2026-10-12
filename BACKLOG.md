@@ -982,6 +982,36 @@ Also add a `classify=` hook (a paper module path in `paper.toml`) to
 `docProps/custom.xml` and `customXml/` survive; `document.xml` minus
 anchors is byte-identical.
 
+### S2 — the build's "links inside a tracked deletion" warning predicts a loss the reject does not make, and misses the form it did
+<!-- status: open -->
+
+Found 2026-10-12 while fixing the `w:delInstrText` reject. `revision
+build` says, via `_losses.links_in_deletions`, that a link inside a
+deletion will not survive reject-all — "Compare does not track an
+anchor … Shorten the move, or mint the links after the handback."
+
+- It reads `internal_links` over each `w:del` span, which sees only the
+  ELEMENT form (`w:hyperlink` inside `w:del`) — and the reject has
+  always restored that form: unwrapping the `w:del` keeps the element.
+- The FIELD form (`w:delInstrText`), which is what Compare writes for
+  almost every deleted link, it cannot see. That was the form the reject
+  really lost, until the fix.
+
+Measured on Aging_Well `build/redlines/`, 2026-10-12: about 20 kept
+redlines carry 1–11 field-form links in deletions; only the two from
+2026-08-24 (R24, the measurement this warning was written from) carry an
+element-form one. Gate 5 on the 2026-10-10 batch against its real
+`prev.docx`: `links: False`, 11 lost before the fix, all green after.
+
+So the warning fires on the harmless shape, stays silent on the shape
+that failed, and names a remedy ("shorten the move") for a defect that
+was this package's. Decide: retire it (and its four tests in
+`test_revision.py`, `test_build_names_the_links_sitting_inside_a_DELETION`
+onward), or, if Word's own Reject All is measured to lose a link in some
+shape, re-aim it at that shape. Measure with real Word before deciding.
+The `restored_bookmarks` half (a rejected INSERTION strands the anchors
+minted with it) is about bookmarks, not links, and is unaffected.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213

@@ -2167,9 +2167,9 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
                       f"neither")
             for link in report.lost_links:
                 print(f"   LINK LOST {link}: the baseline has this "
-                      f"hyperlink and the rejected batch does not — Word's "
-                      f"Compare does not rebuild a link inside a rejected "
-                      f"deletion, so the words come back as plain text")
+                      f"hyperlink and the rejected batch does not — it "
+                      f"went with no tracked change around it, so "
+                      f"rejecting everything cannot bring it back")
             for link in report.retargeted_links:
                 print(f"   LINK RETARGETED {link}: the rejected batch "
                       f"carries this link, with the same words, under a "
