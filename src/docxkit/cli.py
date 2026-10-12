@@ -2871,8 +2871,9 @@ def build_parser() -> argparse.ArgumentParser:
     # on LI7. The report stays read-only either way; only the exit code
     # changes, so this is safe to wire into a paper's own gate list.
     r.add_argument("--check", action="store_true",
-                   help="exit 2 when the hand-back LOST a link, a note, "
-                        "a bookmark or a comment")
+                   help=f"exit {int(HandbackLoss.exit_code)} when the "
+                        "hand-back LOST a link, a note, a bookmark or a "
+                        "comment")
 
     r = _rev("build", cmd_revision_build,
              "clean edit -> redline, via Word Compare")

@@ -396,6 +396,17 @@ def test_ingest_check_EXITS_on_a_hand_back_that_lost_something(monkeypatch,
     assert "LOST" in capsys.readouterr().out
 
 
+def test_ingest_check_HELP_names_the_code_it_exits_with():
+    """The help said exit 2 while the command returned 5, and 5 is the
+    number a paper's gate list has to read."""
+    from docxkit.errors import HandbackLoss
+
+    check = next(a for a in _steps()["ingest"]._actions
+                 if "--check" in a.option_strings)
+    assert re.findall(r"exit (\d+)", check.help) == [
+        str(int(HandbackLoss.exit_code))]
+
+
 def test_ingest_without_check_still_only_REPORTS(monkeypatch, project,
                                                  capsys):
     """Read-only and exit 0 stays the default: `ingest` is the command
