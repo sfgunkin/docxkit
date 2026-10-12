@@ -14,6 +14,120 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the build's "links inside a tracked deletion" warning predicts a loss the reject does not make, and misses the form it did~~ — RETIRED 12.10, `e59f7a8`
+
+<!-- status: fixed -->
+
+Found 2026-10-12 while fixing the `w:delInstrText` reject. `revision
+build` says, via `_losses.links_in_deletions`, that a link inside a
+deletion will not survive reject-all — "Compare does not track an
+anchor … Shorten the move, or mint the links after the handback."
+
+- It reads `internal_links` over each `w:del` span, which sees only the
+  ELEMENT form (`w:hyperlink` inside `w:del`) — and the reject has
+  always restored that form: unwrapping the `w:del` keeps the element.
+- The FIELD form (`w:delInstrText`), which is what Compare writes for
+  almost every deleted link, it cannot see. That was the form the reject
+  really lost, until the fix.
+
+Measured on Aging_Well `build/redlines/`, 2026-10-12: about 20 kept
+redlines carry 1–11 field-form links in deletions; only the two from
+2026-08-24 (R24, the measurement this warning was written from) carry an
+element-form one. Gate 5 on the 2026-10-10 batch against its real
+`prev.docx`: `links: False`, 11 lost before the fix, all green after.
+
+So the warning fires on the harmless shape, stays silent on the shape
+that failed, and names a remedy ("shorten the move") for a defect that
+was this package's. Decide: retire it (and its four tests in
+`test_revision.py`, `test_build_names_the_links_sitting_inside_a_DELETION`
+onward), or, if Word's own Reject All is measured to lose a link in some
+shape, re-aim it at that shape. Measure with real Word before deciding.
+The `restored_bookmarks` half (a rejected INSERTION strands the anchors
+minted with it) is about bookmarks, not links, and is unaffected.
+
+**Retired 2026-10-12, after measuring Word.** Word's Reject All was run
+(COM, read-only copy, Flat OPC out) on every kept redline on this
+machine, 115 across 10 papers, and its internal links were counted with
+`_losses._links` beside docxkit's `rejected_view`:
+
+- 114 agree exactly. In total, 21,772 links from Word against 21,773
+  from docxkit.
+- 17 redlines carry deleted link fields (119 `w:delInstrText`
+  HYPERLINK/REF), among them HPPA's 2026-10-10 streamline proposal
+  with 53.
+- The one difference is in that HPPA redline: `Nardo2008` is a
+  HYPERLINK field nested inside another to the same anchor, which Word's
+  reject keeps as one link and docxkit counts as two. Exported without a
+  reject, Word keeps both. That is a doubled field and not a lost link.
+- `links_in_deletions` fired on 0 of the 115.
+
+So the premise ("Compare does not rebuild a link inside a rejected
+deletion") was this package's `w:delInstrText` bug, fixed in 64b1b0a,
+and the warning had no shape left to aim at. Removed: the function,
+its export, the build message, and its seven tests. Added:
+`test_build_says_NOTHING_about_a_link_inside_a_deletion`. The row-marker
+guard one of those tests pinned (`DEL_RE`'s `(?<!/)`) is now asked of
+`DEL_RE` directly. The `_links` docstring carries the measurement.
+Gate 5 still compares the reject view's links against the baseline.
+
+Script: session scratchpad `word_reject_links.py` (one Word session,
+about 2 min for all 115).
+
+### ~~S2 — `revision init` registers a project in a TEMP folder, so every probe script pollutes the user's paper registry~~ — FIXED 12.10, `322fa12`
+
+<!-- status: fixed -->
+
+Measured 2026-10-10: `C:\Users\Ezhik\AppData\Local\docxkit\papers.txt` had
+98 lines, 12 of them papers. The rest were `paper.toml` paths under
+`%TEMP%` — `probe*_`, `tmp*\P`, `revision_promote_defect_1_*`, scratchpad
+`angleC\work*`, `verify2\tmp\*` — left by standalone scripts (review probes,
+reproductions) that call `revision.init` without setting `DOCXKIT_PAPERS`.
+pytest is isolated by `conftest._isolated_paper_registry`; nothing else is.
+`revision status --all` then surveys each one: missing ones as missing
+papers, live ones as if they were manuscripts.
+
+Fix: `_registry.register` refuses (returns False, silently or with a note)
+a config under `tempfile.gettempdir()`, unless `DOCXKIT_PAPERS` is set
+explicitly — a scratch project is never a paper to watch. Test: init a
+project under `tmp_path` with the redirect REMOVED and the registry
+pointed at a file via monkeypatched `registry_path`; it must not be added.
+
+Workaround in use: set `os.environ["DOCXKIT_PAPERS"]` to a scratch file in
+any script that scaffolds a project; prune the registry by hand.
+
+**Fixed 2026-10-12.** `_registry.register` returns False for a config
+under `tempfile.gettempdir()` unless `DOCXKIT_PAPERS` is set; the TEMP
+test is `_under_temp`, shared with `_vanished_scaffold`, so the two
+agree on what TEMP is. `init` and `scan` both go through `register`.
+
+Tests (`test_revision_survey.py`), run with the variable REMOVED, the
+default location moved under `LOCALAPPDATA` in `tmp_path`, and TEMP
+redirected: three scaffolds in TEMP leave no registry file, and a paper
+outside it is still added
+(`test_a_scaffold_in_TEMP_is_never_registered`); with the variable set,
+a TEMP scaffold registers
+(`test_a_scaffold_in_TEMP_IS_registered_when_the_registry_is_named`).
+The first fails without the fix.
+
+Not done: pruning the existing registry. That is the author's file;
+`status --all` already shows a vanished TEMP row as `leftover`, exit 0.
+
+### ~~S4 — `revision ingest --check` help says exit 2; it exits 5~~ — FIXED 12.10, `7277f20`
+
+<!-- status: fixed -->
+
+`cli.py` (the `--check` help, ~line 2891) says "exit 2 when the hand-back
+LOST a link, a note, …"; `cmd_revision_ingest` returns
+`HandbackLoss.exit_code`, which is 5, and that is the number a paper's gate
+list has to read. Fix the help string and pin it against
+`HandbackLoss.exit_code` in `test_cli_revision`.
+
+**Fixed 2026-10-12.** The `--check` help is an f-string over
+`HandbackLoss.exit_code`, so it says 5 and cannot drift from the code
+again. `test_ingest_check_HELP_names_the_code_it_exits_with` reads the
+help off the real parser and requires exactly one `exit N`, equal to
+`HandbackLoss.exit_code`; it fails on the old string.
+
 ### ~~S1 — a tracked `w:tblPrExChange` is invisible: counted as 0 revisions, left in by accept, not undone by reject~~ — FIXED 12.10, `313ae10`
 
 <!-- status: fixed -->
