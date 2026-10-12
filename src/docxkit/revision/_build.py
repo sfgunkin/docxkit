@@ -22,7 +22,6 @@ from . import _ledger, _timing
 from ._config import Paper
 from ._losses import (
     emptied_footnotes,
-    links_in_deletions,
     moved_footnotes,
     restored_bookmarks,
 )
@@ -346,21 +345,6 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
              f"side and cannot ship through a redline. Apply the deletion "
              f"to working.docx AFTER the promote; the revision count is "
              f"unaffected, a bookmark is not tracked content.")
-
-    # Said HERE and not at the end of the ladder. By then the author has
-    # a batch to throw away and the only act available to them is the
-    # one this sentence would have prevented.
-    if carried := links_in_deletions(package.read_parts(out)):
-        targets = ", ".join(sorted({a for a, _ in carried})[:4])
-        _say(f"{len(carried)} link(s) sit inside a tracked deletion "
-             f"({targets}{' ...' if len(carried) > 4 else ''}) — Compare "
-             f"does not track an anchor, so REJECTING one of these "
-             f"restores its words as plain text and does not rebuild the "
-             f"link. Accept-all is unaffected; gate 5 is not. Measured: "
-             f"the same clause moved across a section fails, and folded "
-             f"into the paragraph above it passes, because only the "
-             f"DISTANCE changed. Shorten the move, or mint the links "
-             f"after the handback.")
 
     # What Compare baked in with no revision on it, named paragraph by
     # paragraph. The math count alone understated this badly: a merged,

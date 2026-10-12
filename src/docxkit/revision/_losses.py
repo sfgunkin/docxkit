@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 from .. import tracked
 from .._xml import (
     BOOKMARK_NAME_RE,
-    DEL_RE,
     ENDNOTES,
     FOOTNOTES,
     NOTE_DEF_RE,
@@ -168,6 +167,15 @@ def _links(parts: Parts) -> Counter[tuple[str, str]]:
     "Compare does not rebuild a link inside a rejected deletion", which
     this docstring said, was the model's defect and not Word's; a link
     still LOST here is one that went with no tracked change around it.
+
+    Measured with Word afterwards (2026-10-12): Reject All on each of
+    the 115 kept redlines on this machine, 17 of them carrying 119
+    deleted link fields, gave the same multiset as this package's
+    reject on 114 (21,772 links against 21,773).
+    The 115th (HPPA 2026-10-10) differs by a HYPERLINK field nested in
+    another to the same anchor, which Word's reject keeps as one link.
+    The build warning that predicted those losses ("shorten the move")
+    was retired the same day.
 
     Counted as a MULTISET of pairs, not as a total: a link that survives
     at a different place is not a link that was lost, and a total hides
@@ -528,44 +536,6 @@ def restored_bookmarks(baseline: Parts, clean: Parts,
 #: A footnote Compare emitted as one insertion with nothing to delete.
 #: The shape of a note definition is `_xml`'s to state.
 _MOVED_NOTE_RE = NOTE_DEF_RE[FOOTNOTES]
-
-
-
-def links_in_deletions(parts: Parts) -> list[tuple[str, str]]:
-    """``(anchor, label)`` for every internal link inside a DELETION.
-
-    The other half of :func:`restored_bookmarks`, and the half that
-    fails on the reject side rather than the accept side. **Word's
-    Compare does not track an anchor.** A rejected deletion restores its
-    words as plain text and does not rebuild the link that was in them,
-    so a batch whose accept-all is perfect can fail reject-all on
-    `links: False` — and no author sees it in Word, because a lost link
-    is blue text that is still blue until you click it.
-
-    Measured on Aging_Well R24 (2026-08-24): the same clause moved
-    §8 -> §9 failed the ladder, and folded into the paragraph directly
-    above it in §8 it passed. Same words, same citation runs, same
-    batch. **Only the distance changed** — Compare diffs an adjacent
-    move as surviving text and a distant one as delete plus insert — so
-    the remedy is counter-intuitive enough to be worth naming: shorten
-    the move, or mint the links AFTER the handback.
-
-    Reported at BUILD time rather than left to the ladder, because by
-    the end of the ladder the author has a batch they have to throw
-    away, and the only thing they can do with the finding is what this
-    would have told them before they made it.
-
-    **The premise above is in doubt** (2026-10-12): the R24 failure was
-    most likely the reject's unrestored ``w:delInstrText`` — see
-    :func:`_links` — and this reads only the ELEMENT form, which the
-    reject always restored, while missing the field form it did not.
-    Open in BACKLOG.md.
-    """
-    found: list[tuple[str, str]] = []
-    for _name, xml in text_parts(parts):
-        for span in DEL_RE.finditer(xml):
-            found.extend(internal_links(span.group(0)))
-    return found
 
 
 def moved_footnotes(parts: Parts,

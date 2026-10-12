@@ -153,7 +153,6 @@ from ._losses import _names as _names
 from ._losses import _norm as _norm
 from ._losses import emptied_footnotes as emptied_footnotes
 from ._losses import glyph_runs as glyph_runs
-from ._losses import links_in_deletions as links_in_deletions
 from ._losses import losses as losses
 from ._losses import moved_footnotes as moved_footnotes
 from ._losses import relabelled_links as relabelled_links
@@ -230,7 +229,6 @@ __all__ = [
     # spelling Pyright is right to refuse. `docxkit.find` is the home
     # for a new caller; this is where the existing ones already look.
     "internal_links",
-    "links_in_deletions",
     "load_paper",
     "log_batch",
     "losses",

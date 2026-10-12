@@ -1287,18 +1287,18 @@ def test_an_ENDNOTE_is_checked_even_when_there_are_NO_footnotes(
                for ln in said), said
 
 
-def test_build_names_the_links_sitting_inside_a_DELETION(project,
-                                                         monkeypatch):
-    """Reject-all cannot restore them, and no author sees it in Word.
+def test_build_says_NOTHING_about_a_link_inside_a_deletion(project,
+                                                          monkeypatch):
+    """The warning it used to print was retired on 2026-10-12.
 
-    Compare does not track an anchor: rejecting a deletion restores its
-    words as plain text and does not rebuild the link that was in them.
-    A batch whose accept-all is perfect then fails gate 5 on
-    `links: False`, and on the page a lost link is blue text that is
-    still blue until you click it.
-
-    Said at BUILD time on purpose — by the end of the ladder the author
-    has a batch to throw away and the finding is unusable.
+    It said a rejected deletion does not rebuild its link, so "shorten
+    the move". That loss was this package's reject leaving
+    `w:delInstrText` in place; Word's Reject All, run on all 115 kept
+    redlines, kept the same links as docxkit's reject on 114, and the
+    115th differs by one doubled nested field (see `_losses._links`).
+    A link in a deletion is the ordinary shape of a
+    moved citation, and a warning about it sends an author to re-plan a
+    batch that was fine.
     """
     gone = ('<w:del w:id="77" w:author="R" w:date="2026-08-07T00:00:00Z">'
             '<w:hyperlink w:anchor="Table1">'
@@ -1311,54 +1311,8 @@ def test_build_names_the_links_sitting_inside_a_DELETION(project,
     said: list[str] = []
     revision.build(project, clean, progress=said.append)
 
-    (line,) = [ln for ln in said if "tracked deletion" in ln]
-    assert "Table1" in line, "the anchor, so it can be found"
-    assert "REJECTING" in line
-    assert "Shorten the move" in line, "the remedy is counter-intuitive"
-    # ONE link, so nothing is trimmed — the only place `> 4` and
-    # `!= 4` disagree is below the threshold.
-    assert "..." not in line
-
-
-def _deleted_links(project, monkeypatch, count: int) -> str:
-    """The links-in-deletions line for `count` distinct anchors."""
-    gone = "".join(
-        f'<w:del w:id="{70 + i}" w:author="R" '
-        f'w:date="2026-08-07T00:00:00Z">'
-        f'<w:hyperlink w:anchor="Anchor{i}">'
-        f"<w:r><w:delText>label {i}</w:delText></w:r>"
-        f"</w:hyperlink></w:del>" for i in range(count))
-    clean = write(project.build_dir / "clean.docx",
-                  make_parts(para(run("edit"))))
-    monkeypatch.setattr(revision.tracked, "build", _FakeBuild(extra=gone))
-
-    said: list[str] = []
-    revision.build(project, clean, progress=said.append)
-    return next(ln for ln in said if "tracked deletion" in ln)
-
-
-def test_the_deleted_links_warning_names_FOUR_in_full(project, monkeypatch):
-    """The threshold exactly, and the only count at which `> 4` differs
-    from `> 3`, `>= 4` and `!= 4`. Eight mutants of this one comparison
-    survived the first round against a single-link fixture."""
-    line = _deleted_links(project, monkeypatch, 4)
-
-    assert "..." not in line, line
-    for i in range(4):
-        assert f"Anchor{i}" in line
-
-
-def test_the_deleted_links_warning_TRIMS_a_longer_one(project, monkeypatch):
-    """Five: one past the boundary, so the slice `[:4]` is pinned from
-    both sides — `[:3]` drops an anchor that must be there and `[:5]`
-    keeps one that must not."""
-    line = _deleted_links(project, monkeypatch, 5)
-
-    assert "..." in line, line
-    assert "5 link(s)" in line
-    for i in range(4):
-        assert f"Anchor{i}" in line
-    assert "Anchor4" not in line, "the fifth is behind the ellipsis"
+    assert said, "the build reported nothing at all"
+    assert not [ln for ln in said if "Table1" in ln], said
 
 
 def test_build_hands_tracked_the_settings_the_PROTOCOL_depends_on(
@@ -5289,76 +5243,6 @@ def test_re_init_giving_NO_keys_rewrites_only_the_paper_path(tmp_path):
 
 
 
-# --- a link inside a DELETION (backlog S3, 2026-08-24) ------------------
-
-_DEL_STAMP = 'w:id="90" w:author="R" w:date="2026-08-24T00:00:00Z"'
-
-
-def _deleted(inner: str) -> str:
-    return f"<w:del {_DEL_STAMP}>{inner}</w:del>"
-
-
-def _linked_run(anchor: str, label: str) -> str:
-    return (f'<w:hyperlink w:anchor="{anchor}">'
-            f"<w:r><w:delText>{label}</w:delText></w:r></w:hyperlink>")
-
-
-def test_a_link_inside_a_deletion_is_reported_with_its_anchor():
-    """Compare does not track an anchor. Rejecting the deletion restores
-    its words as plain text and does not rebuild the link, so a batch
-    whose accept-all is perfect fails reject-all — and no author sees it
-    in Word, because a lost link is blue text that stays blue until
-    somebody clicks it."""
-    from docxkit.revision import links_in_deletions
-
-    body = para(run("Kept. ")) + para(_deleted(
-        _linked_run("ref_Barr2010", "Barr (2010)")))
-
-    found = links_in_deletions(make_parts(body))
-
-    assert [a for a, _ in found] == ["ref_Barr2010"], found
-
-
-def test_a_link_OUTSIDE_a_deletion_is_not_reported():
-    """The ordinary case is every other link in the manuscript. A check
-    that named them all would fire on every batch and be switched off."""
-    from docxkit.revision import links_in_deletions
-
-    body = (para('<w:hyperlink w:anchor="ref_Kept"><w:r><w:t>Kept</w:t>'
-                 "</w:r></w:hyperlink>")
-            + para(_deleted("<w:r><w:delText>gone</w:delText></w:r>")))
-
-    assert links_in_deletions(make_parts(body)) == []
-
-
-def test_TWO_deletions_in_one_paragraph_are_two_spans():
-    """Non-greedy, so the walk does not swallow the text between them
-    and report a link that is staying put."""
-    from docxkit.revision import links_in_deletions
-
-    body = para(_deleted(_linked_run("ref_A", "A"))
-                + '<w:hyperlink w:anchor="ref_SAFE"><w:r><w:t>safe</w:t>'
-                  "</w:r></w:hyperlink>"
-                + _deleted(_linked_run("ref_B", "B")))
-
-    anchors = {a for a, _ in links_in_deletions(make_parts(body))}
-
-    assert anchors == {"ref_A", "ref_B"}, anchors
-
-
-def test_a_deletion_in_a_FOOTNOTE_counts_too():
-    """`text_parts`, not `document.xml`: several journals take the whole
-    apparatus as endnotes, and a citation link there is the one a reader
-    is most likely to follow."""
-    from docxkit.revision import links_in_deletions
-
-    parts = make_parts(para(run("Body.")),
-                       footnotes=footnotes_part(para(_deleted(
-                           _linked_run("ref_Note", "Note")))))
-
-    assert [a for a, _ in links_in_deletions(parts)] == ["ref_Note"]
-
-
 # ------------------------------------------ the protocol times itself
 
 def test_a_promote_RECORDS_how_long_it_took(project):
@@ -5841,14 +5725,19 @@ def test_a_row_level_DELETION_marker_does_not_swallow_the_link_after_it():
     row-level revision is a SELF-CLOSING `w:del` inside `w:trPr`, and
     without the guard the pattern opens a span on it and closes on the
     next `</w:del>` anywhere in the part — carrying off every link in
-    between. `build` refuses a batch whose deletions hold links, so the
-    cost is a refusal on a hand-back that deleted a table row and
-    touched nothing else."""
+    between, and reading the row's marker as a deletion of the whole
+    stretch. Asked through the build's link warning until that warning
+    was retired (2026-10-12); the pattern is still `DEL_RE`'s."""
+    from docxkit._xml import DEL_RE
+
     parts = make_parts(table(row("cell", revision="del"))
                        + _link("Ref9", "a citation")
                        + para(dele("a sentence with no link in it")))
+    xml = parts["word/document.xml"].decode("utf-8")
 
-    assert revision.links_in_deletions(parts) == []
+    spans = [m.group(0) for m in DEL_RE.finditer(xml)]
+    assert len(spans) == 1, spans
+    assert "Ref9" not in spans[0]
 
 
 def test_NO_tail_is_printed_when_the_runs_fit_the_limit_EXACTLY():
