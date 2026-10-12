@@ -14,6 +14,86 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — no supported way to comment a proposal: `revision build` passes no classifier, and nothing annotates a promoted one~~ — FIXED 12.10, `5caf833`
+
+<!-- status: fixed -->
+
+Measured on HPPA_Index, 2026-10-10. With the streamline proposal (2,136
+revisions) on `working.docx`, the author asked for a comment on every
+change saying why. `revision build` calls `tracked.build(..., None, ...)`,
+so a protocol batch can never carry comments. Once the author has opened
+and saved the proposal, `withdraw` refuses (correctly), so re-shipping is
+out too. The only route was a paper-side script
+(`HPPA_Index/revision/scripts/applied/streamline_comments.py`):
+
+1. Have Word add one seed comment to a COPY.
+2. Graft `word/comments*` and `people.xml` onto the author's own package
+   with `hygiene.restore_parts`.
+3. Anchor every block with the private `comments._write`, `_anchor` and
+   `_set_comment_text`.
+
+Two traps it hit, both worth a fix here:
+
+- **Word's save of the seeded copy (Flat OPC) dropped six parts**:
+  docProps core, app and custom, and the customXml store. The text,
+  revisions and Word's counts were all perfect, so only a parts diff saw
+  it. Shipping that copy would have been the Parental Style loss again.
+- **`_already_anchored` misses a Word-made comment.** It looks 60 chars
+  either side, but Word's revision 1 is a GROUP of adjacent elements, and
+  its range opened before span 0 and closed after span 1.
+
+Fix (sketch): `comments.annotate_in_place(path, blocks)` that:
+
+- seeds and grafts the scaffold as above;
+- takes (span indices, comment) blocks, one balloon per block;
+- asserts full coverage of the spans;
+- refuses unless the tracked views and per-part revision counts are
+  unchanged.
+
+Also add a `classify=` hook (a paper module path in `paper.toml`) to
+`revision build`. Test: annotate a 3-, 5- and 7-span fixture in place;
+`docProps/custom.xml` and `customXml/` survive; `document.xml` minus
+anchors is byte-identical.
+
+**Fixed 2026-10-12.** Both halves of the sketch:
+
+- **`tracked.annotate_in_place(path, blocks, *, author, seed=None)`**
+  goes in `tracked`, not `comments`. The layer rule forbids `comments`
+  from importing `hygiene` (`restore_parts`) and `authors`, which sit on
+  its own layer. `comments.annotate_blocks(parts, blocks, …)` is the
+  parts-level half (coverage, anchoring, credit) and `has_scaffold` the
+  question. Each block is `(span indices, comment)`, one balloon each,
+  anchored by span INDEX on its first span, so `_already_anchored`'s
+  near-text miss cannot arise. Every span must be in exactly one block,
+  checked before Word is started. Without a scaffold, `seed` (Word by
+  default) comments a COPY, only `word/comments*` and `people.xml` plus
+  the missing styles are grafted, and the seed comment becomes the
+  first balloon (no orphan). It refuses, writing nothing, unless
+  `document.xml` minus the new anchors is byte-identical and every other
+  part is byte-identical or is comment machinery (styles, content types
+  and document rels may only grow by appending). It backs the file up
+  first. New comments are credited to `author`, not to the cloned
+  comment's author, which can be a referee's.
+- **`[batch] classify = "path.py[:function]"`** in `paper.toml`
+  (`Paper.classify`, in KNOWN/KINDS, a commented line in the `init`
+  template) is loaded from the file by `_build._classifier` and passed
+  to `tracked.build` with `generic=None`, so unmatched revisions stay
+  bare. A missing file or function refuses before Word.
+
+Tests: `test_comments_in_place.py`, 12 tests, among them the entry's
+3/5/7-span fixture with `docProps/custom.xml` and a customXml store kept
+against a Word-like seed that drops both, no orphan seed, author credit
+beside a referee's comment, coverage refusals, a leaky write refused,
+and a seed-rewritten part refused. One `word` test runs the real seed
+on a corpus shell. `test_revision.py` adds 5 for the hook.
+
+Real file: a COPY of HPPA's kept streamline redline (1,063 spans) with
+the paper script's own 78 blocks and a real Word seed. Result: 78
+comments, no part dropped, both tracked views unchanged.
+
+Not done: a CLI verb. The blocks are a paper's table, so a script is
+the caller.
+
 ### ~~S4 — `revision baseline` calls a footnote the accepted batch itself deleted a LOSS, and refuses~~ — FIXED 12.10, `99a509e`
 
 <!-- status: fixed -->

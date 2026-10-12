@@ -828,46 +828,6 @@ around it wraps names in backticks — so an entry written in the file's
 own style would have been refused with a message about drift. The
 backtick is optional now.
 
-### S4 — no supported way to comment a proposal: `revision build` passes no classifier, and nothing annotates a promoted one
-<!-- status: open -->
-
-Measured on HPPA_Index, 2026-10-10. With the streamline proposal (2,136
-revisions) on `working.docx`, the author asked for a comment on every
-change saying why. `revision build` calls `tracked.build(..., None, ...)`,
-so a protocol batch can never carry comments. Once the author has opened
-and saved the proposal, `withdraw` refuses (correctly), so re-shipping is
-out too. The only route was a paper-side script
-(`HPPA_Index/revision/scripts/applied/streamline_comments.py`):
-
-1. Have Word add one seed comment to a COPY.
-2. Graft `word/comments*` and `people.xml` onto the author's own package
-   with `hygiene.restore_parts`.
-3. Anchor every block with the private `comments._write`, `_anchor` and
-   `_set_comment_text`.
-
-Two traps it hit, both worth a fix here:
-
-- **Word's save of the seeded copy (Flat OPC) dropped six parts**:
-  docProps core, app and custom, and the customXml store. The text,
-  revisions and Word's counts were all perfect, so only a parts diff saw
-  it. Shipping that copy would have been the Parental Style loss again.
-- **`_already_anchored` misses a Word-made comment.** It looks 60 chars
-  either side, but Word's revision 1 is a GROUP of adjacent elements, and
-  its range opened before span 0 and closed after span 1.
-
-Fix (sketch): `comments.annotate_in_place(path, blocks)` that:
-
-- seeds and grafts the scaffold as above;
-- takes (span indices, comment) blocks, one balloon per block;
-- asserts full coverage of the spans;
-- refuses unless the tracked views and per-part revision counts are
-  unchanged.
-
-Also add a `classify=` hook (a paper module path in `paper.toml`) to
-`revision build`. Test: annotate a 3-, 5- and 7-span fixture in place;
-`docProps/custom.xml` and `customXml/` survive; `document.xml` minus
-anchors is byte-identical.
-
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
