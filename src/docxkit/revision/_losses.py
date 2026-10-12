@@ -487,14 +487,17 @@ def _lost_notes(working: Parts,
 BATCH_KINDS = ("footnote", "endnote", "bookmark", "link")
 
 
-def _structure(parts: Parts, kind: str) -> Counter[object]:
+def _structure(parts: Parts, kind: str) -> Counter[str | tuple[str, str]]:
     """Everything of `kind` in `parts`, as the multiset `losses` reads."""
+    found: Counter[str | tuple[str, str]] = Counter()
     if kind in ("footnote", "endnote"):
         part = FOOTNOTES if kind == "footnote" else ENDNOTES
-        return Counter(f.text for f in _notes(parts, part, kind))
-    if kind == "bookmark":
-        return Counter(_bookmarks(parts))
-    return Counter(_links(parts))
+        found.update(f.text for f in _notes(parts, part, kind))
+    elif kind == "bookmark":
+        found.update(_bookmarks(parts))
+    else:
+        found.update(_links(parts))
+    return found
 
 
 def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,

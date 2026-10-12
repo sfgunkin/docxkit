@@ -37,9 +37,10 @@ the math tracked and lose nothing.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,7 @@ from . import comments as _comments
 from . import footnotes as _footnotes
 from . import guard as _guard
 from . import hygiene as _hygiene
+from . import revisions as _revisions
 from . import word as _word
 from ._tracked_gates import _PART_LABELS as _PART_LABELS
 from ._tracked_gates import STRUCTURE_TAGS as STRUCTURE_TAGS
@@ -81,11 +83,24 @@ from ._tracked_report import _LINT_ESCAPE as _LINT_ESCAPE
 from ._tracked_report import BuildReport as BuildReport
 from ._tracked_report import MathOutcome as MathOutcome
 from ._tracked_report import _refuse_accept_side as _refuse_accept_side
-from ._xml import Parts
+from ._xml import (
+    COMMENT_ID_RE,
+    COMMENTS,
+    DOCUMENT,
+    Parts,
+    append_before_close,
+)
+from .authors import initials_for
 from .comments import RevisionContext
-from .errors import PackageError
+from .errors import DocumentLocked, PackageError, ScaffoldMissing
 from .lint import lint_parts
-from .package import USER_PROPERTIES, read_parts, write_docx
+from .package import (
+    USER_PROPERTIES,
+    backup,
+    is_locked,
+    read_parts,
+    write_docx,
+)
 
 # Kept for the papers, which import `tracked._accept`, `_reject` and
 # `_simulate` (tools/consumers.txt) to build a view by hand; `build` asks
@@ -118,13 +133,16 @@ __all__ = [
     "CARRIED_PARTS",
     "STRUCTURE_TAGS",
     "BuildReport",
+    "DocumentLocked",
     "MathOutcome",
     "PackageError",
+    "ScaffoldMissing",
     "Unaccepted",
     "Untracked",
     "accepted_losses",
     "accepted_math",
     "accepted_view",
+    "annotate_in_place",
     "bookmark_additions",
     "bookmark_changes",
     "bookmark_names",
@@ -910,3 +928,141 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         return report
     finally:
         _clear_staging(staging, building, published, say)
+
+
+# ------------------------------------------------- comment in place
+
+#: What a comment needs besides its anchors in `document.xml`: the four
+#: comment parts and the people list, grafted from Word's seed copy.
+_COMMENT_MACHINERY = ("word/comments", "word/people.xml")
+
+#: Parts an in-place annotation may GROW, and only by appending before
+#: their closing tag: the styles a comment uses, and the wiring of the
+#: grafted parts.
+_APPENDED = ("word/styles.xml", "[Content_Types].xml",
+             "word/_rels/document.xml.rels")
+
+
+def annotate_in_place(path: str | Path,
+                      blocks: Sequence[_comments.Block], *, author: str,
+                      seed: Callable[[Path, Path], None] | None = None,
+                      ) -> int:
+    """Comment a PENDING proposal where it is, one balloon per block.
+
+    HPPA_Index, 2026-10-10: with a 2,136-revision proposal on the
+    manuscript, the author asked for a comment on every change saying
+    why. Rebuilding was out: `withdraw` refuses a proposal the author
+    has opened and saved, and a rebuild replaces the bytes they saved.
+    Comments change no text and no revision, so they can go into the
+    author's own file. The paper did it with a 500-line script over
+    `comments`' private functions; this is that script's mechanism, and
+    :func:`docxkit.comments.annotate_blocks` is its parts-level half
+    (`blocks`, coverage, anchoring, credit).
+
+    **The package written is the author's, never Word's.** A file with
+    no comments has no scaffold to clone, so `seed` (Word, by default)
+    adds one comment to a COPY. Only the comment parts and the styles
+    they use are grafted back. Word's save of that copy dropped six parts
+    on HPPA (`docProps` core, app and custom, and the customXml store),
+    with its text, revisions and counts all perfect, so only a parts
+    diff saw it. The seed's comment becomes the first block's balloon.
+
+    It refuses, writing nothing, unless every part other than
+    `document.xml` (which `annotate_blocks` holds to its anchors) is
+    byte-identical or is comment machinery (:data:`_COMMENT_MACHINERY`,
+    :data:`_APPENDED`). The blocks are checked before Word is started,
+    and the file is backed up before it is written. Returns the number
+    of comments added.
+    """
+    path = Path(path)
+    if is_locked(path):
+        raise DocumentLocked(f"{path.name} is open in Word; close it first")
+    before = read_parts(path)
+    parts = dict(before)
+    # the coverage first: a block table that misses a change is refused
+    # before a Word session is paid for
+    _comments._cover(blocks, len(_revisions.spans(
+        parts[DOCUMENT].decode("utf-8"))))
+    reuse = None
+    if not _comments.has_scaffold(parts):
+        seeded = _seeded(path, seed or _seed_in_word)
+        _hygiene.restore_parts(parts, seeded, prefixes=_COMMENT_MACHINERY)
+        _graft_styles(parts, seeded)
+        ids = COMMENT_ID_RE.findall(
+            parts.get(COMMENTS, b"").decode("utf-8"))
+        if len(ids) != 1:
+            raise ScaffoldMissing(f"the seed copy carries {len(ids)} "
+                                  f"comments, not the one it was given")
+        reuse = ids[0]
+    added = _comments.annotate_blocks(parts, blocks, author=author,
+                                      initials=initials_for(author),
+                                      reuse=reuse)
+    _only_comments_changed(before, parts)
+    backup(path, tag="pre_annotate")
+    write_docx(path, parts)
+    return len(added)
+
+
+def _seed_in_word(src: Path, dst: Path) -> None:
+    """One Word-made comment on revision 1 of `src`, saved to `dst`.
+
+    Through Flat OPC, which sidesteps the save hang; `src` is a copy."""
+    with tempfile.TemporaryDirectory(prefix="docxkit_seed_") as td:
+        flat = Path(td) / "seed.xml"
+        with _word.session(deadline=900, doing="seeding a comment") as app, \
+                _word.open_doc(app, src, read_only=False, local=False) as doc:
+            doc.Comments.Add(doc.Revisions(1).Range, "seed")
+            _word.extract_flat_opc(doc, flat)
+        _word.flat_opc_to_docx(flat, dst)
+
+
+def _seeded(path: Path, seed: Callable[[Path, Path], None]) -> Parts:
+    """The parts of a seeded COPY of `path`; the copy is deleted."""
+    with tempfile.TemporaryDirectory(prefix="docxkit_seed_") as td:
+        copy, out = Path(td) / f"copy{path.suffix}", Path(td) / "seeded.docx"
+        shutil.copy2(path, copy)
+        seed(copy, out)
+        return read_parts(out)
+
+
+_STYLE_RE = re.compile(
+    r'(<w:style [^>]*w:styleId="([^"]+)"[^>]*>.*?</w:style>)', re.DOTALL)
+
+
+def _graft_styles(parts: Parts, source: Parts) -> list[str]:
+    """The styles Word added with the seed (`CommentText`, …), appended."""
+    styles = "word/styles.xml"
+    if styles not in parts or styles not in source:
+        return []
+    have = parts[styles].decode("utf-8")
+    ids = {sid for _xml, sid in _STYLE_RE.findall(have)}
+    add = [(xml, sid) for xml, sid in
+           _STYLE_RE.findall(source[styles].decode("utf-8"))
+           if sid not in ids]
+    if add:
+        parts[styles] = append_before_close(
+            have, "</w:styles>", "".join(x for x, _ in add)).encode("utf-8")
+    return [sid for _xml, sid in add]
+
+
+def _only_comments_changed(before: Parts, after: Parts) -> None:
+    """Refuse unless only comment machinery changed outside the body."""
+    for name, blob in before.items():
+        if name == DOCUMENT or name.startswith(_COMMENT_MACHINERY):
+            continue
+        now = after.get(name)
+        if now is None:
+            raise PackageError(f"annotating dropped {name}; nothing was "
+                               f"written")
+        if now == blob:
+            continue
+        old = blob.decode("utf-8", "replace")
+        cut = old.rfind("</")
+        if name not in _APPENDED or cut < 0 or not now.decode(
+                "utf-8", "replace").startswith(old[:cut]):
+            raise PackageError(f"annotating changed {name}; nothing was "
+                               f"written")
+    if extra := sorted(n for n in set(after) - set(before)
+                       if not n.startswith(_COMMENT_MACHINERY)
+                       and not n.startswith("word/_rels/")):
+        raise PackageError(f"annotating added {extra}; nothing was written")

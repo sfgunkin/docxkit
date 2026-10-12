@@ -104,6 +104,11 @@ rescue_keep = {rescue_keep}
 # hidden instance this step started is killed and the step fails,
 # naming the batch. 0 means no ceiling.
 word_deadline = {word_deadline}
+# A module that comments each revision with its reason: "path.py" or
+# "path.py:function", relative to the project root. The function gets a
+# docxkit.comments.RevisionContext and returns the comment; an empty
+# answer leaves that revision without one.
+# classify = "revision/scripts/classify.py"
 
 [verify]
 # The paper's OWN gates. Not part of the shared ladder — what this

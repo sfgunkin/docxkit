@@ -534,7 +534,7 @@ def test_the_config_reader_refuses_a_key_KNOWN_does_not_list():
     # that must stay exactly as declared (a replication package), and
     # `[verify] render_math` on 2026-09-11, the opt-out from rendering
     # the pages of the equations a batch adds or changes
-    assert sum(len(keys) for keys in KNOWN.values()) == 13
+    assert sum(len(keys) for keys in KNOWN.values()) == 14
 
 
 @pytest.mark.parametrize(("section", "line", "wanted"), [
@@ -997,9 +997,11 @@ class _FakeBuild:
         self.notes_xml = notes_xml
         self.called_with: tuple[Any, ...] = ()
         self.kwargs: dict[str, Any] = {}
+        self.classify: Any = None
 
     def __call__(self, original, revised, out, classify=None, **kw):
         self.called_with = (Path(original), Path(revised), Path(out))
+        self.classify = classify
         self.kwargs = kw
         write(Path(out), make_parts(para(self.extra + run(self.out_text)),
                                     footnotes=self.notes_xml))
@@ -1347,6 +1349,75 @@ def test_build_hands_tracked_the_settings_the_PROTOCOL_depends_on(
     assert fake.kwargs["resolve_math"] is True, "the default"
     assert fake.kwargs["force"] is False, "the default"
     assert fake.kwargs["moves"] is True, "the default"
+
+
+def _with_classify(project, value: str):
+    """`project` with ``[batch] classify = value``, read back from TOML."""
+    config = project.config.read_text(encoding="utf-8")
+    config = config.replace("word_deadline = ",
+                            f'classify = "{value}"\nword_deadline = ', 1)
+    project.config.write_text(config, encoding="utf-8")
+    return revision.load_paper(project.root)
+
+
+def test_build_hands_tracked_the_paper_s_CLASSIFIER(project, monkeypatch):
+    """`[batch] classify` names a file and a function, and the build
+    passes that function on, with unmatched revisions left bare. It
+    passed None until 2026-10-12, so a protocol batch could never carry
+    a reason (HPPA_Index, 2026-10-10)."""
+    scripts = project.root / "revision" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "why.py").write_text(
+        "def reason(ctx):\n    return 'R3: ' + ctx.text\n", encoding="utf-8")
+    paper = _with_classify(project, "revision/scripts/why.py:reason")
+    clean = write(paper.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    revision.build(paper, clean)
+
+    from docxkit.comments import RevisionContext
+    ctx = RevisionContext(text="cut", para="", window="", table_index=None,
+                          start=0, end=0)
+    assert fake.classify(ctx) == "R3: cut"
+    assert fake.kwargs["generic"] is None
+
+
+def test_build_without_a_classifier_passes_NONE(project, monkeypatch):
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    revision.build(project, clean)
+
+    assert fake.classify is None
+
+
+@pytest.mark.parametrize("value, why", [
+    ("revision/scripts/absent.py", "not there"),
+    ("revision/scripts/why.py:nothing", "no function 'nothing'"),
+    ("revision/scripts/why.py", "no function 'classify'"),
+])
+def test_a_classifier_that_is_not_there_refuses_BEFORE_Word(
+        project, monkeypatch, value, why):
+    """A comment pass that silently never ran is the failure this
+    guards: the batch would go out bare with nobody told."""
+    scripts = project.root / "revision" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "why.py").write_text("def reason(ctx):\n    return None\n",
+                                    encoding="utf-8")
+    paper = _with_classify(project, value)
+    clean = write(paper.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    with pytest.raises(revision.ProtocolError, match=why):
+        revision.build(paper, clean)
+
+    assert fake.called_with == (), "Word was never asked"
 
 
 def test_build_PASSES_ON_the_two_switches_it_is_given(project, monkeypatch):

@@ -40,6 +40,7 @@ REVISION_SUPERSET = ["tests/test_revision.py",
                      "tests/test_cli_revision.py",
                      "tests/test_workflow_states.py",
                      "tests/test_rescue_pruning.py",
+                     "tests/test_revision_batch_deletions.py",
                      "tests/test_value_types.py"]
 
 #: module file name -> the test files that exercise it
@@ -75,6 +76,7 @@ HARNESS: dict[str, list[str]] = {
                # module's 21 sweep survivors and the four above none
                "tests/test_revision_survey.py"],
     "comments.py": ["tests/test_comments.py", "tests/test_comment_threads.py",
+                    "tests/test_comments_in_place.py",
                     "tests/test_classify_match.py",
                     "tests/test_parts_gaps.py",
                     "tests/test_value_types.py"],
@@ -167,6 +169,7 @@ HARNESS: dict[str, list[str]] = {
     # session-KILLED replayed: 489 killed, 34 were session TIMEOUTS.
     # value_types: `Loss` and `Relabelled` are frozen.
     "revision/_losses.py": ["tests/test_revision.py",
+                            "tests/test_revision_batch_deletions.py",
                             "tests/test_cli_revision.py",
                             "tests/test_value_types.py"],
     # 71 lines+branches: 63 in test_revision_status.py (21 nowhere else),
@@ -189,6 +192,7 @@ HARNESS: dict[str, list[str]] = {
     # test_revision_ledger.py kills (the cheapest of the four files that
     # do). value_types: `Verdict` is frozen.
     "revision/_verdict.py": ["tests/test_revision_verdict.py",
+                             "tests/test_revision_batch_deletions.py",
                              "tests/test_workflow_states.py",
                              "tests/test_revision_ledger.py",
                              "tests/test_value_types.py"],
@@ -204,6 +208,7 @@ HARNESS: dict[str, list[str]] = {
     # in the package for replaying kills rather than trusting coverage.
     # value_types: `BaselineReport` is frozen.
     "revision/_baseline.py": ["tests/test_revision.py",
+                              "tests/test_revision_batch_deletions.py",
                               "tests/test_revision_state.py",
                               "tests/test_revision_verdict.py",
                               "tests/test_revision_ledger.py",
@@ -234,6 +239,7 @@ HARNESS: dict[str, list[str]] = {
     # killed, its 22 survivors still alive.
     # value_types: `IngestReport` is frozen.
     "revision/_ingest.py": ["tests/test_revision.py",
+                            "tests/test_revision_batch_deletions.py",
                             "tests/test_value_types.py"],
     # 95 lines+branches, all in test_revision_survey.py;
     # test_cli_revision.py reaches 79 and adds none. 131 session-KILLED
@@ -310,6 +316,7 @@ HARNESS: dict[str, list[str]] = {
                   "tests/test_compare.py",
                   "tests/test_raised_prose.py"],
     "tracked.py": ["tests/test_tracked_build.py",
+                   "tests/test_comments_in_place.py",
                    "tests/test_tracked_gates.py",
                    "tests/test_tracked_edges.py",
                    "tests/test_tracked_guard.py",

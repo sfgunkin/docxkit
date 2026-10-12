@@ -56,6 +56,39 @@ def _pending(parts: Parts) -> dict[str, int]:
     return found
 
 
+def _classifier(paper: Paper) -> tracked.Classifier | None:
+    """The function ``[batch] classify`` names, or None when it names none.
+
+    Loaded from the FILE, not imported by module name: a paper's scripts
+    are not a package on `sys.path`, and the file is what the config
+    points at. A file or a function that is not there refuses here,
+    before Word is started, rather than as a comment pass that never ran.
+    """
+    if not paper.classify:
+        return None
+    import importlib.util
+
+    where, _, name = paper.classify.rpartition(":")
+    if not where.endswith(".py"):           # no ":function", or a drive's
+        where, name = paper.classify, ""
+    path = (paper.root / where).resolve()
+    if not path.is_file():
+        raise ProtocolError(f"paper.toml: [batch] classify names {path}, "
+                            f"which is not there")
+    spec = importlib.util.spec_from_file_location(
+        f"docxkit_classify_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        raise ProtocolError(f"[batch] classify: {path} cannot be loaded "
+                            f"as Python")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    found = getattr(module, name or "classify", None)
+    if not callable(found):
+        raise ProtocolError(f"[batch] classify: {path.name} has no function "
+                            f"{name or 'classify'!r}")
+    return found  # type: ignore[no-any-return]
+
+
 def _listed(kinds: dict[str, int]) -> str:
     """`w:pPrChange (1), w:rPrChange (35)` — what a refusal must name.
 
@@ -322,7 +355,11 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     # at. A paper calling `tracked.build` directly has no gate 5, which
     # is why the default there is to refuse.
     _timing.mark("preflight")
-    report = tracked.build(paper.prev, revised, out, None,
+    # `generic=None`: a revision the paper's classifier has no reason for
+    # stays bare. A balloon reading "unclassified" on each of them is
+    # worse than none, and it is the classifier's to say otherwise.
+    report = tracked.build(paper.prev, revised, out, _classifier(paper),
+                           generic=None,
                            author=paper.author, verify_in_word=True,
                            resolve_math=resolve_math, moves=moves,
                            reject_check=False,

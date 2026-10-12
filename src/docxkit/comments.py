@@ -16,7 +16,7 @@ get :class:`RevisionContext` for each revision.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -28,6 +28,7 @@ from ._xml import (
     PARA_RE,
     Parts,
     delta_text,
+    escape_attr,
     normalize_glyphs,
     own_properties,
     set_run_text,
@@ -44,6 +45,7 @@ __all__ = [
     "COALESCE",
     "GENERIC",
     "AnchorError",
+    "Block",
     "Comment",
     "PackageError",
     "RevisionContext",
@@ -51,6 +53,8 @@ __all__ = [
     "Thread",
     "add_at",
     "annotate",
+    "annotate_blocks",
+    "has_scaffold",
     "match",
     "read_all",
     "reclassify",
@@ -415,6 +419,117 @@ def add_at(parts: Parts, anchor: str, comment: str, *,
     scaffold = _Scaffold.read(parts)
     _write(parts, doc, [(start, end, comment)], scaffold)
     return scaffold.next_id
+
+
+Block = tuple[Sequence[int], str]
+"""``(span indices, comment)``: one balloon over a group of revisions.
+The indices are positions in :func:`docxkit.revisions.spans` of the
+package's ``document.xml``; the balloon anchors on the group's first."""
+
+
+def annotate_blocks(parts: Parts, blocks: Sequence[Block], *, author: str,
+                    initials: str, reuse: str | None = None) -> list[str]:
+    """One balloon per block of revision spans; returns the comment ids.
+
+    The parts-level half of :func:`docxkit.tracked.annotate_in_place`,
+    which says why it exists (HPPA_Index, 2026-10-10). `blocks` must
+    cover every span of ``document.xml`` exactly once, so a reason
+    cannot silently miss a change: Word splits one edit into many
+    fragments (a merged paragraph is a dozen ins/del pairs, a rebuilt
+    table hundreds), and the caller groups them. Anchored by span INDEX
+    rather than by searching near the text, because `_already_anchored`
+    misses a comment Word made, whose range spans a whole group.
+
+    `reuse` names a comment already in ``comments.xml`` with no anchor,
+    the one Word made on a seeded copy; it becomes the first block's
+    balloon, so nothing is left anchored nowhere. New comments are
+    credited to `author` and `initials`, never to whoever wrote the
+    comment that was cloned, which can be a referee's.
+
+    Refuses, leaving `parts` as it was, unless ``document.xml`` minus
+    the new anchors is byte-identical to before; the tracked views and
+    the revision counts are then unchanged by construction.
+    """
+    work = dict(parts)
+    before = work[DOCUMENT]
+    doc = before.decode("utf-8")
+    spans = _revisions.spans(doc)
+    ordered = _cover(blocks, len(spans))
+    added: list[str] = []
+    if reuse is not None:
+        first, text = ordered.pop(0)
+        work[COMMENTS] = _set_comment_text(
+            work[COMMENTS].decode("utf-8"), reuse, text).encode("utf-8")
+        start, end = spans[first]
+        open_tag, close_tag = _anchor(int(reuse))
+        doc = doc[:start] + open_tag + doc[start:end] + close_tag + doc[end:]
+        spans = _revisions.spans(doc)
+        added.append(reuse)
+    scaffold = _Scaffold.read(work)
+    _write(work, doc, [(*spans[i], text) for i, text in ordered], scaffold)
+    added += [str(scaffold.next_id + n) for n in range(len(ordered))]
+    work[COMMENTS] = _credit(work[COMMENTS].decode("utf-8"), added,
+                             author, initials).encode("utf-8")
+
+    doc = work[DOCUMENT].decode("utf-8")
+    for cid in added:
+        open_tag, close_tag = _anchor(int(cid))
+        doc = doc.replace(open_tag, "", 1).replace(close_tag, "", 1)
+    if doc.encode("utf-8") != before:
+        raise PackageError("annotating changed document.xml beyond its "
+                           "comment anchors; nothing was written")
+    parts.update(work)
+    return added
+
+
+def _cover(blocks: Sequence[Block], n: int) -> list[tuple[int, str]]:
+    """``(first span, comment)`` per block, in document order — once
+    every span 0..n-1 is in exactly one block."""
+    if n == 0:
+        raise AnchorError("the document carries no revision to comment")
+    owner: dict[int, int] = {}
+    for b, (indices, _text) in enumerate(blocks):
+        if not indices:
+            raise AnchorError(f"block {b} names no span")
+        for i in indices:
+            if not 0 <= i < n:
+                raise AnchorError(f"block {b} names span {i}; the document "
+                                  f"has {n} (0..{n - 1})")
+            if i in owner:
+                raise AnchorError(f"span {i} is in blocks {owner[i]} and {b}")
+            owner[i] = b
+    if missing := sorted(set(range(n)) - set(owner)):
+        raise AnchorError(f"{len(missing)} span(s) in no block, from "
+                          f"{missing[:8]}: a change would go unexplained")
+    return sorted((min(indices), text) for indices, text in blocks)
+
+
+def has_scaffold(parts: Parts) -> bool:
+    """Does `parts` carry a Word-made comment this module can clone?"""
+    try:
+        _Scaffold.read(parts)
+    except (KeyError, ScaffoldMissing):
+        return False
+    return True
+
+
+def _credit(com: str, ids: Sequence[str], author: str, initials: str) -> str:
+    """`author` on the comments `ids`, and on no other."""
+    wanted = set(ids)
+    # a function, not a template: a backslash in a name is not a group
+    name = f'w:author="{escape_attr(author)}"'
+    mark = f'w:initials="{escape_attr(initials)}"'
+
+    def restamp(m: re.Match[str]) -> str:
+        tag = m.group(0)
+        if m.group(1) not in wanted:
+            return tag
+        tag = re.sub(r'\bw:author="[^"]*"', lambda _m: name, tag)
+        return re.sub(r'\bw:initials="[^"]*"', lambda _m: mark, tag)
+
+    # the slash captured: an EMPTY comment is restamped as it stands, and
+    # nothing here pairs it with a close
+    return re.sub(r'<w:comment\b[^>]*w:id="(\d+)"[^>]*?(/?)>', restamp, com)
 
 
 def _set_comment_text(com: str, cid: str, new_text: str) -> str:

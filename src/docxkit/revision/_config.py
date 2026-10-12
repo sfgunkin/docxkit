@@ -98,6 +98,21 @@ class Paper:
     tree must stay exactly as declared turns this off and loses nothing
     but the history.
     """
+    classify: str = ""
+    """The paper's comment classifier, from ``[batch] classify``:
+    ``"path.py"`` or ``"path.py:function"`` (default ``classify``),
+    relative to the project root. `revision build` passes it to
+    :func:`docxkit.tracked.build`, which calls it with a
+    :class:`docxkit.comments.RevisionContext` per revision and puts the
+    text it returns in a balloon; None leaves that revision bare.
+
+    Empty, the default, is a redline with no comments, which is what
+    every batch was until 2026-10-12: `build` passed ``None`` and a
+    paper whose author asked for reasons had to annotate the promoted
+    file afterwards (HPPA_Index, 2026-10-10; see
+    :func:`docxkit.tracked.annotate_in_place`). LAST, so no field
+    before it moved.
+    """
 
     @property
     def batch(self) -> Path:
@@ -198,7 +213,8 @@ class Paper:
 #: key read here and not listed raises, so the list cannot fall behind.
 KNOWN: dict[str, frozenset[str]] = {
     "paper": frozenset({"name", "language", "working", "prev", "timings"}),
-    "batch": frozenset({"author", "rescue_keep", "carry", "word_deadline"}),
+    "batch": frozenset({"author", "rescue_keep", "carry", "word_deadline",
+                        "classify"}),
     "verify": frozenset({"commands", "render_math"}),
     "attic": frozenset({"path"}),
     "doctor": frozenset({"skip"}),
@@ -225,6 +241,7 @@ KINDS: dict[tuple[str, str], tuple[tuple[type, ...], str]] = {
     ("batch", "rescue_keep"): ((int,), "a whole number"),
     ("batch", "carry"): _STRS,
     ("batch", "word_deadline"): ((int, float), "a number of seconds"),
+    ("batch", "classify"): _STR,
     ("verify", "commands"): _STRS,
     ("verify", "render_math"): ((bool,), "true or false"),
     ("attic", "path"): _STR,
@@ -320,4 +337,5 @@ def load_paper(start: str | Path | None = None) -> Paper:
         carry=tuple(_read(data, "batch", "carry", ())),
         render_math=_read(data, "verify", "render_math", True),
         timings=_read(data, "paper", "timings", True),
+        classify=_read(data, "batch", "classify", ""),
     )
