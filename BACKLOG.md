@@ -849,23 +849,6 @@ pointed at a file via monkeypatched `registry_path`; it must not be added.
 Workaround in use: set `os.environ["DOCXKIT_PAPERS"]` to a scratch file in
 any script that scaffolds a project; prune the registry by hand.
 
-### S2 — the mechanical reject restores `w:delText` but not `w:delInstrText`, so a deleted FIELD-form link does not come back
-<!-- status: open -->
-
-Reported by the 2026-10-10 code review (measured against Word 16's real
-Reject All): `revisions.py` around line 880 turns `w:delText` back into
-`w:t` and leaves `w:delInstrText` as it is. A field-form link (`HYPERLINK
-\l` / `REF` in `instrText`) inside a deletion is therefore not restored by
-docxkit's reject, while Word's Reject All restores it. Gate 5 reports
-`links: False` and `links_in_deletions` finds nothing on such a batch, and
-the docstrings that blame Compare for not rebuilding links describe this
-model rather than Word.
-
-Fix: restore `w:delInstrText` -> `w:instrText` beside `w:delText` in the
-reject pass, and check every reader of the rejected view. Test: a `w:del`
-holding a complete fldChar HYPERLINK field; `reject` must yield a live
-field whose anchor `internal_links` finds.
-
 ### S4 — `revision ingest --check` help says exit 2; it exits 5
 <!-- status: open -->
 

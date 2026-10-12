@@ -14,6 +14,43 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the mechanical reject restores `w:delText` but not `w:delInstrText`, so a deleted FIELD-form link does not come back~~ — FIXED 12.10, `64b1b0a`
+
+<!-- status: fixed -->
+
+Reported by the 2026-10-10 code review (measured against Word 16's real
+Reject All): `revisions.py` around line 880 turns `w:delText` back into
+`w:t` and leaves `w:delInstrText` as it is. A field-form link (`HYPERLINK
+\l` / `REF` in `instrText`) inside a deletion is therefore not restored by
+docxkit's reject, while Word's Reject All restores it. Gate 5 reports
+`links: False` and `links_in_deletions` finds nothing on such a batch, and
+the docstrings that blame Compare for not rebuilding links describe this
+model rather than Word.
+
+Fix: restore `w:delInstrText` -> `w:instrText` beside `w:delText` in the
+reject pass, and check every reader of the rejected view. Test: a `w:del`
+holding a complete fldChar HYPERLINK field; `reject` must yield a live
+field whose anchor `internal_links` finds.
+
+**Fixed 2026-10-12.** `_apply_content` restores `w:delInstrText` to
+`w:instrText` beside `w:delText` -> `w:t`, per revision, so a deletion a
+predicate leaves pending keeps both. Tests, each failing with the fix
+reverted: `test_a_rejected_deletion_brings_back_its_FIELD_form_link`,
+`test_an_unselected_deleted_field_keeps_its_delInstrText`
+(`test_revisions_selective.py`), and
+`test_a_deleted_FIELD_link_passes_reject_all_when_rejecting_restores_it`
+(`test_revision.py`, three links through `validate`).
+
+Measured on the real thing: Aging_Well's 2026-10-10 batch against its
+`prev.docx` failed gate 5 with `links: False` and 11 lost links
+(Banerjee2023, Box3, Figure2 …) before, and passes all five arms after.
+The "Compare does not rebuild a link inside a rejected deletion" claim
+is corrected in `_losses._links`, the `LINK LOST` console line and two
+test docstrings. The build-time warning built on the same claim is a new
+open S2 — it reads the opposite form from the one that was lost.
+
+No per-paper workaround existed to delete.
+
 ### ~~S4 — `revision withdraw` crashes (exit 70, "internal error") when Word holds the manuscript, instead of refusing~~ — FIXED 09.10, `71a6a1c`; reworked 10.10, `7f738f4`
 
 <!-- status: fixed -->
