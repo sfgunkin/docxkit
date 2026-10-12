@@ -20,7 +20,12 @@ from conftest import comment, make_parts, para, run, write
 
 from docxkit import comments as C
 from docxkit import package, revisions, tracked
-from docxkit.errors import AnchorError, PackageError
+from docxkit.errors import (
+    AnchorError,
+    DocumentLocked,
+    PackageError,
+    ScaffoldMissing,
+)
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 PKG = "http://schemas.openxmlformats.org/package/2006"
@@ -131,7 +136,7 @@ def test_a_proposal_is_commented_IN_PLACE_one_balloon_per_block(tmp_path,
     calls: list[int] = []
 
     added = tracked.annotate_in_place(path, _blocks(n), author=AUTHOR,
-                                seed=_word_like_seed(calls))
+                                      seed=_word_like_seed(calls))
 
     after = package.read_parts(path)
     assert calls == [1], "seeded once, because there was no scaffold"
@@ -157,7 +162,7 @@ def test_the_SEED_comment_becomes_the_first_balloon_not_an_orphan(tmp_path):
     path = write(tmp_path / "working.docx", _proposal(5))
 
     tracked.annotate_in_place(path, _blocks(5), author=AUTHOR,
-                        seed=_word_like_seed([]))
+                              seed=_word_like_seed([]))
 
     parts = package.read_parts(path)
     defined = re.findall(r'<w:comment [^>]*w:id="(\d+)"',
@@ -199,7 +204,7 @@ def test_blocks_that_do_not_cover_each_span_ONCE_write_nothing(
 
     with pytest.raises(AnchorError, match=re.escape(why)):
         tracked.annotate_in_place(path, blocks, author=AUTHOR,
-                            seed=_word_like_seed([]))
+                                  seed=_word_like_seed([]))
 
     assert (tmp_path / "working.docx").read_bytes() == was
 
@@ -219,7 +224,7 @@ def test_a_change_beyond_the_anchors_is_REFUSED_and_nothing_written(
 
     with pytest.raises(PackageError, match=r"document\.xml"):
         tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
-                            seed=_word_like_seed([]))
+                                  seed=_word_like_seed([]))
 
     assert (tmp_path / "working.docx").read_bytes() == was
 
@@ -241,7 +246,126 @@ def test_a_PART_the_seed_rewrote_is_refused(tmp_path, monkeypatch):
 
     with pytest.raises(PackageError, match=r"_rels/\.rels"):
         tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
-                            seed=_word_like_seed([]))
+                                  seed=_word_like_seed([]))
+
+
+@pytest.mark.parametrize("change, why", [
+    (lambda parts: parts.pop("customXml/item1.xml"), "dropped customXml"),
+    (lambda parts: parts.__setitem__("word/extra.xml", b"<x/>"),
+     r"added \['word/extra.xml'\]"),
+])
+def test_a_part_DROPPED_or_ADDED_beside_the_graft_is_refused(
+        tmp_path, monkeypatch, change, why):
+    """The other two ways a package changes, besides a rewritten part."""
+    from docxkit.hygiene import restore_parts
+
+    path = write(tmp_path / "working.docx", _proposal(3))
+    was = (tmp_path / "working.docx").read_bytes()
+
+    def also(parts, source, prefixes):
+        change(parts)
+        return restore_parts(parts, source, prefixes=prefixes)
+
+    monkeypatch.setattr("docxkit.hygiene.restore_parts", also)
+
+    with pytest.raises(PackageError, match=why):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed([]))
+
+    assert (tmp_path / "working.docx").read_bytes() == was
+
+
+def test_a_seed_that_made_TWO_comments_is_refused(tmp_path):
+    """The seed is reused as the first balloon, so it has to be the ONE
+    comment the copy was given; anything else is a copy that is not
+    what this asked Word for."""
+    path = write(tmp_path / "working.docx", _proposal(3))
+
+    def twice(src, dst):
+        parts = package.read_parts(src)
+        seeded = make_parts("", comment_items=(comment(0, "seed"),
+                                               comment(1, "again")))
+        parts["word/comments.xml"] = seeded["word/comments.xml"]
+        write(dst, parts)
+
+    with pytest.raises(ScaffoldMissing, match="carries 2 comments"):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=twice)
+
+
+def test_a_package_with_NO_styles_part_still_takes_the_comments(tmp_path):
+    """Nothing to graft the comment styles into is not a reason to
+    refuse; Word supplies its defaults."""
+    parts = _proposal(3)
+    del parts["word/styles.xml"]
+    path = write(tmp_path / "working.docx", parts)
+
+    assert tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                     seed=_word_like_seed([])) == 2
+
+
+def test_a_file_open_in_WORD_is_refused(tmp_path, monkeypatch):
+    path = write(tmp_path / "working.docx", _proposal(3))
+    monkeypatch.setattr(tracked, "is_locked", lambda _p: True)
+
+    with pytest.raises(DocumentLocked):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed([]))
+
+
+class _FakeDoc:
+    """The two things the seed asks of a Word document."""
+
+    def __init__(self) -> None:
+        self.added: list[tuple[object, str]] = []
+        self.Comments = self
+
+    def Add(self, where, text):
+        self.added.append((where, text))
+
+    def Revisions(self, i):
+        return type("R", (), {"Range": f"revision {i}"})()
+
+
+def test_the_default_seed_asks_WORD_for_one_comment_on_revision_1(
+        tmp_path, monkeypatch):
+    """`_seed_in_word`, through a fake at the `tracked._word` seam: one
+    comment on revision 1 of the COPY, read back through Flat OPC."""
+    import contextlib
+
+    doc = _FakeDoc()
+    seed_parts: list[dict] = []
+
+    class _FakeWord:
+        @staticmethod
+        @contextlib.contextmanager
+        def session(**_kw):
+            yield "word"
+
+        @staticmethod
+        @contextlib.contextmanager
+        def open_doc(_app, src, **kw):
+            assert kw == {"read_only": False, "local": False}
+            seed_parts.append(package.read_parts(src))
+            yield doc
+
+        @staticmethod
+        def extract_flat_opc(_doc, flat):
+            flat.write_text("<pkg/>", encoding="utf-8")
+            return flat
+
+        @staticmethod
+        def flat_opc_to_docx(_flat, dst):
+            _word_like_seed([])(path, dst)
+            return 1
+
+    path = write(tmp_path / "working.docx", _proposal(3))
+    monkeypatch.setattr(tracked, "_word", _FakeWord)
+
+    assert tracked.annotate_in_place(path, _blocks(3), author=AUTHOR) == 2
+    assert doc.added == [("revision 1", "seed")]
+    assert seed_parts[0]["word/document.xml"] == _proposal(3)[
+        "word/document.xml"], "Word was handed a copy of the file"
 
 
 @pytest.mark.word

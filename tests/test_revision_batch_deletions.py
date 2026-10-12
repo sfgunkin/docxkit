@@ -289,6 +289,21 @@ def test_ingest_check_PASSES_and_names_the_batch_s_deletions(
     assert "== LOST" not in out
 
 
+def test_baseline_LISTS_what_it_recorded_as_the_batch_s_deletion(
+        monkeypatch, tmp_path, capsys):
+    """Recorded, not refused, and said: the one decision `baseline` takes
+    that no flag on the command line records."""
+    paper = _round(tmp_path)
+    _accept_all(paper)
+
+    code, _ = run_cli(monkeypatch, "revision", "baseline", "--no-log",
+                      "--paper", str(paper.root))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert out.count("deleted by the batch: footnote") == 3
+
+
 def test_ingest_check_still_EXITS_on_a_note_Word_ate(monkeypatch, tmp_path,
                                                      capsys):
     paper = _round(tmp_path)

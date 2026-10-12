@@ -1399,6 +1399,8 @@ def test_build_without_a_classifier_passes_NONE(project, monkeypatch):
     ("revision/scripts/absent.py", "not there"),
     ("revision/scripts/why.py:nothing", "no function 'nothing'"),
     ("revision/scripts/why.py", "no function 'classify'"),
+    # a file Python has no loader for
+    ("revision/scripts/why.txt", "cannot be loaded as Python"),
 ])
 def test_a_classifier_that_is_not_there_refuses_BEFORE_Word(
         project, monkeypatch, value, why):
@@ -1406,7 +1408,8 @@ def test_a_classifier_that_is_not_there_refuses_BEFORE_Word(
     guards: the batch would go out bare with nobody told."""
     scripts = project.root / "revision" / "scripts"
     scripts.mkdir(parents=True, exist_ok=True)
-    (scripts / "why.py").write_text("def reason(ctx):\n    return None\n",
+    for name in ("why.py", "why.txt"):
+        (scripts / name).write_text("def reason(ctx):\n    return None\n",
                                     encoding="utf-8")
     paper = _with_classify(project, value)
     clean = write(paper.build_dir / "clean.docx",
