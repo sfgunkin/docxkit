@@ -27,7 +27,7 @@ words = "a555526202b5ac6a"
 path = "Papers/_Accepted/CC_age_gap/Documents/Questioning the climate change age gap ed BK 7.22.24.docx"
 input = "0a2787746bd6e466"
 [golden.fingerprint]
-accepted_document = "681bd5157840c551"
+accepted_document = "9c8fd9bafecfbfb9"
 bookmarks = 138
 captions = 22
 comments = 0
@@ -38,7 +38,7 @@ lint = 0
 lint_findings = "e3b0c44298fc1c14"
 markdown = "740093821c19e7a8"
 paragraphs = 310
-revision_kinds = "d408c6f71e1c8e8c"
+revision_kinds = "40ec9b97c7f1419a"
 tables = 36
 text_final = "ed9488575f5927df"
 text_original = "13429c9868aa64f6"

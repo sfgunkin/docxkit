@@ -23,6 +23,10 @@ accept and reject, which made a manuscript carrying one a proposal for
 ever. It now carries all fourteen, with that kind declared as the
 exception it is — `revisions.WORD_ONLY`, reported by `state` and named
 by the refusals, because the way out of it is Word.
+
+And one level further, 2026-10-12: the fourteen agreed with one another
+and all lacked two names the SCHEMA defines, so the lists are now held
+against `SCHEMA_REVISIONS` too, and there are sixteen.
 """
 from __future__ import annotations
 
@@ -96,7 +100,45 @@ KINDS = {
     "cellMerge": (f"<w:tbl><w:tr><w:tc><w:tcPr>"
                   f'<w:cellMerge {D} w:vMerge="cont"/></w:tcPr>'
                   f"{CELL}</w:tc></w:tr></w:tbl>"),
+    "tblPrExChange": (f"<w:tbl><w:tr><w:tblPrEx>"           # a row's table
+                      f"<w:tblPrExChange {D}><w:tblPrEx/>"  # exceptions
+                      f"</w:tblPrExChange></w:tblPrEx>"
+                      f"<w:tc>{CELL}</w:tc></w:tr></w:tbl>"),
+    "numberingChange": (f'<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/>'
+                        f'<w:numId w:val="1"/>'
+                        f'<w:numberingChange {D} w:original="%1."/>'
+                        f"</w:numPr></w:pPr>{run('item')}</w:p>"),
 }
+
+#: Every tracked-change element ECMA-376 Part 1 defines for
+#: WordprocessingML (§17.13.5), so the lists in `revisions` are checked
+#: against the SCHEMA and not only against one another. They agreed with
+#: one another for as long as they existed and all three lacked
+#: `tblPrExChange`, which Word writes (CC_age_gap, 2026-10-03): a
+#: comparison among the lists cannot see a name none of them holds.
+#:
+#: The move RANGE markers are content markers, read by `_CONTENT_RE`
+#: rather than counted. The `customXml*Range*` markers track the
+#: insertion of custom XML markup, which Word has not written since 2010
+#: (it strips custom XML on open); none of 106 redlines on this machine
+#: holds one. Both are declared here so that a name the schema has and
+#: this package does not is a decision, not an omission.
+SCHEMA_REVISIONS = frozenset({
+    "ins", "del", "moveFrom", "moveTo",
+    "moveFromRangeStart", "moveFromRangeEnd",
+    "moveToRangeStart", "moveToRangeEnd",
+    "rPrChange", "pPrChange", "sectPrChange", "tblPrChange",
+    "tblPrExChange", "tblGridChange", "trPrChange", "tcPrChange",
+    "numberingChange", "cellIns", "cellDel", "cellMerge",
+    "customXmlInsRangeStart", "customXmlInsRangeEnd",
+    "customXmlDelRangeStart", "customXmlDelRangeEnd",
+    "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd",
+    "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
+})
+MOVE_RANGES = frozenset({"moveFromRangeStart", "moveFromRangeEnd",
+                         "moveToRangeStart", "moveToRangeEnd"})
+NOT_MODELLED = frozenset(n for n in SCHEMA_REVISIONS
+                         if n.startswith("customXml"))
 
 #: The kinds whose element carries no author. `CT_TblGridChange` is a
 #: `CT_Markup`: it has `w:id` and nothing else, so a document whose only
@@ -187,6 +229,49 @@ def test_every_revision_name_has_a_document_here():
     asked. A name added to `_REVISION_NAMES` without a document here
     fails this instead of being tested by nothing."""
     assert set(KINDS) == set(_REVISION_NAMES)
+
+
+def test_every_revision_the_SCHEMA_defines_is_counted_or_declared():
+    """The guard the drift guards could not be. Every name the schema
+    defines is a counted kind, a move range marker, or declared as not
+    modelled — and nothing is counted that the schema does not define."""
+    counted = set(_REVISION_NAMES)
+    expected = SCHEMA_REVISIONS - MOVE_RANGES - NOT_MODELLED
+    assert counted == expected, sorted(expected ^ counted)
+    for marker in MOVE_RANGES:
+        assert _has_revisions(f'<w:{marker} {D}/>'), marker
+
+
+def test_rejecting_a_ROW_s_tblPrEx_change_puts_each_old_border_back():
+    """CC_age_gap's redline of 2026-10-03 carried one. It counted as 0
+    pending, accept left it standing and reject did not restore the old
+    properties. Three rows, each changed from its own old border, so a
+    reject that restored one snapshot everywhere fails too."""
+    from docxkit.revisions import accept, reject
+
+    old = ("single", "double", "dashed")
+
+    def row(i: int, was: str) -> str:
+        return (f"<w:tr><w:tblPrEx><w:tblBorders>"
+                f'<w:top w:val="thick"/></w:tblBorders>'
+                f'<w:tblPrExChange w:id="{i}" w:author="R" '
+                f'w:date="2026-10-03T00:00:00Z"><w:tblPrEx><w:tblBorders>'
+                f'<w:top w:val="{was}"/></w:tblBorders></w:tblPrEx>'
+                f"</w:tblPrExChange></w:tblPrEx>"
+                f"<w:tc>{CELL}</w:tc></w:tr>")
+
+    xml = document("<w:tbl>" + "".join(row(i, w) for i, w in
+                                       enumerate(old, 1)) + "</w:tbl>")
+
+    assert len(revision_elements(xml)) == 3
+    accepted, rejected = accept(xml), reject(xml)
+    assert not revision_elements(accepted)
+    assert accepted.count('w:val="thick"') == 3
+    assert not revision_elements(rejected)
+    assert "thick" not in rejected
+    rows = rejected.split("<w:tr>")[1:]
+    assert [w for r, w in zip(rows, old, strict=True)
+            if f'w:val="{w}"' in r] == list(old)
 
 
 def test_the_two_definitions_of_a_revision_cannot_drift():

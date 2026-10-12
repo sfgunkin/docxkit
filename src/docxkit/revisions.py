@@ -499,7 +499,14 @@ _CELL_FLAG = {"del": "cellDel", "ins": "cellIns"}
 #: them Word has to resolve. A kind leaves this tuple the day the
 #: simulator learns to apply it, and `tests/test_revision_state.py`
 #: holds it to that from both ends.
-WORD_ONLY = ("cellMerge",)
+#:
+#: `w:numberingChange` joined it on 2026-10-12, the same day it was first
+#: COUNTED. It is not a snapshot like the `*PrChange` records: it sits in
+#: `w:numPr` with the old number's TEXT in `w:original`, so there is no
+#: element to put back, and the generic reject would empty the `w:numPr`
+#: around it. Not counting it was the worse answer — a list renumbered
+#: under tracking read as truth.
+WORD_ONLY = ("cellMerge", "numberingChange")
 
 
 def _cell_flags(cell: _Element, tags: tuple[str, ...]) -> list[_Element]:
@@ -659,8 +666,9 @@ _CONTENT_RE = re.compile(
 #: it sits in `w:tcPr` like the other property revisions, and a cell
 #: whose content was already empty carries nothing else at all.
 _PROPERTY_MARKERS = ("<w:tcPrChange", "<w:trPrChange", "<w:tblPrChange",
-                     "<w:pPrChange", "<w:rPrChange", "<w:sectPrChange",
-                     "<w:tblGridChange",
+                     "<w:tblPrExChange", "<w:pPrChange", "<w:rPrChange",
+                     "<w:sectPrChange", "<w:tblGridChange",
+                     "<w:numberingChange",
                      "<w:cellIns", "<w:cellDel", "<w:cellMerge")
 
 
@@ -688,9 +696,16 @@ _PROPERTY_MARKERS = ("<w:tcPrChange", "<w:trPrChange", "<w:tblPrChange",
 #: deletion had nothing in it read as 0 pending, which is the number the
 #: protocol decides everything on. Same defect as the move, one more
 #: spelling.
+#:
+#: And a ninth and tenth, `tblPrExChange` and `numberingChange`, found
+#: 2026-10-12 by comparing these lists with the SCHEMA rather than with
+#: one another: a row's tracked `w:tblPrEx` change read as 0 pending, was
+#: kept by accept and was not undone by reject (CC_age_gap's redline of
+#: 2026-10-03). `test_revision_state` now holds the schema's list.
 _REVISION_NAMES = ("ins", "del", "moveFrom", "moveTo", "tcPrChange",
-                   "trPrChange", "tblPrChange", "pPrChange", "rPrChange",
-                   "sectPrChange", "tblGridChange",
+                   "trPrChange", "tblPrChange", "tblPrExChange",
+                   "pPrChange", "rPrChange", "sectPrChange",
+                   "tblGridChange", "numberingChange",
                    "cellIns", "cellDel", "cellMerge")
 REVISION_RE = re.compile(
     r"<w:(?:" + "|".join(_REVISION_NAMES) + r")(?=[ />])[^>]*>")
@@ -760,7 +775,8 @@ def _has_revisions(xml: str) -> bool:
 #: fail on a formatting-only batch. `state` has known all seven kinds
 #: since `22d5181`; the simulator knew three.
 _PROPERTY_CHANGES = ("rPrChange", "pPrChange", "tcPrChange", "trPrChange",
-                     "tblPrChange", "sectPrChange", "tblGridChange")
+                     "tblPrChange", "tblPrExChange", "sectPrChange",
+                     "tblGridChange")
 
 #: What the SNAPSHOT cannot hold, and where it sits in the live element.
 #: A reject replaces the live properties with the snapshot's, so anything
