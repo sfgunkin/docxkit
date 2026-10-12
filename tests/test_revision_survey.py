@@ -494,6 +494,49 @@ def test_an_entry_spelled_DIFFERENTLY_is_still_the_same_paper(tmp_path):
     assert registered() == [roundabout], "no second line was added"
 
 
+def _real_registry(tmp_path, monkeypatch, temp):
+    """The registry as a script outside the suite sees it: no
+    `DOCXKIT_PAPERS`, the default location (moved into `tmp_path`, so the
+    author's own file is never touched) and `temp` as the system TEMP."""
+    import tempfile
+
+    from docxkit.revision import _registry
+
+    monkeypatch.delenv("DOCXKIT_PAPERS", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp))
+    assert _registry.registry_path() == (
+        tmp_path / "appdata" / "docxkit" / "papers.txt")
+    return _registry.registry_path()
+
+
+def test_a_scaffold_in_TEMP_is_never_registered(tmp_path, monkeypatch):
+    """Only 12 of the real registry's 98 lines were papers: probe scripts
+    call `revision.init` in `%TEMP%` without moving the registry, and
+    `status --all` then surveyed every one. Three scaffolds in TEMP add
+    nothing; a paper outside it, made the same way, is still added."""
+    path = _real_registry(tmp_path, monkeypatch, temp=tmp_path / "temp")
+    for name in ("probe_a", "probe_b", "probe_c"):
+        paper_at(tmp_path / "temp" / name)
+    assert not path.exists()
+
+    paper = paper_at(tmp_path / "papers" / "HCW")
+
+    assert registered() == [paper.config]
+
+
+def test_a_scaffold_in_TEMP_IS_registered_when_the_registry_is_named(
+        tmp_path, monkeypatch):
+    """Setting `DOCXKIT_PAPERS` is the script saying where its registry
+    is — the suite's own projects all live in TEMP, and they register."""
+    _real_registry(tmp_path, monkeypatch, temp=tmp_path / "temp")
+    monkeypatch.setenv("DOCXKIT_PAPERS", str(tmp_path / "mine.txt"))
+
+    paper = paper_at(tmp_path / "temp" / "probe")
+
+    assert registered() == [paper.config]
+
+
 def test_the_registry_folder_is_CREATED_however_deep(tmp_path, monkeypatch):
     deep = tmp_path / "not" / "there" / "yet" / "papers.txt"
     monkeypatch.setenv("DOCXKIT_PAPERS", str(deep))

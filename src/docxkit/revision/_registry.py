@@ -60,8 +60,20 @@ def registered() -> list[Path]:
 
 
 def register(config: str | Path) -> bool:
-    """Add a paper's ``paper.toml`` to the registry; True if it is new."""
+    """Add a paper's ``paper.toml`` to the registry; True if it is new.
+
+    **A config under the system TEMP directory is refused** (False),
+    unless :data:`REGISTRY_ENV` names the registry explicitly. Measured
+    2026-10-10: 12 of the real registry's 98 lines were papers, and the
+    rest were mostly scaffolds that probe and reproduction scripts had
+    made in ``%TEMP%`` with `revision.init`; `status --all` surveyed
+    every live one as a manuscript. A project in TEMP is scratch by
+    where it lives; a script that does want it registered says where the
+    registry is, as the suite's `_isolated_paper_registry` does.
+    """
     config = Path(config).resolve()
+    if not os.environ.get(REGISTRY_ENV) and _under_temp(config):
+        return False
     known = {p.resolve() if p.is_absolute() else p for p in registered()}
     if config in known:
         return False
@@ -199,10 +211,13 @@ def _vanished_scaffold(config: Path) -> bool:
     on. A config gone from anywhere ELSE is still `missing` — a drive
     that is not mounted is not a paper retired.
     """
-    if config.exists():
-        return False
+    return not config.exists() and _under_temp(config)
+
+
+def _under_temp(path: Path) -> bool:
+    """Inside the system TEMP directory, compared resolved and casefolded."""
     temp = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
-    here = os.path.normcase(os.path.realpath(config))
+    here = os.path.normcase(os.path.realpath(path))
     return here.startswith(temp + os.sep)
 
 
