@@ -223,6 +223,82 @@ def _lift_anchors(el: _Element,
         parent.insert(at + offset, marker)
 
 
+#: What counts as CONTENT between a bookmark's start and its end, for
+#: :func:`_doomed_bookmarks`. A field's own characters are content: a
+#: bookmark round a citation whose result was deleted and whose code
+#: survives is one Word keeps (Aging_Well 2026-08-27, `Olshansky2006txt`).
+_BOOKMARKED = frozenset(W + tag for tag in (
+    "t", "delText", "instrText", "delInstrText", "fldChar", "fldSimple",
+    "tab", "br", "cr", "sym", "drawing", "object", "pict",
+    "footnoteReference", "endnoteReference")) | {MATH + "t"}
+
+_TEXT_BEARING = frozenset({W + "t", W + "delText", MATH + "t"})
+
+
+def _doomed_bookmarks(root: _Element, tag: str,
+                      wants: Callable[[_Element, str], bool]
+                      ) -> list[_Element]:
+    """The start and end of each bookmark whose content all goes.
+
+    `tag` is the side the view removes: ``del`` on accept, ``ins`` on
+    reject. Word drops a bookmark with what it spans, and this engine
+    kept it — measured 2026-10-12 against Word's Accept All and Reject
+    All on the 116 kept redlines on this machine: 71 bookmarks in 15
+    redlines were in this view and not Word's, the house ``*txt``
+    back-link targets round a deleted citation for the most part, and
+    none the other way. This rule predicts Word on 231 of the 232 views.
+
+    A bookmark goes when its span holds content and every piece of it
+    sits inside a removed `tag`. One that spans surviving content stays,
+    and so does an EMPTY one inside a revision — Word kept both of the
+    two it met (HPPA 2026-10-10, `Findsent2011txt`, `Saisana2005txt`).
+    Moves are outside the rule: Word dropped a bookmark inside a
+    `w:moveTo` on reject (Aging_Well 2026-09-07, `Brown2019txt`), and
+    :func:`_lift_anchors` keeps such markers on purpose for DSI's sake,
+    with one measurement each way and no rule between them yet.
+    """
+    flag = W + tag
+    opened: dict[str | None, _Span] = {}
+    doomed: list[_Element] = []
+
+    def walk(el: _Element, inside: bool) -> None:
+        # A comment or a PI matches no tag below and has no children, so
+        # it needs no case of its own.
+        for child in el:
+            here = inside or (child.tag == flag
+                              and el.tag not in _FLAG_PARENTS
+                              and wants(child, tag))
+            if child.tag == W + "bookmarkStart":
+                opened[child.get(W + "id")] = _Span(child)
+            elif child.tag == W + "bookmarkEnd":
+                span = opened.pop(child.get(W + "id"), None)
+                if span is not None and span.removed and not span.kept:
+                    doomed.extend((span.start, child))
+            elif child.tag in _BOOKMARKED:
+                size = (len(child.text or "")
+                        if child.tag in _TEXT_BEARING else 1)
+                for span in opened.values():
+                    if here:
+                        span.removed += size
+                    else:
+                        span.kept += size
+            walk(child, here)
+
+    walk(root, False)
+    return doomed
+
+
+class _Span:
+    """One open bookmark, and how much of what it spans goes and stays."""
+
+    __slots__ = ("kept", "removed", "start")
+
+    def __init__(self, start: _Element) -> None:
+        self.start = start
+        self.removed = 0
+        self.kept = 0
+
+
 def _parent(el: _Element) -> _Element:
     """The parent of an element this engine found UNDER a root.
 
@@ -964,6 +1040,11 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     def wants(el: _Element, kind: str) -> bool:
         return where is None or where(_info(el, kind))
 
+    # BEFORE the content goes: `_apply_content` lifts a removed span's
+    # markers out to where it stood, and what decides whether Word keeps
+    # a bookmark is what it spanned while the revision was still there.
+    for marker in _doomed_bookmarks(root, vanish[0], wants):
+        _parent(marker).remove(marker)
     touched = _apply_content(root, vanish, keep, wants,
                              mode=mode, selective=where is not None)
     if where is None:

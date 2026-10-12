@@ -935,6 +935,34 @@ Also add a `classify=` hook (a paper module path in `paper.toml`) to
 `docProps/custom.xml` and `customXml/` survive; `document.xml` minus
 anchors is byte-identical.
 
+### S2 — the accepted and rejected views keep a bookmark Word drops with the content it spans
+<!-- status: open -->
+
+Found 2026-10-12 with Word as the oracle while designing the
+batch-deletion entry above. Word's Accept All and Reject All were run on
+all 116 kept redlines on this machine and their bookmarks compared with
+`tracked.accepted_view` / `rejected_view`. In 15 redlines, docxkit's
+views hold 71 bookmarks that Word's don't (both views counted), and
+none go the other way.
+
+The shape: every piece of content between the bookmark's start and end
+is content the view removes, i.e. deleted text on accept and inserted
+text on reject. That covers the house `*txt` back-link targets around a
+deleted citation (`Decancq2013txt`, `Barr2010txt`, …). Word keeps a
+bookmark that also spans surviving content, including one around a
+field whose code survives and only its result was deleted (Aging_Well
+2026-08-27, `Olshansky2006txt`). It also keeps an EMPTY bookmark inside
+a revision (HPPA 2026-10-10, `Findsent2011txt`, `Saisana2005txt`).
+That rule predicts Word on 231 of the 232 views. The 232nd is a
+bookmark inside a `w:moveTo`, which Word drops on reject; moves are
+outside the rule.
+
+Cost: the accepted view claims back-link targets the author's file
+won't have. A reference entry whose only citation the batch deleted
+reads as linked when it dangles in Word, and a structure comparison
+against a Word-made file (the batch-deletion excuse, gate 5) cannot
+hold.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213

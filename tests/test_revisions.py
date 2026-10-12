@@ -690,20 +690,28 @@ def test_rejecting_an_INSERTION_keeps_a_comment_anchor_inside_it():
 
 def test_the_anchors_keep_their_ORDER_when_they_are_lifted():
     """A start still precedes its end, or the pair is worse than lost:
-    Word reads a `bookmarkEnd` before its `bookmarkStart` as damage."""
+    Word reads a `bookmarkEnd` before its `bookmarkStart` as damage.
+
+    The bookmarks in these three fixtures are EMPTY. One that spans
+    only the inserted text goes with it on reject, as it does in Word
+    (`_doomed_bookmarks`), and then there is nothing to lift; an
+    empty one inside an insertion is a shape Word keeps (HPPA
+    2026-10-10, `Saisana2005txt`)."""
     xml = document(
         para(f'<w:ins {_WHEN.format(i=8)}>'
              '<w:bookmarkStart w:id="1" w:name="first"/>'
-             "<w:r><w:t>one</w:t></w:r>"
              '<w:bookmarkEnd w:id="1"/>'
+             "<w:r><w:t>one</w:t></w:r>"
              '<w:bookmarkStart w:id="2" w:name="second"/>'
-             "<w:r><w:t>two</w:t></w:r>"
-             '<w:bookmarkEnd w:id="2"/></w:ins>'))
+             '<w:bookmarkEnd w:id="2"/>'
+             "<w:r><w:t>two</w:t></w:r></w:ins>"))
 
     out = reject(xml)
 
     assert (out.index('w:name="first"') < out.index("<w:bookmarkEnd")
             < out.index('w:name="second"'))
+
+
 def test_lifted_anchors_keep_their_sequence_MID_PARAGRAPH_too():
     """The fixtures above put the revision FIRST in its paragraph, so
     `at` is 0 and `at ^ offset` is `at + offset` for every marker — the
@@ -720,11 +728,11 @@ def test_lifted_anchors_keep_their_sequence_MID_PARAGRAPH_too():
         para("<w:r><w:t>before </w:t></w:r>"
              + f'<w:ins {_WHEN.format(i=8)}>'
              + '<w:bookmarkStart w:id="1" w:name="first"/>'
-             + "<w:r><w:t>one</w:t></w:r>"
              + '<w:bookmarkEnd w:id="1"/>'
+             + "<w:r><w:t>one</w:t></w:r>"
              + '<w:bookmarkStart w:id="2" w:name="second"/>'
-             + "<w:r><w:t>two</w:t></w:r>"
-             + '<w:bookmarkEnd w:id="2"/></w:ins>'))
+             + '<w:bookmarkEnd w:id="2"/>'
+             + "<w:r><w:t>two</w:t></w:r></w:ins>"))
 
     out = reject(xml)
 
@@ -747,11 +755,11 @@ def test_the_lifted_anchors_keep_their_WHOLE_sequence():
     xml = document(
         para(f'<w:ins {_WHEN.format(i=8)}>'
              '<w:bookmarkStart w:id="1" w:name="first"/>'
-             "<w:r><w:t>one</w:t></w:r>"
              '<w:bookmarkEnd w:id="1"/>'
+             "<w:r><w:t>one</w:t></w:r>"
              '<w:bookmarkStart w:id="2" w:name="second"/>'
-             "<w:r><w:t>two</w:t></w:r>"
-             '<w:bookmarkEnd w:id="2"/></w:ins>'))
+             '<w:bookmarkEnd w:id="2"/>'
+             "<w:r><w:t>two</w:t></w:r></w:ins>"))
 
     out = reject(xml)
 
@@ -759,6 +767,117 @@ def test_the_lifted_anchors_keep_their_WHOLE_sequence():
     assert order == [("Start", "1"), ("End", "1"),
                      ("Start", "2"), ("End", "2")], order
 
+
+
+# --- a bookmark goes with the content it spans (Word, 2026-10-12) -------
+#
+# Measured against Word's Accept All and Reject All on the 116 kept
+# redlines on this machine: 71 bookmarks in 15 of them were in this
+# engine's views and not in Word's, most of them the house `*txt`
+# back-link target round a citation the batch deleted.
+
+def _bs(i: int, name: str) -> str:
+    return f'<w:bookmarkStart w:id="{i}" w:name="{name}"/>'
+
+
+def _be(i: int) -> str:
+    return f'<w:bookmarkEnd w:id="{i}"/>'
+
+
+def _del_by(author: str, rid: int, inner: str) -> str:
+    return (f'<w:del w:id="{rid}" w:author="{author}" '
+            f'w:date="2026-10-12T00:00:00Z">{inner}</w:del>')
+
+
+def _bookmark_shapes() -> str:
+    """Seven bookmarks, one shape each, every one met in a real redline."""
+    deleted = "<w:r><w:delText>{}</w:delText></w:r>"
+    field = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText>HYPERLINK \\l "Ref5" \\h</w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+             + dele("Olshansky et al. 2006", rid=95)
+             + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    return document(
+        # the start before the deletion and the end after it (`Figure3txt`)
+        para(run("Kept "), _bs(1, "around_a_cut"), dele("cut one"), _be(1),
+             run(" text."))
+        # inside the deletion itself, the commonest shape
+        + para(run("Kept. "), _del_by("Revision", 93,
+                                      _bs(2, "inside_a_cut")
+                                      + deleted.format("cut two") + _be(2)))
+        # two deletions, nothing between them that stays
+        + para(_bs(3, "across_two_cuts"), dele("a", rid=96),
+               dele("b", rid=97), _be(3), run(" tail."))
+        # some of it stays
+        + para(_bs(4, "partly_cut"), run("stays "), dele("goes", rid=98),
+               _be(4))
+        # round a field whose code stays and whose result is deleted
+        + para(_bs(5, "round_a_field"), field, _be(5))
+        # EMPTY, inside a deletion (`Findsent2011txt`)
+        + para(run("Kept. "), _del_by("Revision", 99,
+                                      deleted.format("x") + _bs(6, "empty")
+                                      + _be(6)))
+        # round an insertion: the mirror image, for reject
+        + para(run("Kept "), _bs(7, "round_an_insertion"),
+               ins("new words", rid=100), _be(7)))
+
+
+def _names(xml: str) -> set[str]:
+    import re
+
+    return set(re.findall(r'w:bookmarkStart[^>]*w:name="([^"]+)"', xml))
+
+
+def test_ACCEPTING_drops_a_bookmark_whose_content_was_all_deleted():
+    """Three shapes go and four stay, as they do in Word. Before
+    2026-10-12 all seven stayed, so the accepted view claimed back-link
+    targets the author's accepted file does not have."""
+    out = accept(_bookmark_shapes())
+
+    assert _names(out) == {"partly_cut", "round_a_field", "empty",
+                           "round_an_insertion"}
+    # a start without its end, or the reverse, is a damaged bookmark
+    assert out.count("<w:bookmarkStart") == out.count("<w:bookmarkEnd") == 4
+
+
+def test_REJECTING_drops_a_bookmark_whose_content_was_all_inserted():
+    out = reject(_bookmark_shapes())
+
+    assert _names(out) == {"around_a_cut", "inside_a_cut",
+                           "across_two_cuts", "partly_cut", "round_a_field",
+                           "empty"}
+    assert out.count("<w:bookmarkStart") == out.count("<w:bookmarkEnd") == 6
+
+
+def test_a_SELECTIVE_accept_drops_only_the_bookmark_in_the_chosen_deletion():
+    """Under a predicate a deletion left pending keeps its text, so the
+    bookmark round it has content that stays."""
+    from docxkit.revisions import by_author
+
+    deleted = "<w:r><w:delText>{}</w:delText></w:r>"
+    xml = document(
+        para(run("One. "), _del_by("A", 1, _bs(1, "by_A")
+                                   + deleted.format("first") + _be(1)))
+        + para(run("Two. "), _del_by("B", 2, _bs(2, "by_B")
+                                     + deleted.format("second") + _be(2)))
+        + para(run("Three. "), _del_by("A", 3, _bs(3, "by_A_too")
+                                       + deleted.format("third") + _be(3))))
+
+    out = accept(xml, where=by_author("A"))
+
+    assert _names(out) == {"by_B"}
+
+
+def test_a_deleted_PARAGRAPH_MARK_is_not_content_a_bookmark_spans():
+    """The mark's `w:del` sits in `w:rPr`; the text round it stays, and
+    so does the bookmark."""
+    xml = document(
+        '<w:p><w:pPr><w:rPr><w:del w:id="5" w:author="R" '
+        'w:date="2026-10-12T00:00:00Z"/></w:rPr></w:pPr>'
+        + _bs(1, "kept_text") + run("merged into the next") + _be(1)
+        + "</w:p>" + para(run("Next.")))
+
+    assert _names(accept(xml)) == {"kept_text"}
 
 
 def test_TWO_equations_touched_by_one_pass_are_both_pruned():

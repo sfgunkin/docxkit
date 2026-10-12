@@ -1525,16 +1525,19 @@ def test_the_other_two_checks_are_BLIND_to_it():
     assert compare_collateral(revised, redline) == []
 
 
-def test_a_BOOKMARK_inside_a_deletion_survives_the_accept():
-    """The other carrier, and it needs no finding: `revisions` LIFTS a
-    bookmark out of an element it is about to remove, which is the fix
-    for "a moved paragraph carrying bookmarks loses them" two entries
-    up in the same backlog.
+def test_a_BOOKMARK_inside_a_deletion_is_LOST_on_accept_as_in_Word():
+    """The other carrier, and since 2026-10-12 it is a finding too.
 
-    Worth a test beside the link one because it says why the link is
-    the case that needed a check: nothing lifts a `w:hyperlink`, and
-    nothing can — the element carries the words, so lifting it would
-    leave the deleted text on the page."""
+    This test said the bookmark SURVIVES: `revisions` lifted it out of
+    the deletion it was about to remove, and the gate stayed silent.
+    Word does not lift it. Its Accept All drops a bookmark whose every
+    character was deleted (`revisions._doomed_bookmarks`, measured on
+    116 kept redlines), and Aging_Well's redline of 2026-09-02 carries
+    this shape: `Table1txt` inside the deleted copy and not around the
+    inserted one. The author's accepted file lacks an anchor the clean
+    copy has, which is what this gate exists to say. Rebuilding the
+    clean copy so the bookmark sits round surviving text, or minting it
+    after the handback, is the remedy."""
     from docxkit.tracked import _accept, _simulate, accepted_losses
 
     mark = ('<w:bookmarkStart w:id="3" w:name="Table1"/>'
@@ -1549,8 +1552,9 @@ def test_a_BOOKMARK_inside_a_deletion_survives_the_accept():
 
     accepted = _simulate(redline, _accept)
 
-    assert accepted_losses(revised, accepted) == []
-    assert b'w:name="Table1"' in accepted["word/document.xml"]
+    assert accepted_losses(revised, accepted) == [
+        "bookmark LOST on accept: Table1"]
+    assert b'w:name="Table1"' not in accepted["word/document.xml"]
 
 
 def test_a_link_RE_REPRESENTED_in_the_other_form_is_not_a_loss():
