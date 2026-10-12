@@ -334,7 +334,7 @@ def test_the_default_seed_asks_WORD_for_one_comment_on_revision_1(
     import contextlib
 
     doc = _FakeDoc()
-    seed_parts: list[dict] = []
+    seed_parts: list[dict[str, bytes]] = []
 
     class _FakeWord:
         @staticmethod
