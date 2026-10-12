@@ -14,6 +14,60 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — a tracked `w:tblPrExChange` is invisible: counted as 0 revisions, left in by accept, not undone by reject~~ — FIXED 12.10, `313ae10`
+
+<!-- status: fixed -->
+
+Found 2026-10-12 by the architecture review's census of revision markup
+in 106 real redlines against what `revisions.py` names. `tblPrExChange`
+(a tracked change to a ROW's table-property exceptions, `w:tblPrEx`) is
+in none of `_PROPERTY_CHANGES`, `_REVISION_NAMES` or `_PROPERTY_MARKERS`.
+Probe on a one-row table carrying one:
+
+    counts(xml)          -> (0, 0)       revision_kinds -> {}
+    accept(xml)          -> still holds the w:tblPrExChange
+    reject(xml)          -> still holds it; the OLD tblPrEx is not restored
+
+So a batch carrying one reads as clean, the "accepted" file still shows
+Word a pending revision, and gate 5 cannot see the change. Real
+occurrence: `CC_age_gap/revision/build/redlines/
+Chapter_2026_redline_20261003-201250-247099.docx` (1 of 106 redlines).
+`w:numberingChange` is in the same position (0 of 106 here; Word writes
+it on a tracked list-numbering change).
+
+Fix: add both to `_PROPERTY_CHANGES` / `_REVISION_NAMES` /
+`_PROPERTY_MARKERS`, with `tblPrEx`'s place in CT_Row (first child) for
+the reject's schema-order insert. Test: the probe above, three rows, one
+change each; counts 3, accept removes all three, reject restores each
+row's old borders. Better: derive all three tuples from ONE table of
+revision elements, so the next omission is a one-line edit seen in one
+place. See REVIEW_2026-10-12 §1 for the census tool that found it.
+
+**Fixed 2026-10-12.** `tblPrExChange` is in `_PROPERTY_MARKERS`,
+`_REVISION_NAMES` and `_PROPERTY_CHANGES`; the generic snapshot restore
+needed nothing else, since `w:tblPrEx` has no children outside its
+snapshot. `numberingChange` is COUNTED now and declared in `WORD_ONLY`,
+not applied: it holds the old number as text in `w:original`, so there is
+no element to restore, and the generic reject would have emptied the
+`w:numPr` around it.
+
+The guard that would have caught it: `SCHEMA_REVISIONS` in
+`test_revision_state.py`, every tracked-change element ECMA-376 defines,
+held against `_REVISION_NAMES` with the move range markers and the
+`customXml*Range*` markers declared. The fix sketch's "one table" was not
+done: the three lists differ in kind (content markers, counted names,
+snapshot records), and the schema guard catches the omission that one
+table would have prevented. Tests failing without the fix: 9 in that
+file; with `tblPrExChange` dropped from `_PROPERTY_CHANGES` alone, 3,
+including `test_rejecting_a_ROW_s_tblPrEx_change_puts_each_old_border_back`
+(three rows, three different old borders).
+
+On real files: the CC_age_gap redline of 2026-10-03 counts 1
+`tblPrExChange`, and both views clear it. The CC_age_gap GOLDEN moved
+(`revision_kinds`, `accepted_document`): that manuscript carries one too,
+and its old accepted view equals the new one once that element is
+removed. Re-recorded.
+
 ### ~~S2 — the mechanical reject restores `w:delText` but not `w:delInstrText`, so a deleted FIELD-form link does not come back~~ — FIXED 12.10, `64b1b0a`
 
 <!-- status: fixed -->

@@ -965,34 +965,6 @@ Also add a `classify=` hook (a paper module path in `paper.toml`) to
 `docProps/custom.xml` and `customXml/` survive; `document.xml` minus
 anchors is byte-identical.
 
-### S1 — a tracked `w:tblPrExChange` is invisible: counted as 0 revisions, left in by accept, not undone by reject
-<!-- status: open -->
-
-Found 2026-10-12 by the architecture review's census of revision markup
-in 106 real redlines against what `revisions.py` names. `tblPrExChange`
-(a tracked change to a ROW's table-property exceptions, `w:tblPrEx`) is
-in none of `_PROPERTY_CHANGES`, `_REVISION_NAMES` or `_PROPERTY_MARKERS`.
-Probe on a one-row table carrying one:
-
-    counts(xml)          -> (0, 0)       revision_kinds -> {}
-    accept(xml)          -> still holds the w:tblPrExChange
-    reject(xml)          -> still holds it; the OLD tblPrEx is not restored
-
-So a batch carrying one reads as clean, the "accepted" file still shows
-Word a pending revision, and gate 5 cannot see the change. Real
-occurrence: `CC_age_gap/revision/build/redlines/
-Chapter_2026_redline_20261003-201250-247099.docx` (1 of 106 redlines).
-`w:numberingChange` is in the same position (0 of 106 here; Word writes
-it on a tracked list-numbering change).
-
-Fix: add both to `_PROPERTY_CHANGES` / `_REVISION_NAMES` /
-`_PROPERTY_MARKERS`, with `tblPrEx`'s place in CT_Row (first child) for
-the reject's schema-order insert. Test: the probe above, three rows, one
-change each; counts 3, accept removes all three, reject restores each
-row's old borders. Better: derive all three tuples from ONE table of
-revision elements, so the next omission is a one-line edit seen in one
-place. See REVIEW_2026-10-12 §1 for the census tool that found it.
-
 ### S2 — the build's "links inside a tracked deletion" warning predicts a loss the reject does not make, and misses the form it did
 <!-- status: open -->
 
