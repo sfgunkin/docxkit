@@ -14,6 +14,62 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the accepted and rejected views keep a bookmark Word drops with the content it spans~~ — FIXED 12.10, `e461519`
+
+<!-- status: fixed -->
+
+Found 2026-10-12 with Word as the oracle while designing the
+batch-deletion entry above. Word's Accept All and Reject All were run on
+all 116 kept redlines on this machine and their bookmarks compared with
+`tracked.accepted_view` / `rejected_view`. In 15 redlines, docxkit's
+views hold 71 bookmarks that Word's don't (both views counted), and
+none go the other way.
+
+The shape: every piece of content between the bookmark's start and end
+is content the view removes, i.e. deleted text on accept and inserted
+text on reject. That covers the house `*txt` back-link targets around a
+deleted citation (`Decancq2013txt`, `Barr2010txt`, …). Word keeps a
+bookmark that also spans surviving content, including one around a
+field whose code survives and only its result was deleted (Aging_Well
+2026-08-27, `Olshansky2006txt`). It also keeps an EMPTY bookmark inside
+a revision (HPPA 2026-10-10, `Findsent2011txt`, `Saisana2005txt`).
+That rule predicts Word on 231 of the 232 views. The 232nd is a
+bookmark inside a `w:moveTo`, which Word drops on reject; moves are
+outside the rule.
+
+Cost: the accepted view claims back-link targets the author's file
+won't have. A reference entry whose only citation the batch deleted
+reads as linked when it dangles in Word, and a structure comparison
+against a Word-made file (the batch-deletion excuse, gate 5) cannot
+hold.
+
+**Fixed 2026-10-12.** `revisions._doomed_bookmarks` runs before the
+content pass in `_simulate_where`, so the full and the selective views
+both use it. It drops a bookmark's start and end when the span holds
+content and all of it sits inside a removed `w:del` (accept) or `w:ins`
+(reject). A field's own characters count as content, a paragraph
+mark's flag in `w:rPr` does not, and an empty bookmark is kept. Against
+Word on all 232 views, docxkit now disagrees on 1: the `w:moveTo`
+bookmark, left alone on purpose (`_lift_anchors`' DSI measurement went
+the other way, and one case each way is not yet a rule).
+
+What moved:
+
+- `accepted_losses` now reports a bookmark that sits wholly in a
+  deletion when the clean copy has it, as Word's accept really loses it.
+  `test_a_BOOKMARK_inside_a_deletion_is_LOST_on_accept_as_in_Word`
+  replaces the test that said it survived.
+- The three `_lift_anchors` order tests use empty bookmarks inside the
+  insertion now. A bookmark spanning only inserted text goes with it,
+  which left nothing to lift.
+- The CC_age_gap golden: 3 bookmarks dropped; its accepted view's 104
+  bookmarks equal Word's Accept All. Re-recorded.
+
+Tests (`test_revisions.py`): seven shapes, one each from the real
+redlines, on both views; a selective accept; a deleted paragraph mark.
+Three of the four fail without the fix (the paragraph-mark one is a
+guard).
+
 ### ~~S2 — the build's "links inside a tracked deletion" warning predicts a loss the reject does not make, and misses the form it did~~ — RETIRED 12.10, `e59f7a8`
 
 <!-- status: fixed -->
