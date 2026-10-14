@@ -93,19 +93,20 @@ def _before(notes, *, links=(), cut_links=()):
 
 
 def _round(tmp_path, *, deleted=frozenset({2, 4, 6}), links=(),
-           cut_links=(), promote=True):
+           cut_links=(), promote=True, notes=None):
     """A paper whose promoted batch deletes `deleted` notes and the
     sentences in `cut_links`, built on a truth that has all of them."""
+    notes = NOTES if notes is None else notes
     root = tmp_path / "HPPA"
     root.mkdir()
     src = write(root / "HPPA.docx",
-                make_parts(_before(NOTES, links=links, cut_links=cut_links),
-                           footnotes=_footnotes(NOTES)))
+                make_parts(_before(notes, links=links, cut_links=cut_links),
+                           footnotes=_footnotes(notes)))
     paper = revision.init(root, src, name="HPPA")
     paper.batch.parent.mkdir(parents=True, exist_ok=True)
     write(paper.batch, make_parts(
-        _body(NOTES, deleted, links=links, cut_links=cut_links),
-        footnotes=_footnotes(NOTES, deleted)))
+        _body(notes, deleted, links=links, cut_links=cut_links),
+        footnotes=_footnotes(notes, deleted)))
     guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
     if promote:
         revision.promote(paper)
@@ -181,6 +182,110 @@ def test_a_REJECTED_deletion_reworded_does_not_cover_a_note_Word_ate(
     assert "lost 1 thing(s)" in str(caught.value)
 
 
+def test_a_REJECTED_cut_whose_note_Word_ate_is_still_LOST(tmp_path):
+    """Review 2026-10-14, finding 1. The batch cut "Claim 2." with note
+    2; the author REJECTED the cut, and Word, collapsing the paragraph,
+    ate note 2 anyway. The hand-back's notes now equal the proposal's
+    accepted view, and the kind-level test excused it as the batch's
+    deletion. The cut's words are still on the page, so it was not
+    accepted, and the note is a loss."""
+    paper = _round(tmp_path, deleted=frozenset({2}))
+    write(paper.working, _without_note(
+        make_parts(_before(NOTES), footnotes=_footnotes(NOTES)), 2))
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert NOTES[2][:40] in str(caught.value)
+
+
+def test_a_REJECTED_cut_s_note_is_LOST_through_ingest_check(
+        monkeypatch, tmp_path, capsys):
+    paper = _round(tmp_path, deleted=frozenset({2}))
+    write(paper.working, _without_note(
+        make_parts(_before(NOTES), footnotes=_footnotes(NOTES)), 2))
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest", "--check",
+                      "--paper", str(paper.root))
+
+    assert code == HandbackLoss.exit_code
+    assert "DELETED BY THE BATCH" not in capsys.readouterr().out
+
+
+def test_TWIN_notes_the_batch_cut_one_and_Word_ate_the_other(tmp_path):
+    """Notes 2 and 3 say the same words. The batch cuts note 2, the
+    author rejects the cut, and Word eats note 3. Counted by text, the
+    hand-back is the proposal accepted; by position it is not."""
+    twins = {**NOTES, 3: NOTES[2]}
+    paper = _round(tmp_path, deleted=frozenset({2}), notes=twins)
+    write(paper.working, _without_note(
+        make_parts(_before(twins), footnotes=_footnotes(twins)), 3))
+
+    with pytest.raises(HandbackLoss):
+        revision.baseline(paper, log=False)
+
+
+def test_ONE_of_two_cuts_rejected_excuses_neither(tmp_path):
+    """Two notes cut, one cut accepted and one rejected with its note
+    eaten: a note cannot be told from the other by the loss list, so
+    the kind is excused whole or not at all."""
+    paper = _round(tmp_path, deleted=frozenset({2, 4}))
+    accepted = _accept_all(paper)
+    doc = accepted["word/document.xml"].decode().replace(
+        para(run("Claim 3."), _ref(3)),
+        para(run("Claim 3."), _ref(3)) + para(run("Claim 4.")))
+    write(paper.working, {**accepted, "word/document.xml": doc.encode()})
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert "lost 2 thing(s)" in str(caught.value)
+
+
+def test_a_cut_of_the_note_MARK_alone_is_not_proven_accepted(tmp_path):
+    """The batch deletes only the reference, no words. Accepted, or
+    rejected and eaten by Word, the page reads the same, so nothing
+    proves which: it stays a loss, and `--accept-loss` is the way on."""
+    paper = _round(tmp_path, deleted=frozenset(), promote=False)
+    batch = package.read_parts(paper.batch)
+    doc = batch["word/document.xml"].decode().replace(
+        para(run("Claim 2."), _ref(2)),
+        para(run("Claim 2."), _del(_ref(2), 402)))
+    notes = _footnotes(NOTES, frozenset({2}))
+    write(paper.batch, {**batch, "word/document.xml": doc.encode(),
+                        "word/footnotes.xml": notes.encode()})
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    revision.promote(paper)
+    _accept_all(paper)
+
+    report = revision.ingest(paper.working, paper.prev, paper=paper)
+
+    assert report.deleted == []
+    assert [x.kind for x in report.lost] == ["footnote"]
+
+
+def test_the_excused_note_is_NAMED_by_its_own_words(tmp_path):
+    """The batch rewords note 1 and cuts note 2, all accepted. By the
+    texts the hand-back no longer has, note 1's OLD words are as gone as
+    note 2's, and the best-effort name took the first in sorted order:
+    the ledger said note 1 was deleted. The cut is known by its
+    reference, so it is named by its own definition."""
+    paper = _round(tmp_path, deleted=frozenset({2}), promote=False)
+    batch = package.read_parts(paper.batch)
+    notes = batch["word/footnotes.xml"].decode().replace(
+        run(NOTES[1]),
+        _del(f"<w:r><w:delText>{NOTES[1]}</w:delText></w:r>", 601)
+        + _ins(run("Note 1, as the batch rewords it."), 602))
+    write(paper.batch, {**batch, "word/footnotes.xml": notes.encode()})
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    revision.promote(paper)
+    _accept_all(paper)
+
+    report = revision.baseline(paper, log=False)
+
+    assert [loss.what for loss in report.deleted] == [NOTES[2]]
+
+
 def test_a_batch_that_was_never_PROMOTED_excuses_nothing(tmp_path):
     """No promote, no proposal: `_verdict._proposal` cannot name one,
     and every loss blocks as it did before."""
@@ -240,6 +345,28 @@ def test_a_cut_citation_s_LINK_and_BOOKMARK_are_the_batch_s_too(tmp_path):
                   for loss in report.deleted) == sorted(
         [("link", a) for a, _ in CUT] + [("bookmark", f"{a}txt")
                                          for a, _ in CUT])
+
+
+def test_BOOKMARKS_of_REJECTED_cuts_removed_by_hand_are_LOST(tmp_path):
+    """Review 2026-10-14, finding 1, the bookmark half. The author
+    rejected all three cuts, and the `*txt` targets were deleted by hand
+    afterwards (what `revision build`'s advice used to ask for). The
+    hand-back's bookmarks equal the proposal's accepted view, but every
+    cut's words are on the page: none of the three was the batch's."""
+    paper = _round(tmp_path, deleted=frozenset(), cut_links=CUT)
+    doc = make_parts(_before(NOTES, cut_links=CUT),
+                     footnotes=_footnotes(NOTES))
+    body = doc["word/document.xml"].decode()
+    for i, (anchor, _label) in enumerate(CUT):
+        body = body.replace(
+            f'<w:bookmarkStart w:id="{80 + i}" w:name="{anchor}txt"/>', "")
+        body = body.replace(f'<w:bookmarkEnd w:id="{80 + i}"/>', "")
+    write(paper.working, {**doc, "word/document.xml": body.encode()})
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert "Barr2010txt" in str(caught.value)
 
 
 def test_a_cut_link_whose_LABEL_survives_elsewhere_still_refuses(tmp_path):

@@ -11,7 +11,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     # lxml arrives through `_tracked_gates._root`, lazily; named here so
@@ -500,6 +500,138 @@ def _structure(parts: Parts, kind: str) -> Counter[str | tuple[str, str]]:
     return found
 
 
+#: Where a run of text sits in a proposal: kept, inserted or deleted.
+_SAME, _INS, _DEL = 0, 1, 2
+_STATE_OF = {W + "ins": _INS, W + "moveTo": _INS,
+             W + "del": _DEL, W + "moveFrom": _DEL}
+#: Unchanged characters either side of a deletion that the hand-back
+#: must still hold, folded by `_norm`. Enough that a short sentence
+#: elsewhere cannot stand in for the place; short enough that a copyedit
+#: a sentence away does not hide it.
+_CONTEXT = 20
+
+
+class _Mark(NamedTuple):
+    """A note reference or a bookmark start, where it sits in a stream."""
+
+    kind: str        # footnote | endnote | bookmark
+    key: str         # the note's id, the bookmark's name
+    state: int
+    at: int          # index into the stream's text pieces it precedes
+
+
+def _stream(root: _Element | None,
+            ) -> tuple[list[tuple[str, int]], list[_Mark]]:
+    """A part's text in document order, each piece with its state, and
+    the note references and bookmark starts between the pieces."""
+    texts: list[tuple[str, int]] = []
+    marks: list[_Mark] = []
+    if root is None:
+        return texts, marks
+    note_kind = {W + "footnoteReference": "footnote",
+                 W + "endnoteReference": "endnote"}
+    stack: list[tuple[_Element, int]] = [(root, _SAME)]
+    while stack:
+        el, state = stack.pop()
+        tag: object = el.tag
+        if not isinstance(tag, str):
+            continue                       # a comment or a PI
+        if tag in (W + "t", W + "delText", M + "t"):
+            texts.append((el.text or "", state))
+            continue
+        if tag in note_kind:
+            marks.append(_Mark(note_kind[tag], el.get(W + "id") or "",
+                               state, len(texts)))
+            continue
+        if tag == W + "bookmarkStart":
+            marks.append(_Mark("bookmark", el.get(W + "name") or "",
+                               state, len(texts)))
+            continue
+        if tag in (W + "rPrChange", W + "pPrChange", W + "instrText",
+                   W + "delInstrText"):
+            continue                       # no text a reader sees
+        inner = _STATE_OF.get(tag, state) if len(el) else state
+        stack.extend((kid, inner) for kid in reversed(list(el)))
+    return texts, marks
+
+
+def _accepted_here(texts: Sequence[tuple[str, int]], at: int,
+                   handback: str) -> bool:
+    """Does the hand-back read the proposal ACCEPTED at `at`, and not
+    rejected?
+
+    The changed text around `at` and `_CONTEXT` unchanged characters
+    either side, read both ways. Accepted, the hand-back holds the first
+    reading and not the second; anything else — the cut rejected, the
+    place copyedited, a cut with no words, so that both readings are one
+    — is not evidence, and the caller keeps the loss.
+    """
+    def changed(i: int) -> bool:
+        text, state = texts[i]
+        return state != _SAME or not _norm(text)
+
+    lo, hi = at, at
+    while lo > 0 and changed(lo - 1):
+        lo -= 1
+    while hi < len(texts) and changed(hi):
+        hi += 1
+    for step in (-1, 1):
+        kept = 0
+        while kept < _CONTEXT:
+            i = lo - 1 if step < 0 else hi
+            if not 0 <= i < len(texts):
+                break
+            if texts[i][1] == _SAME:
+                kept += len(_norm(texts[i][0]))
+            if step < 0:
+                lo -= 1
+            else:
+                hi += 1
+    window = texts[lo:hi]
+    accepted = _norm("".join(t for t, s in window if s != _DEL))
+    rejected = _norm("".join(t for t, s in window if s != _INS))
+    return (accepted != rejected and len(accepted) >= _CONTEXT
+            and accepted in handback and rejected not in handback)
+
+
+def _proven(kind: str, proposal: Parts, working: Parts,
+            removed: set[str]) -> set[str]:
+    """Of the `removed` notes (by id) or bookmarks (by name) the batch's
+    accept takes away, those the hand-back shows ACCEPTED, each at its
+    own place in the proposal (:func:`_accepted_here`).
+
+    A note counts as removed when its reference sits in a deletion; a
+    bookmark by the accept's own reading, since a bookmark whose content
+    was all deleted goes with it (2026-10-12). A key seen at two places
+    is no identity, and is not proven.
+    """
+    from ..tracked import _root
+
+    proven: set[str] = set()
+    for name in TEXT_PARTS:
+        texts, marks = _stream(_root(proposal, name))
+        if not marks:
+            continue
+        here, _ = _stream(_root(working, name))
+        handback = _norm("".join(t for t, s in here if s != _DEL))
+        seen = Counter(m.key for m in marks if m.kind == kind)
+        for mark in marks:
+            if mark.kind == kind and mark.key in removed \
+                    and seen[mark.key] == 1 \
+                    and _accepted_here(texts, mark.at, handback):
+                proven.add(mark.key)
+    return proven
+
+
+def _cut_notes(proposal: Parts, kind: str) -> set[str]:
+    """Ids of the `kind` notes whose reference the proposal deletes."""
+    from ..tracked import _root
+
+    return {m.key for name in TEXT_PARTS
+            for m in _stream(_root(proposal, name))[1]
+            if m.kind == kind and m.state == _DEL}
+
+
 def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
                     proposal: Parts) -> tuple[list[Loss], list[Loss]]:
     """``(deleted by the batch, still lost)``: `gone`, split in two.
@@ -525,10 +657,25 @@ def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
       deletion rejected, a link Word stripped, any of these breaks the
       equality, and every loss of that kind then blocks as before.
 
-    Then ``prev - working`` is exactly what the batch removed. A LINK is
-    excused only when its words are gone too: Word strips a link and
-    keeps its label, so a link whose label survives is the one shape a
-    rejected deletion and a stripped copy of the same citation share.
+    **And the equality is not enough, because it is a count** (review
+    of 2026-10-14). The author REJECTS the cut of "Claim 2." and its
+    note, Word collapses the paragraph and eats the note anyway, and the
+    hand-back's notes equal the accepted view's to the letter; two notes
+    of the same words, the batch cutting one and Word eating the other,
+    do the same. So each deletion the batch made has to be shown
+    ACCEPTED at its own place: the words around it read as the proposal
+    accepted and not as it rejected (:func:`_accepted_here`).
+    A note is excused only when EVERY note of its kind the batch cut is
+    shown so, because the loss list cannot say which note is which;
+    a bookmark, whose name is its identity, one by one. A cut with no
+    words in it — the reference mark alone — reads the same either way
+    and is never shown: it stays a loss, and ``--accept-loss`` is the
+    way past it.
+
+    A LINK is excused only when its words are gone too: Word strips a
+    link and keeps its label, so a link whose label survives is the one
+    shape a rejected deletion and a stripped copy of the same citation
+    share.
 
     The views have to read the structure the way Word does, and that was
     measured (2026-10-12) with Word's Accept All and Reject All on 116
@@ -543,13 +690,51 @@ def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
     if not kinds:
         return [], list(gone)
     accepted, rejected = accepted_view(proposal), rejected_view(proposal)
-    proven = {kind for kind in kinds
-              if _structure(rejected, kind) == _structure(prev, kind)
-              and _structure(accepted, kind) == _structure(working, kind)}
-    deleted = [loss for loss in gone if loss.kind in proven
-               and not (loss.kind == "link" and loss.words)]
-    return deleted, [loss for loss in gone
-                     if not any(loss is d for d in deleted)]
+    equal = {kind for kind in kinds
+             if _structure(rejected, kind) == _structure(prev, kind)
+             and _structure(accepted, kind) == _structure(working, kind)}
+    shown: dict[str, list[Loss]] = {}
+    for kind in sorted(equal & {"footnote", "endnote"}):
+        cut = _cut_notes(proposal, kind)
+        if cut and _proven(kind, proposal, working, cut) == cut:
+            shown[kind] = _cut_named(kind, cut, rejected, gone)
+    marks: set[str] = set()
+    if "bookmark" in equal:
+        marks = _proven("bookmark", proposal, working,
+                        _bookmarks(rejected) - _bookmarks(accepted))
+    excused = [loss for loss in gone
+               if (loss.kind in shown)
+               or (loss.kind == "bookmark" and loss.what in marks)
+               or (loss.kind == "link" and loss.kind in equal
+                   and not loss.words)]
+    still = [loss for loss in gone if not any(loss is d for d in excused)]
+    deleted = [loss for loss in excused if loss.kind not in shown]
+    for named in shown.values():
+        deleted += named
+    return deleted, still
+
+
+def _cut_named(kind: str, cut: set[str], rejected: Parts,
+               gone: Sequence[Loss]) -> list[Loss]:
+    """The `kind` notes the batch cut, named by THEIR words.
+
+    `_lost_notes` names a lost note best-effort, by the texts the
+    hand-back no longer has, and a note the batch REWORDED is one of
+    those: excused under that name, the ledger recorded the reworded
+    note as deleted and not the one that went (review of 2026-10-14).
+    Here the cut is known by its reference, so it is named by its own
+    definition — when there is one per loss. Otherwise the batch added
+    notes as well, and the best-effort names stand.
+    """
+    part = FOOTNOTES if kind == "footnote" else ENDNOTES
+    named = [Loss(kind, f.text) for f in _notes(rejected, part, kind)
+             if f.id in cut]
+    counted = [loss for loss in gone if loss.kind == kind]
+    lost = sum(int(m.group(1)) if (m := re.match(r"(\d+) more, unnamed",
+                                                 loss.what)) else 1
+               for loss in counted)
+    return sorted(named, key=lambda x: x.what) if len(named) == lost \
+        else counted
 
 
 def _unmet(accepted: tuple[str, ...], found: list[Loss]) -> list[str]:
