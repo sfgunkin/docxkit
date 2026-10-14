@@ -96,6 +96,12 @@ def scan(root: str | Path, *, depth: int = 4) -> list[Path]:
     walk of one took over two minutes, and a survey nobody waits for is
     a survey nobody runs. Four levels reaches
     ``<root>/<area>/<project>/revision/paper.toml``.
+
+    Returns what the registry HOLDS afterwards: a config `register`
+    refuses (a scaffold under TEMP) is found and not returned, because
+    the caller prints this count over the survey of the registry, and a
+    count the survey below it could not account for was a contradiction
+    on one screen (review 2026-10-14).
     """
     root = Path(root)
     found: list[Path] = []
@@ -103,7 +109,8 @@ def scan(root: str | Path, *, depth: int = 4) -> list[Path]:
         found += [p for p in root.glob(candidate) if p.is_file()]
     for config in sorted(found):
         register(config)
-    return sorted(found)
+    held = {p.resolve() for p in registered() if p.is_absolute()}
+    return sorted(p for p in found if p.resolve() in held)
 
 
 #: The verdicts a row can carry, WORST first: the order a survey lists
@@ -215,10 +222,16 @@ def _vanished_scaffold(config: Path) -> bool:
 
 
 def _under_temp(path: Path) -> bool:
-    """Inside the system TEMP directory, compared resolved and casefolded."""
+    """Inside the system TEMP directory, compared resolved and casefolded.
+
+    A drive-root TEMP (``D:\\``) already ends in the separator, and
+    adding another made a prefix no path has: the guard was off for the
+    whole drive (review 2026-10-14). Stripped first, so the root and a
+    folder read alike.
+    """
     temp = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
     here = os.path.normcase(os.path.realpath(path))
-    return here.startswith(temp + os.sep)
+    return here.startswith(temp.rstrip(os.sep) + os.sep)
 
 
 def survey(configs: Sequence[str | Path] | None = None) -> list[Survey]:

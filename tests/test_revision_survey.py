@@ -537,6 +537,37 @@ def test_a_scaffold_in_TEMP_IS_registered_when_the_registry_is_named(
     assert registered() == [paper.config]
 
 
+def test_scan_returns_only_what_it_REGISTERED(tmp_path, monkeypatch):
+    """`status --all --scan` prints "N paper(s)" off this list; a scaffold
+    in TEMP that `register` refused was counted and then absent from the
+    survey printed under it (review 2026-10-14)."""
+    temp = tmp_path / "temp"
+    _real_registry(tmp_path, monkeypatch, temp=temp)
+    for name in ("probe_a", "probe_b"):
+        paper_at(temp / name)
+    kept = paper_at(temp / "kept")              # registered while named
+    monkeypatch.setenv("DOCXKIT_PAPERS", str(registry_path()))
+    register(kept.config)
+    monkeypatch.delenv("DOCXKIT_PAPERS")
+
+    found = revision.scan(temp)
+
+    assert [p.resolve() for p in found] == [kept.config.resolve()]
+
+
+def test_a_DRIVE_ROOT_temp_still_refuses_a_scaffold(tmp_path, monkeypatch):
+    """`gettempdir()` can be a drive root (`TEMP=D:\\`), and `D:\\` plus a
+    separator is `D:\\\\`, which no path starts with: the guard was off
+    for every config on that drive."""
+    from docxkit.revision import _registry
+
+    _real_registry(tmp_path, monkeypatch, temp=tmp_path.anchor)
+
+    assert _registry._under_temp(tmp_path / "probe" / "paper.toml")
+    paper_at(tmp_path / "probe")
+    assert registered() == []
+
+
 def test_the_registry_folder_is_CREATED_however_deep(tmp_path, monkeypatch):
     deep = tmp_path / "not" / "there" / "yet" / "papers.txt"
     monkeypatch.setenv("DOCXKIT_PAPERS", str(deep))
