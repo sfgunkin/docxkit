@@ -400,6 +400,75 @@ def test_a_link_Word_STRIPPED_beside_the_cuts_refuses_them_all(tmp_path):
     assert "Sen1999" in str(caught.value)
 
 
+# ------------------------------------------------- a batch Word holds
+
+def _word_holds_batch(monkeypatch, paper):
+    """Word holding `batch.docx` with the read denied (HPPA, 2026-10-09)."""
+    from pathlib import Path
+
+    held, real = paper.batch.resolve(), guard.sha256
+
+    def sha256(p):
+        if Path(p).resolve() == held:
+            raise PermissionError(13, "Permission denied", str(p))
+        return real(p)
+
+    monkeypatch.setattr(guard, "sha256", sha256)
+    monkeypatch.setattr(package, "is_locked",
+                        lambda p: Path(p).resolve() == held)
+
+
+def test_a_LOCKED_batch_is_said_to_be_locked_not_LOST(monkeypatch, tmp_path):
+    """Review 2026-10-14, finding 13. The batch's own deletions, all
+    accepted, with batch.docx open in Word: the PermissionError from its
+    hash was swallowed as "no excuse", `baseline` printed LOST with
+    `--accept-loss` advice, and following it crashed with exit 70."""
+    from docxkit.errors import DocumentLocked
+
+    paper = _round(tmp_path)
+    _accept_all(paper)
+    _word_holds_batch(monkeypatch, paper)
+
+    with pytest.raises(DocumentLocked, match=r"batch\.docx is open"):
+        revision.baseline(paper, log=False)
+    with pytest.raises(DocumentLocked):
+        revision.baseline(paper, log=False,
+                          accept_loss=tuple(NOTES[k][:30] for k in (2, 4, 6)))
+
+
+def test_ingest_check_says_the_batch_is_LOCKED(monkeypatch, tmp_path,
+                                               capsys):
+    paper = _round(tmp_path)
+    _accept_all(paper)
+    _word_holds_batch(monkeypatch, paper)
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest", "--check",
+                      "--paper", str(paper.root))
+
+    assert "batch.docx is open in Word" in str(code)
+    assert "== LOST" not in capsys.readouterr().out
+
+
+def test_an_UNPARSEABLE_proposal_leaves_the_losses_where_they_are(tmp_path):
+    """The proposal was read inside the guard and its views computed
+    outside it: a text part that does not parse crashed the read-only
+    `ingest` instead of reporting the loss."""
+    paper = _round(tmp_path, deleted=frozenset({2}), promote=False)
+    batch = package.read_parts(paper.batch)
+    batch["word/endnotes.xml"] = (
+        f'<w:endnotes {_NS_W}><w:ins w:id="9" {_STAMP}>').encode()
+    write(paper.batch, batch)
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    revision.promote(paper)
+    write(paper.working, _without_note(
+        make_parts(_before(NOTES), footnotes=_footnotes(NOTES)), 2))
+
+    report = revision.ingest(paper.working, paper.prev, paper=paper)
+
+    assert report.deleted == []
+    assert [x.kind for x in report.lost] == ["footnote"]
+
+
 # -------------------------------------------------------------- the CLI
 
 def test_ingest_check_PASSES_and_names_the_batch_s_deletions(

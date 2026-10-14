@@ -155,3 +155,29 @@ WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+def _readable_hash(path: Path) -> str:
+    """`guard.sha256`, with Word's deny-read answered as a refusal.
+
+    A file Word holds may refuse the read as well as the write. That is
+    a state the user can fix, not a defect, so it is :class:`DocumentLocked`
+    — and only when `is_locked` agrees: a PermissionError on a file
+    nothing holds is something else, and is not dressed up as Word.
+    `withdraw` had it first (HPPA_Index, 2026-10-09); `verdict` and the
+    batch-deletion excuse read the same batch, and a lock swallowed there
+    turned the batch's own accepted deletions into LOSSES, with advice
+    that then crashed (review of 2026-10-14).
+    """
+    from .. import guard, package
+    from ..errors import DocumentLocked
+
+    try:
+        return guard.sha256(path)
+    except PermissionError:
+        if package.is_locked(path):
+            raise DocumentLocked(
+                f"{path.name} is open in Word, which will not let it be "
+                f"read. Close it and run this again — nothing has been "
+                f"changed.") from None
+        raise

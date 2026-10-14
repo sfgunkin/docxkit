@@ -14,8 +14,8 @@ from pathlib import Path
 from .. import guard as _guard
 from .. import package, revisions, tracked
 from .._xml import Parts
-from ..errors import DocxKitError
-from ._common import TEXT_PARTS, _today
+from ..errors import DocumentLocked, DocxKitError
+from ._common import TEXT_PARTS, _readable_hash, _today
 from ._config import Paper
 from ._losses import BATCH_KINDS, Loss, _bookmarks, _links, batch_deletions
 from ._state import _state
@@ -177,8 +177,8 @@ def _promoted(paper: Paper, batch: Path) -> bool:
     for redline in paper.redlines():
         if redline.stat().st_size != size:
             continue
-        want = want or _guard.sha256(batch)
-        if _guard.sha256(redline) == want:
+        want = want or _readable_hash(batch)
+        if _readable_hash(redline) == want:
             return True
     return False
 
@@ -215,7 +215,7 @@ def _proposal(paper: Paper) -> Path | None:
     batch = paper.batch
     if not batch.is_file() or not paper.prev.is_file():
         return None
-    if _guard.base_of(batch) != _guard.sha256(paper.prev):
+    if _guard.base_of(batch) != _readable_hash(paper.prev):
         return None
     return batch if _promoted(paper, batch) else None
 
@@ -230,8 +230,16 @@ def deleted_by_batch(paper: Paper, working: Parts, prev: Parts,
     which batch the round grew out of. It runs only when there is a loss
     of a kind a batch can propose, so a clean hand-back hashes nothing.
     It refuses while revisions are PENDING: an unopened proposal is not
-    an accepted one. And a file it cannot read (a redline Word holds, a
-    package mid-save) leaves every loss where it was.
+    an accepted one. A file it cannot read (a package mid-save, a part
+    that does not parse) leaves every loss where it was — and its views
+    are computed inside the same guard, since computing them outside it
+    crashed the read-only `ingest` on an unparseable proposal.
+
+    **Except a batch WORD holds**, which raises :class:`DocumentLocked`
+    (review of 2026-10-14). Swallowed with the rest, the batch's own
+    accepted deletions came out as LOSSES with ``--accept-loss`` advice,
+    and following the advice then crashed in `verdict` on the same
+    lock. "Close it and run again" is the answer that is true.
     """
     if not any(loss.kind in BATCH_KINDS for loss in gone):
         return [], list(gone)
@@ -239,12 +247,15 @@ def deleted_by_batch(paper: Paper, working: Parts, prev: Parts,
         return [], list(gone)
     try:
         batch = _proposal(paper)
-        proposal = package.read_parts(batch) if batch is not None else None
-    except (OSError, DocxKitError):
+        if batch is None:
+            return [], list(gone)
+        return batch_deletions(gone, working, prev,
+                               package.read_parts(batch))
+    except DocumentLocked:
+        raise
+    except (OSError, SyntaxError, ValueError, DocxKitError):
+        # SyntaxError is lxml's XMLSyntaxError, named without lxml
         return [], list(gone)
-    if proposal is None:
-        return [], list(gone)
-    return batch_deletions(gone, working, prev, proposal)
 
 
 def verdict(paper: Paper) -> Verdict:

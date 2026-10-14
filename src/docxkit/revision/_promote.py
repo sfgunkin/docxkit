@@ -14,7 +14,13 @@ from .. import guard as _guard
 from .. import package
 from ..errors import DocumentLocked, ProtocolError, StaleBatch
 from . import _ledger, _timing
-from ._common import _RESCUE_GLOB, _RESCUE_STAMP, _stamp_of, _written_at
+from ._common import (
+    _RESCUE_GLOB,
+    _RESCUE_STAMP,
+    _readable_hash,
+    _stamp_of,
+    _written_at,
+)
 from ._config import Paper
 
 # -------------------------------------------------------------- promote
@@ -356,25 +362,6 @@ class WithdrawReport:
     #: True when ``build/batch.docx`` WAS that proposal and was unstaged.
     removed_batch: bool
     why: str
-
-
-def _readable_hash(path: Path) -> str:
-    """`guard.sha256`, with Word's deny-read answered as a refusal.
-
-    A file Word holds may refuse the read as well as the write. That is
-    a state the user can fix, not a defect, so it is :class:`DocumentLocked`
-    — and only when `is_locked` agrees: a PermissionError on a file
-    nothing holds is something else, and is not dressed up as Word.
-    """
-    try:
-        return _guard.sha256(path)
-    except PermissionError:
-        if package.is_locked(path):
-            raise DocumentLocked(
-                f"{path.name} is open in Word, which will not let it be "
-                f"read. Close it and run this again — nothing has been "
-                f"changed.") from None
-        raise
 
 
 def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
