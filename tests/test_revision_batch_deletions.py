@@ -312,6 +312,24 @@ def test_a_hand_back_with_revisions_PENDING_excuses_nothing(tmp_path):
     assert len([x for x in report.lost if x.kind == "footnote"]) == 3
 
 
+def test_baseline_says_PENDING_before_it_says_LOST(tmp_path):
+    """Review 2026-10-14. One stray pending revision makes the batch's
+    excuse refuse (an unopened proposal is not an accepted one), and the
+    loss gate ran first: the author was told to `--accept-loss` the
+    batch's own deletions, when what stands between them and a baseline
+    is the revision they have not decided."""
+    from docxkit.errors import BaselinePending
+
+    paper = _round(tmp_path)
+    parts = _accept_all(paper)
+    doc = parts["word/document.xml"].decode().replace(
+        "</w:body>", para(_ins(run("still pending"), 900)) + "</w:body>")
+    write(paper.working, {**parts, "word/document.xml": doc.encode()})
+
+    with pytest.raises(BaselinePending):
+        revision.baseline(paper, log=False)
+
+
 def test_naming_the_batch_s_deletion_in_accept_loss_is_not_STALE(tmp_path):
     """A flag written before this existed names something really gone,
     so it must not be refused as an exemption with nothing under it."""

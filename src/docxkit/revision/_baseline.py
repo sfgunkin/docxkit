@@ -160,6 +160,19 @@ def baseline(paper: Paper, *, force: bool = False,
             f"{paper.working.name} is open in Word. Close it first — a "
             f"baseline copied mid-save is a zip nothing can reject "
             f"against.")
+    # PENDING before LOST (review of 2026-10-14): a revision still
+    # waiting is the author's to decide, and while one waits the batch's
+    # deletions cannot be told from losses — so the loss gate below,
+    # run first, sent them to `--accept-loss` the batch's own proposals.
+    current = state(paper.working)
+    if not current.is_truth and not force:
+        where = ", ".join(f"{n} in {p.split('/')[-1]}"
+                          for p, n in current.by_part.items())
+        raise BaselinePending(
+            f"{paper.working.name} is a proposal, not the truth: "
+            f"{current.pending} revision(s) pending ({where}). The "
+            f"author accepts or rejects them; this tool never does."
+            + _only_in_word(current))
     repaired: Parts | None = None
     deleted: list[Loss] = []
     if paper.prev.exists():
@@ -209,15 +222,6 @@ def baseline(paper: Paper, *, force: bool = False,
                 f"{cause}, or name the deliberate ones with the flag shown "
                 f"above (a prefix is enough); a loss whose WORDS are gone "
                 f"is usually an editorial cut, and nothing to repair.")
-    current = state(paper.working)
-    if not current.is_truth and not force:
-        where = ", ".join(f"{n} in {p.split('/')[-1]}"
-                          for p, n in current.by_part.items())
-        raise BaselinePending(
-            f"{paper.working.name} is a proposal, not the truth: "
-            f"{current.pending} revision(s) pending ({where}). The "
-            f"author accepts or rejects them; this tool never does."
-            + _only_in_word(current))
     if repaired is not None:
         # `state` above read the file on disk, which is the unrepaired
         # one — and reads the same either way: restoring a glyph rewrites
