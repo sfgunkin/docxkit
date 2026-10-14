@@ -379,6 +379,45 @@ def test_WITHDRAW_refuses_BEFORE_writing_when_Word_holds_the_staged_batch(
     assert len(_ledger_lines(paper)) == lines
 
 
+def test_WITHDRAW_unstages_a_READ_ONLY_batch_and_finishes(promoted_round):
+    """Review 2026-10-14, finding 12. `is_locked` answers False for a
+    READ-ONLY file by design (OneDrive sets the bit mid-write), so the
+    check above let it through and `unlink` raised WinError 5 after the
+    manuscript was restored and its stamp gone: exit 70, the batch still
+    staged, no WITHDRAWN event, and a re-run advising `baseline`, which
+    logs a proposal the author never saw as "rejected in full"."""
+    import os
+    import stat
+
+    paper = promoted_round.paper
+    os.chmod(paper.batch, stat.S_IREAD)
+    try:
+        report = revision.withdraw(paper, why="read-only batch")
+    finally:
+        if paper.batch.exists():
+            os.chmod(paper.batch, stat.S_IREAD | stat.S_IWRITE)
+
+    assert report.removed_batch
+    assert not paper.batch.exists()
+    assert _ledger_lines(paper)[-1]["event"] == "withdrawn"
+
+
+def test_WITHDRAW_does_not_READ_a_rebuilt_batch_Word_holds(promoted_round,
+                                                          monkeypatch):
+    """A batch rebuilt since, and open in Word with the read denied, is
+    not the proposal: it is a different size. Hashing it first raised
+    DocumentLocked for a file withdraw was never going to touch."""
+    paper = promoted_round.paper
+    write(paper.batch, make_parts(para(run("already rebuilt, and longer "
+                                           "than the proposal was"))))
+    _word_holds(monkeypatch, paper.batch, deny_read=True)
+
+    report = revision.withdraw(paper, why="rebuilt and open")
+
+    assert not report.removed_batch
+    assert paper.batch.exists()
+
+
 def test_a_PERMISSION_error_on_a_file_nothing_holds_is_not_called_Word(
         promoted_round, monkeypatch):
     """Only a file `is_locked` agrees is held becomes DocumentLocked; any

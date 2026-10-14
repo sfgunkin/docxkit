@@ -462,13 +462,24 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
     # the copy below had landed and the stamp was gone: withdraw died
     # half done, with no ledger event, and a re-run then called the
     # restored manuscript "opened and saved since" (review, 2026-10-10).
+    # The SIZE first, which needs no read: a batch rebuilt since is
+    # another file, and hashing it while Word denied the read refused a
+    # withdrawal over a file it was never going to touch (review,
+    # 2026-10-14).
     removed = (paper.batch.is_file()
+               and paper.batch.stat().st_size == live.stat().st_size
                and _readable_hash(paper.batch) == live_hash)
     if removed and package.is_locked(paper.batch):
         raise DocumentLocked(
             f"{paper.batch.name} is the proposal being withdrawn, and it is "
             f"open in Word. Close it first — withdrawing removes it, and "
             f"nothing has been changed yet.")
+    if removed:
+        # `is_locked` answers False for a READ-ONLY file, by design
+        # (OneDrive sets the bit mid-write), and the unlink below then
+        # raised after the manuscript was restored. Cleared here, while
+        # nothing has been written; `_discard` does the same.
+        package._clear_readonly(paper.batch)
 
     base_hash = _readable_hash(paper.prev)
     built_on = _guard.base_of(live)
