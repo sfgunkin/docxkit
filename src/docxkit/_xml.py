@@ -314,6 +314,13 @@ BOOKMARK_END_ID_RE = re.compile(r'<w:bookmarkEnd\b[^>]*w:id="(\d+)"')
 #: guards, and only one of them defended against a missing end tag.
 BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:name="([^"]+)"')
 COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')
+#: An equation where a range marker may NOT go inside it: a display
+#: ``m:oMathPara`` whole, else an inline ``m:oMath``. Neither nests in
+#: itself, so a lazy pairing closes on its own end tag; the display
+#: form is tried first, so an ``m:oMath`` inside one is not taken alone.
+MATH_ZONE_RE = re.compile(
+    r"<m:oMathPara\b[^>]*(?<!/)>.*?</m:oMathPara>"
+    r"|<m:oMath\b[^>]*(?<!/)>.*?</m:oMath>", re.DOTALL)
 #: A section's properties. `figures` reads the LAST one as the template
 #: for a new section; `probe` reports how many there are.
 SECTPR_RE = re.compile(r"<w:sectPr\b.*?</w:sectPr>", re.DOTALL)

@@ -18,6 +18,7 @@ from conftest import (
     run,
     table,
 )
+from lxml import etree
 
 from docxkit.comments import (
     ALL,
@@ -360,15 +361,16 @@ RICH_SEED = (
     "<w:r><w:t>and a second paragraph</w:t></w:r></w:p></w:comment>")
 
 
-def test_the_clone_replaces_ONE_id_and_ONE_paraId():
-    """`count=1` on both substitutions. The template is whatever the
-    package carries, and a comment that has been edited with track
-    changes on holds a `w:ins` with an id of its own; a comment written
-    in two paragraphs holds two paraIds.
+def test_the_clone_is_ONE_paragraph_with_the_new_text_and_nothing_tracked():
+    """The template is whatever the package carries first, and this one
+    is a referee's: edited with track changes on (a `w:ins` with an id
+    of its own) and written in two paragraphs.
 
-    Replacing every match rewrites the revision's id to the comment's —
-    two elements claiming one id — and gives both paragraphs the same
-    paraId, which is the key Word threads replies on."""
+    Copied whole (until the review of 2026-10-14), every clone carried
+    the `w:ins` — its id duplicated across clones — and an empty second
+    paragraph holding the template's LAST paraId, the one Word and
+    `threads` key the done state on: new balloons read as resolved, and
+    a reply landed on the referee's comment."""
     parts = make_parts(para(run("keep "), ins("added")))
     parts["word/comments.xml"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -378,10 +380,36 @@ def test_the_clone_replaces_ONE_id_and_ONE_paraId():
 
     assert added == 1
     com = _com(parts)
-    assert com.count('w:id="77"') == 2, "the tracked edit keeps its own id"
+    assert com.count('w:id="77"') == 1, "the referee's edit is not copied"
     new = com[com.index('<w:comment w:id="2"'):]
+    assert new.count("<w:p ") == 1, new
     para_ids = re.findall(r'w14:paraId="([0-9A-F]+)"', new)
-    assert len(set(para_ids)) == len(para_ids) == 2, para_ids
+    assert para_ids == ["5A000002"], para_ids
+    assert "R1: reason" in new and "seed" not in new
+    assert "second paragraph" not in new
+    assert '<w:pStyle w:val="CommentText"/>' in new
+    assert "<w:annotationRef/>" in new
+    etree.fromstring(com.encode())             # and it parses
+
+
+def test_a_text_less_template_still_carries_the_new_text():
+    """An equation-only remark has no `w:t` to fill: every clone used to
+    come out of `set_run_text` unchanged, the referee's maths in it and
+    the reason nowhere."""
+    template = ('<w:comment w:id="1" w:author="Referee 2" '
+                'w:date="2026-01-01T00:00:00Z" w:initials="R2">'
+                '<w:p w14:paraId="AAAA0001"><w:r><m:oMath><m:r><m:t>x</m:t>'
+                "</m:r></m:oMath></w:r></w:p></w:comment>")
+    parts = make_parts(para(run("keep "), ins("added")))
+    parts["word/comments.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f"<w:comments {NS}>{template}</w:comments>").encode()
+
+    annotate(parts, always("R1: reason"))
+
+    new = _com(parts)
+    new = new[new.index('<w:comment w:id="2"'):]
+    assert "R1: reason" in new and "m:oMath" not in new, new
 
 
 def test_a_comments_ATTRIBUTES_are_read_from_its_head():

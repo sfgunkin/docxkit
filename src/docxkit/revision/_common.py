@@ -38,6 +38,20 @@ TEXT_PARTS = (DOCUMENT, FOOTNOTES,
               ENDNOTES)
 
 
+def word_only_what(kinds: dict[str, int]) -> str:
+    """What to look for in Word to clear the `WORD_ONLY` kinds in `kinds`.
+
+    A merged cell is a table change and a ``numberingChange`` a list's
+    numbering; both refusals said "the table change" of either (review
+    of 2026-10-14), which sends a reader with a numbering change through
+    the tables."""
+    said = [what for kind, what in (("cellMerge", "the merged-cell change"),
+                                    ("numberingChange",
+                                     "the numbering change"))
+            if kinds.get(kind)]
+    return " and ".join(said) or "those changes"
+
+
 #: Parts a Word save rewrites whether or not anything was edited —
 #: rsids, the editing-time total, the namespace prefix order. Reporting
 #: these as author edits cried wolf on every round-trip.

@@ -13,6 +13,7 @@ untouched when one fails.
 from __future__ import annotations
 
 import contextlib
+import re
 import tempfile
 import zipfile
 from pathlib import Path
@@ -922,7 +923,57 @@ def test_an_unannotated_build_seeds_NO_scaffold_when_math_is_kept(
     monkeypatch.setattr(tracked, "_seed_scaffold",
                         lambda doc, classify, *a: seeded.append(classify))
     _build(monkeypatch, clean_document(), sources, resolve_math=False)
-    assert seeded == [None], "seeding is the classifier's business to refuse"
+    assert seeded == [], "an unannotated build asks for no scaffold"
+
+
+def test_a_classified_build_WITHOUT_math_resolves_none(monkeypatch, sources):
+    """The review of 2026-10-14's finding 5: the comment-and-accept scan
+    returned `seeded or _seed_scaffold(...)`, so with no math to resolve
+    the SCAFFOLD comment was counted as one accepted math revision —
+    and `revision build` refuses a batch on `math_resolved`. Every
+    default build of a prose batch failed once a paper set `[batch]
+    classify`. The fakes before this replaced `tracked.build` whole."""
+
+    class _WithARevision(_FakeWordModule):
+        def compare_documents(self, word, orig, rev, **kw):
+            doc = _FakeDoc()
+            doc.Revisions = _Count([_Rev("sharply")])  # prose: no equation
+            doc.Comments = _SeedDoc([]).Comments
+            return doc
+
+    fake = _WithARevision(_revised_document(), scaffold=True)
+    monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
+
+    report = tracked.build(sources[0], sources[1], sources[2],
+                           classify=lambda ctx: "R1: sharpened",
+                           verify_in_word=False)
+
+    assert report.math_resolved == 0
+
+
+def test_comment_math_FALSE_walks_the_equations_with_a_classifier(
+        monkeypatch, sources):
+    """`revision build` passes it: a classifier must not change which
+    revisions a batch gives up."""
+    seen: list[object] = []
+
+    def _resolve(doc, classify, *a):
+        seen.append(classify)
+        return tracked.MathOutcome(0)
+
+    monkeypatch.setattr(tracked, "_resolve_math", _resolve)
+    fake = _FakeWordModule(_revised_document(), scaffold=True)
+    monkeypatch.setattr(tracked, "_word", fake)
+    _baseline(sources[0], "Employment rises ")
+    _target(sources[1], "Employment rises sharply")
+
+    tracked.build(sources[0], sources[1], sources[2],
+                  classify=lambda ctx: "R1: sharpened", comment_math=False,
+                  verify_in_word=False)
+
+    assert seen == [None]
 
 
 def test_build_report_formats_its_phases(monkeypatch, sources):
@@ -1182,20 +1233,139 @@ def test_a_document_with_no_equations_resolves_nothing():
     assert _accept_math_via_equations(NoMath()).accepted == 0
 
 
-def test_the_scaffold_comment_is_seeded_when_no_math_revision_exists(
+def _anchored(cid: int, inner: str) -> str:
+    return (f'<w:commentRangeStart w:id="{cid}"/>{inner}'
+            f'<w:commentRangeEnd w:id="{cid}"/><w:r><w:rPr><w:rStyle '
+            f'w:val="CommentReference"/></w:rPr><w:commentReference '
+            f'w:id="{cid}"/></w:r>')
+
+
+def _word_comment(cid: int, text: str, who: str, pid: str) -> str:
+    return (f'<w:comment w:id="{cid}" w:author="{who}" '
+            f'w:date="2026-01-02T00:00:00Z" w:initials="X">'
+            f'<w:p w14:paraId="{pid}"><w:pPr><w:pStyle w:val="CommentText"/>'
+            f"</w:pPr>{run(text)}</w:p></w:comment>")
+
+
+def _built_redline(seed_text: str
+                   ) -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """A built redline as the comment pass meets it: Word's seed on span
+    0, written by Word's user; a referee's comment carried in from the
+    baseline; two more spans. And the baseline, holding the referee's."""
+    referee = _word_comment(1, "Clarify the sample.", "Referee 2",
+                            "AAAA0002")
+    body = (para(_anchored(0, ins("added", rid=90)), run(" kept"))
+            + para(_anchored(1, run("Sample.")), ins("more", rid=91))
+            + para(run("x "), dele("gone", rid=92)))
+    redline = make_parts(body, comment_items=(
+        _word_comment(0, seed_text, "Fel'dsher Gun'kin", "AAAA0001"),
+        referee))
+    baseline = make_parts(para(run("Sample.")), comment_items=(referee,))
+    return redline, baseline
+
+
+def test_the_comment_pass_CREDITS_the_author_and_leaves_the_referee(
+        ):
+    """Finding 7. Clones copied the template's author: every balloon was
+    Word's user's (the seed) or a referee's, whichever came first; AFI
+    restamped 107 and 246 by hand."""
+    parts, baseline = _built_redline("R1: the seed's reason")
+    report = tracked.BuildReport()
+
+    tracked._comment_pass(parts, lambda ctx: f"R1: {ctx.text}",
+                          generic=None, tables="coalesce",
+                          author="Michael Lokshin",
+                          inputs=(baseline, make_parts(para(run("x")))),
+                          report=report, say=lambda _line: None)
+
+    com = parts["word/comments.xml"].decode()
+    heads = dict(re.findall(r'<w:comment w:id="(\d+)"([^>]*)>', com))
+    assert 'w:author="Referee 2"' in heads["1"], "the referee's stays"
+    assert set(heads) == {"0", "1", "2", "3"}
+    for cid in ("0", "2", "3"):
+        assert 'w:author="Michael Lokshin"' in heads[cid], heads[cid]
+        assert 'w:initials="ML"' in heads[cid]
+    assert report.comments_added == 2
+
+
+def test_generic_NONE_leaves_a_revision_with_no_reason_BARE(monkeypatch):
+    """Finding 8. A classifier's '' became "Revision (unclassified)",
+    and Word's seed — the marker under generic=None — was never taken
+    back out."""
+    parts, baseline = _built_redline(tracked._comments.SCAFFOLD)
+    report = tracked.BuildReport()
+
+    tracked._comment_pass(parts, lambda ctx: "R2: more" if "more" in
+                          ctx.text else "", generic=None, tables="coalesce",
+                          author="A", inputs=(baseline,), report=report,
+                          say=lambda _line: None)
+
+    com = parts["word/comments.xml"].decode()
+    texts = re.findall(r"<w:t>([^<]*)</w:t>", com)
+    assert sorted(texts) == ["Clarify the sample.", "R2: more"], texts
+    assert tracked._comments.GENERIC not in com
+    doc = parts["word/document.xml"].decode()
+    assert 'w:id="0"' not in doc, "the marker's anchors went with it"
+    assert report.unclassified == 2       # "gone", and the seed's span
+
+
+def test_a_body_with_NO_span_and_no_scaffold_is_said_not_crashed():
+    """Finding 15. A footnote-only batch: Word seeds on body revision 1,
+    there is none, and `annotate` died on KeyError after the Compare."""
+    parts = make_parts(para(run("unchanged")))
+    said: list[str] = []
+
+    tracked._comment_pass(parts, lambda ctx: "R1", generic=None,
+                          tables="coalesce", author="A", inputs=(),
+                          report=tracked.BuildReport(), say=said.append)
+
+    assert any("no revision a comment can anchor" in s for s in said)
+    assert "word/comments.xml" not in parts
+
+
+def test_spans_with_NO_scaffold_are_refused_by_name():
+    from docxkit.errors import ScaffoldMissing
+
+    parts = make_parts(para(ins("added")))
+    with pytest.raises(ScaffoldMissing, match="Word did not seed one"):
+        tracked._comment_pass(parts, lambda ctx: "R1", generic=None,
+                              tables="coalesce", author="A", inputs=(),
+                              report=tracked.BuildReport(),
+                              say=lambda _line: None)
+
+
+def test_the_math_scan_with_NO_math_accepts_nothing_and_seeds_nothing(
         monkeypatch):
-    """comments.annotate clones a Word-made comment; without one the
-    build fails later with ScaffoldMissing, far from the cause."""
+    """It used to seed the scaffold here and COUNT it: `seeded or
+    _seed_scaffold(...)` reported one accepted math revision for a batch
+    with none (review of 2026-10-14). `build` seeds the scaffold itself
+    now, uncounted (`_math_pass`)."""
     from docxkit import tracked as T
 
     doc = _MathDoc()
     doc.Revisions = _Count([_Rev("prose only")])       # no math anywhere
     monkeypatch.setattr(T._word, "revisions", lambda d: iter(()),
                         raising=False)
-    seeded = T._comment_and_accept_math_revisions(
+    outcome = T._comment_and_accept_math_revisions(
         doc, lambda ctx: "generic note", None)
-    assert seeded.accepted == 1
-    assert doc.added == ["generic note"]
+    assert outcome.accepted == 0
+    assert doc.added == []
+
+
+def test_the_math_pass_SEEDS_the_scaffold_when_no_comment_exists():
+    """...and only then: a math comment already is one."""
+    from docxkit import tracked as T
+
+    doc = _SeedDoc([_Rev("prose")])
+    T._math_pass(doc, lambda ctx: "R1", None, resolve_math=False,
+                 comment_math=True, report=T.BuildReport(), say=print)
+    assert doc.added == ["R1"]
+
+    doc = _SeedDoc([_Rev("prose")])
+    doc.Comments.Count = 1
+    T._math_pass(doc, lambda ctx: "R1", None, resolve_math=False,
+                 comment_math=True, report=T.BuildReport(), say=print)
+    assert doc.added == []
 
 
 def test_no_scaffold_is_seeded_for_an_unannotated_build():

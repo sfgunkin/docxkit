@@ -40,7 +40,8 @@ from __future__ import annotations
 import re
 import shutil
 import tempfile
-from collections.abc import Callable, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +90,7 @@ from ._xml import (
     DOCUMENT,
     Parts,
     append_before_close,
+    visible_text,
 )
 from .authors import initials_for
 from .comments import RevisionContext
@@ -325,17 +327,22 @@ def _comment_and_accept_math_revisions(
         except Exception as exc:
             notes.append(f"revision {n}: could not be inspected ({exc})")
 
-    seeded = 0
+    accepted = 0
     for rev in reversed(math_revs):       # last first: accepting shifts rest
         _comment_revision(doc, rev, classify, generic, notes)
-        seeded += 1
         try:
             rev.Accept()
+            accepted += 1
         except Exception as exc:
             notes.append(f"math revision not accepted ({exc}) — Word "
                          "cannot serialize a compare result containing "
                          "tracked math, so this build may fail to save")
-    return MathOutcome(seeded or _seed_scaffold(doc, classify, generic, notes))
+    # Accepted math only. The comment scaffold used to be counted here
+    # when there was no math (`seeded or _seed_scaffold(...)`), so every
+    # classified prose batch read "1 math revision accepted" and
+    # `revision build` refused it (review of 2026-10-14); `build` seeds
+    # the scaffold itself, after this.
+    return MathOutcome(accepted)
 
 
 def _comment_revision(doc: Any, rev: Any, classify: Classifier,
@@ -355,12 +362,54 @@ def _comment_revision(doc: Any, rev: Any, classify: Classifier,
     # The fallback matters even when the paper passes generic=None: this
     # comment is also the scaffold the XML pass clones, and Word cannot
     # add one with no text, so the build would fail with ScaffoldMissing.
+    # Under generic=None it is a marker `build` takes out again once the
+    # XML pass has had its chance at a reason: "Revision (unclassified)"
+    # here was a balloon the flag exists to prevent (review, 2026-10-14).
     try:
-        doc.Comments.Add(rng, comment or generic or _comments.GENERIC)
+        doc.Comments.Add(rng, comment or generic or _comments.SCAFFOLD)
     except Exception as exc:
         # NOT cosmetic: if this was to be the scaffold, the build fails
         # later with ScaffoldMissing and no hint of the real cause
         notes.append(f'comment not added to "{text[:30]}": {exc}')
+
+
+def _math_pass(doc: Any, classify: Classifier | None, generic: str | None,
+               *, resolve_math: bool, comment_math: bool,
+               report: BuildReport, say: Any) -> None:
+    """The Word-side work between the Compare and the extraction: the
+    math revisions, then the comment scaffold."""
+    if resolve_math:
+        math = _resolve_math(doc, classify if comment_math else None,
+                             generic, report.suppressed)
+        report.math_resolved, report.math_kept = math
+        report.mark("resolved math revisions")
+        say(f"resolved {report.math_resolved} math revisions "
+            "(Word's save path may refuse to serialize them)")
+        if report.math_kept:
+            say(f"  {report.math_kept} revision(s) merely OVERLAP "
+                f"an equation and stay tracked — accepting one "
+                f"applies its whole span")
+    else:
+        report.mark("math left tracked")
+        say("math left tracked (resolve_math=False)")
+    # The scaffold is not optional for an annotated build:
+    # `comments.annotate` CLONES a Word-made comment, and without one the
+    # build fails later with ScaffoldMissing, a long way from the flag
+    # that caused it. Seeded whenever the math pass left no comment, and
+    # NEVER counted as a resolved math revision — nothing was resolved,
+    # and `revision.build` refuses a batch on that number. It was, until
+    # the review of 2026-10-14, whenever a classified build had no math.
+    if classify is not None and not _comment_count(doc):
+        _seed_scaffold(doc, classify, generic, report.suppressed)
+
+
+def _comment_count(doc: Any) -> int:
+    """How many comments Word's document holds; 0 when it cannot say,
+    and the scaffold is then seeded, which costs one comment."""
+    try:
+        return int(doc.Comments.Count)
+    except Exception:
+        return 0
 
 
 def _seed_scaffold(doc: Any, classify: Classifier | None,
@@ -383,6 +432,88 @@ def _seed_scaffold(doc: Any, classify: Classifier | None,
         notes.append(f"no comment scaffold could be seeded ({exc}) — the "
                      "XML pass has nothing to clone and will refuse")
         return 0
+
+
+def _comment_pass(parts: Parts, classify: Classifier, *,
+                  generic: str | None, tables: str, author: str,
+                  inputs: tuple[Parts, ...], report: BuildReport,
+                  say: Any) -> None:
+    """The XML half of an annotated build: a balloon per revision.
+
+    Four things the review of 2026-10-14 found missing here, each one
+    already true of :func:`annotate_in_place`:
+
+    * **No scaffold, nothing to comment.** Word seeds a comment on
+      revision 1 of the BODY; a batch whose only change is a footnote
+      has none, and `annotate` then died on ``KeyError:
+      word/comments.xml`` after the full Compare. A body with no span
+      has nothing this pass can anchor, so it is said and skipped; a
+      body with spans and no scaffold is refused by name.
+    * **Credit.** Clones copied the template's author, and the template
+      is Word's user's seed or a referee's comment carried in. Every
+      comment the inputs do not explain is credited to `author`.
+    * **`generic=None` means bare.** Word's comments under that flag
+      read :data:`docxkit.comments.SCAFFOLD`; `reclassify` gives each
+      one the classifier's second chance, with the XML context, and
+      whatever still reads it is removed.
+    * The template itself is cut down to one paragraph
+      (`comments._plain`).
+    """
+    doc = parts[DOCUMENT].decode("utf-8")
+    if not _comments.has_scaffold(parts):
+        if not _revisions.spans(doc):
+            report.mark("no body revision to comment")
+            say("comments: none — the body carries no revision a comment "
+                "can anchor on")
+            return
+        raise ScaffoldMissing(
+            "the redline has revisions to comment and no comment to clone: "
+            "Word did not seed one (see the WARNING lines above)")
+    credit = _comments.Credit(author, initials_for(author),
+                              _comments._now())
+    added, unclassified = _comments.annotate(parts, classify,
+                                             generic=generic, tables=tables,
+                                             credit=credit)
+    marker = _comments.SCAFFOLD if generic is None else generic
+    _comments.reclassify(parts, classify, generic=marker)
+    if generic is None:
+        bare = _marked(parts, _comments.SCAFFOLD)
+        _comments.remove(parts, bare)
+        unclassified += len(bare)
+    _credit_new(parts, inputs, credit)
+    report.comments_added, report.unclassified = added, unclassified
+    report.mark(f"annotated {added} revisions in XML")
+    say(f"comments: {added} added, unclassified: {unclassified}")
+
+
+def _marked(parts: Parts, text: str) -> list[str]:
+    """Ids of the comments whose whole text is `text`."""
+    com = parts.get(COMMENTS, b"").decode("utf-8")
+    return [m.group(2) for m in _comments._COMMENT_RE.finditer(com)
+            if " ".join(visible_text(m.group(3)).split()) == text]
+
+
+def _credit_new(parts: Parts, inputs: tuple[Parts, ...],
+                credit: _comments.Credit) -> int:
+    """`credit` on every comment no input explains; returns how many.
+
+    Counted the way the de-duplication counts (`_hygiene._comment_key`):
+    each input copy of a note explains one copy here, and only what is
+    left over was written by this build — Word's comments as well as the
+    clones."""
+    held = sum((_hygiene._comment_counts(p) for p in inputs), Counter())
+    com = parts.get(COMMENTS, b"").decode("utf-8")
+    mine: set[str] = set()
+    for m in _comments._COMMENT_RE.finditer(com):
+        key = _hygiene._comment_key(m.group(0))
+        if held[key] > 0:
+            held[key] -= 1
+        elif key[1]:                # nothing here writes a comment of no text
+            mine.add(m.group(2))
+    if mine:
+        parts[COMMENTS] = _comments._restamp(com, mine, credit).encode(
+            "utf-8")
+    return len(mine)
 
 
 def _return_spaces(parts: Parts, revised_parts: Parts, report: BuildReport,
@@ -548,6 +679,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
           carry: tuple[str, ...] = CARRIED_PARTS,
           progress: Callable[[str], None] | None = None,
           word_deadline: float | None = None,
+          comment_math: bool = True,
           ) -> BuildReport:
     """Produce a tracked-changes docx at `out` from `original` -> `revised`.
 
@@ -582,6 +714,15 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
     315 revisions. Every accepted revision is one the author can no
     longer refuse, so the burden of proof is on resolving, not on
     keeping.
+
+    `comment_math` decides WHICH math is resolved when `classify` is
+    given. True (the AFI behaviour) comments each revision that CONTAINS
+    an equation through Word and accepts it; False resolves exactly what
+    an unannotated build does, the revisions CONTAINED in one, and
+    comments none of them. :func:`_resolve_math` says why the two scans
+    are not substitutes. `revision build` passes False: it refuses any
+    resolved math anyway, and a classifier must not change which
+    revisions a batch gives up.
 
     `reject_check` is the gate that would have caught that: rejecting
     every revision in the built package must reproduce `original`, and
@@ -665,28 +806,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             report.mark("compared")
             _word.draft_view(cmp_)
 
-            if resolve_math:
-                math = _resolve_math(cmp_, classify, generic,
-                                     report.suppressed)
-                report.math_resolved, report.math_kept = math
-                report.mark("resolved math revisions")
-                say(f"resolved {report.math_resolved} math revisions "
-                    "(Word's save path may refuse to serialize them)")
-                if report.math_kept:
-                    say(f"  {report.math_kept} revision(s) merely OVERLAP "
-                        f"an equation and stay tracked — accepting one "
-                        f"applies its whole span")
-            else:
-                # The scaffold is not optional for an annotated build:
-                # `comments.annotate` CLONES a Word-made comment, and
-                # without one the build fails later with ScaffoldMissing,
-                # a long way from the flag that caused it. It is NOT
-                # counted as a resolved math revision — nothing was
-                # resolved, and `revision.build` refuses a batch on that
-                # number.
-                _seed_scaffold(cmp_, classify, generic, report.suppressed)
-                report.mark("math left tracked")
-                say("math left tracked (resolve_math=False)")
+            _math_pass(cmp_, classify, generic, resolve_math=resolve_math,
+                       comment_math=comment_math, report=report, say=say)
             for note in report.suppressed:
                 say(f"  WARNING: {note}")
 
@@ -761,13 +882,10 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
             say(f"  WARNING: Compare {note}")
 
         if classify is not None:
-            added, unclassified = _comments.annotate(parts, classify,
-                                                     generic=generic,
-                                                     tables=tables)
-            _comments.reclassify(parts, classify, generic=generic)
-            report.comments_added, report.unclassified = added, unclassified
-            report.mark(f"annotated {added} revisions in XML")
-            say(f"comments: {added} added, unclassified: {unclassified}")
+            _comment_pass(parts, classify, generic=generic, tables=tables,
+                          author=author, inputs=(original_parts,
+                                                 revised_parts),
+                          report=report, say=say)
 
         # catch the "Word says unreadable content" classes offline,
         # before the file is written and long before anyone opens it
@@ -944,9 +1062,10 @@ _APPENDED = ("word/styles.xml", "[Content_Types].xml",
 
 
 def annotate_in_place(path: str | Path,
-                      blocks: Sequence[_comments.Block], *, author: str,
+                      blocks: Iterable[_comments.Block], *, author: str,
                       seed: Callable[[Path, Path], None] | None = None,
-                      ) -> int:
+                      backup_into: str | Path | None = None,
+                      partial: bool = False) -> int:
     """Comment a PENDING proposal where it is, one balloon per block.
 
     HPPA_Index, 2026-10-10: with a 2,136-revision proposal on the
@@ -971,12 +1090,24 @@ def annotate_in_place(path: str | Path,
     `document.xml` (which `annotate_blocks` holds to its anchors) is
     byte-identical or is comment machinery (:data:`_COMMENT_MACHINERY`,
     :data:`_APPENDED`). The blocks are checked before Word is started,
-    and the file is backed up before it is written. Returns the number
-    of comments added.
+    and the file is backed up before it is written — into `backup_into`
+    when given, which a protocol manuscript wants to be its
+    ``build/rescue/`` (`Paper.rescue_dir`), not beside ``working.docx``.
+    Returns the number of comments added. `partial` is
+    :func:`docxkit.comments.annotate_blocks`'.
+
+    **The file is the author's while Word runs**, which can be 100 s
+    cold. It is hashed when read and again before it is replaced, and a
+    file saved in between is refused rather than overwritten with the
+    bytes read before (review of 2026-10-14): the HPPA script this came
+    from checked the same hash, and the library had dropped it. And it
+    is LINTED: no finding the file did not already carry may be added.
     """
     path = Path(path)
+    blocks = [(list(indices), text) for indices, text in blocks]
     if is_locked(path):
         raise DocumentLocked(f"{path.name} is open in Word; close it first")
+    read_hash = _guard.sha256(path)
     before = read_parts(path)
     parts = dict(before)
     # the coverage first: a block table that misses a change is refused
@@ -985,8 +1116,9 @@ def annotate_in_place(path: str | Path,
         parts[DOCUMENT].decode("utf-8"))))
     reuse = None
     if not _comments.has_scaffold(parts):
+        _no_empty_comments(parts, path)
         seeded = _seeded(path, seed or _seed_in_word)
-        _hygiene.restore_parts(parts, seeded, prefixes=_COMMENT_MACHINERY)
+        _graft_comment_parts(parts, seeded)
         _graft_styles(parts, seeded)
         ids = COMMENT_ID_RE.findall(
             parts.get(COMMENTS, b"").decode("utf-8"))
@@ -996,11 +1128,55 @@ def annotate_in_place(path: str | Path,
         reuse = ids[0]
     added = _comments.annotate_blocks(parts, blocks, author=author,
                                       initials=initials_for(author),
-                                      reuse=reuse)
+                                      reuse=reuse, partial=partial)
     _only_comments_changed(before, parts)
-    backup(path, tag="pre_annotate")
-    write_docx(path, parts)
+    if new := sorted(set(lint_parts(parts)) - set(lint_parts(before))):
+        raise PackageError("annotating would leave the package unclean:\n  - "
+                           + "\n  - ".join(new) + "\nnothing was written")
+    if is_locked(path):
+        raise DocumentLocked(f"{path.name} was opened in Word while the "
+                             f"comments were made; nothing was written")
+    if _guard.sha256(path) != read_hash:
+        raise PackageError(f"{path.name} changed on disk while the comments "
+                           f"were made (saved in Word, or synced); nothing "
+                           f"was written, so run it again on the new file")
+    backup(path, tag="pre_annotate", into=backup_into)
+    try:
+        write_docx(path, parts)
+    except PermissionError as exc:
+        raise DocumentLocked(f"{path.name} could not be written ({exc}); "
+                             f"the backup holds the file as it was") from exc
     return len(added)
+
+
+def _no_empty_comments(parts: Parts, path: Path) -> None:
+    """Refuse a comments part holding comments with nothing to clone.
+
+    Word renumbers every comment when it saves the seeded copy, so a
+    seed grafted beside them would collide with their anchors here."""
+    if found := COMMENT_ID_RE.findall(parts.get(COMMENTS, b"").decode(
+            "utf-8")):
+        raise ScaffoldMissing(
+            f"{path.name}'s comments.xml holds {len(found)} empty "
+            f"comment(s) and none with text to clone, and Word's seed "
+            f"would renumber them. Remove them (docxkit.comments.remove) "
+            f"or add one comment in Word, then run again")
+
+
+def _graft_comment_parts(parts: Parts, seeded: Parts) -> None:
+    """The seed's comment machinery into `parts`.
+
+    A part the manuscript already has is REPLACED when it holds no
+    comment — the RU Life_Expectancy working copy carries an empty
+    ``<w:comments/>`` (its ``[batch] carry`` lists the part, and
+    `comments.remove` leaves the same state), and `restore_parts`,
+    which only fills gaps, kept the empty one: a Word session paid for,
+    then "the seed copy carries 0 comments" every time. Its
+    relationship and content type are already in place."""
+    for name in seeded:
+        if name in parts and name.startswith("word/comments"):
+            parts[name] = seeded[name]
+    _hygiene.restore_parts(parts, seeded, prefixes=_COMMENT_MACHINERY)
 
 
 def _seed_in_word(src: Path, dst: Path) -> None:

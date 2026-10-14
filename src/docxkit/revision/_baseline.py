@@ -14,6 +14,7 @@ from .._xml import Parts
 from ..errors import BaselinePending, DocumentLocked, HandbackLoss
 from ..hygiene import restore_math_glyphs
 from . import _ledger, _timing
+from ._common import word_only_what
 from ._config import Paper
 from ._losses import Loss, _names, _unmet, losses
 from ._state import State, state
@@ -75,7 +76,8 @@ def _only_in_word(current: State) -> str:
             f"command and no flag will settle it (see "
             f"`docxkit.revisions.WORD_ONLY` for why applying one is a "
             f"different operation). Open {current.path.name} in Word, "
-            f"accept or reject the table change there, save, and run "
+            f"accept or reject {word_only_what(current.word_only)} there, "
+            f"save, and run "
             f"this again. `force` would adopt it as the truth instead, "
             f"and the next Compare flattens what it adopts.")
 

@@ -5,6 +5,8 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
+import contextlib
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ from ..errors import (
 )
 from ..tracked import rejected_view, untracked, width_changes
 from . import _ledger, _timing
+from ._common import word_only_what
 from ._config import Paper
 from ._losses import (
     emptied_footnotes,
@@ -81,7 +84,23 @@ def _classifier(paper: Paper) -> tracked.Classifier | None:
         raise ProtocolError(f"[batch] classify: {path} cannot be loaded "
                             f"as Python")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # As `python path.py` would run it: registered while it executes (a
+    # `@dataclass` under future annotations looks its module up in
+    # sys.modules, and failed on 3.14 without it) and with its own folder
+    # importable, so a sibling rules file loads. Any failure is the
+    # paper's file, said as such, and not exit 70 "a bug in docxkit"
+    # (review of 2026-10-14).
+    sys.modules[spec.name] = module
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        sys.modules.pop(spec.name, None)
+        raise ProtocolError(f"[batch] classify: {path.name} failed to load "
+                            f"— {type(exc).__name__}: {exc}") from exc
+    finally:
+        with contextlib.suppress(ValueError):
+            sys.path.remove(str(path.parent))
     found = getattr(module, name or "classify", None)
     if not callable(found):
         raise ProtocolError(f"[batch] classify: {path.name} has no function "
@@ -122,7 +141,7 @@ def _word_only_note(kinds: dict[str, int]) -> str:
     return (f"\nOf those, only Word can clear {only}: `accept` and "
             f"`reject` here leave that kind standing, so no docxkit "
             f"command settles it. Open the file in Word, accept or "
-            f"reject the table change there, and save.")
+            f"reject {word_only_what(kinds)} there, and save.")
 
 
 def _preflight_notes(prev: Path, revised: str | Path) -> list[str]:
@@ -358,8 +377,10 @@ def build(paper: Paper, revised: str | Path, out: str | Path | None = None,
     # `generic=None`: a revision the paper's classifier has no reason for
     # stays bare. A balloon reading "unclassified" on each of them is
     # worse than none, and it is the classifier's to say otherwise.
+    # `comment_math=False`: the math this build resolves is the same with
+    # a classifier as without one, and any of it is refused below anyway.
     report = tracked.build(paper.prev, revised, out, _classifier(paper),
-                           generic=None,
+                           generic=None, comment_math=False,
                            author=paper.author, verify_in_word=True,
                            resolve_math=resolve_math, moves=moves,
                            reject_check=False,

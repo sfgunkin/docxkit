@@ -217,8 +217,9 @@ def test_a_change_beyond_the_anchors_is_REFUSED_and_nothing_written(
     was = (tmp_path / "working.docx").read_bytes()
     real = C._write
 
-    def leaky(parts, doc, decided, scaffold):
-        real(parts, doc.replace("Kept 1. ", "Kept one. "), decided, scaffold)
+    def leaky(parts, doc, decided, scaffold, **kw):
+        return real(parts, doc.replace("Kept 1. ", "Kept one. "), decided,
+                    scaffold, **kw)
 
     monkeypatch.setattr(C, "_write", leaky)
 
@@ -395,3 +396,255 @@ def test_WORD_seeds_the_scaffold_and_the_author_s_parts_survive(tmp_path):
     kept = [n for n in before if n.startswith(("docProps/", "customXml/"))]
     assert kept, "the shell carries the parts Word's save drops"
     assert all(after[n] == before[n] for n in kept)
+
+
+# ----------------------------------------- the review of 2026-10-14 ------
+
+
+def test_a_save_made_WHILE_WORD_SEEDS_is_not_overwritten(tmp_path):
+    """Finding 2. The seed can run 100 s cold; an accept the author saves
+    in that window used to be replaced by the bytes read before it, the
+    decision surviving only in the backup."""
+    path = write(tmp_path / "working.docx", _proposal(3))
+    seed = _word_like_seed([])
+    saved = _proposal(3)
+    saved["word/document.xml"] = saved["word/document.xml"].replace(
+        b"Kept 0. ", b"Kept zero. ")
+
+    def author_saves_meanwhile(src, dst):
+        seed(src, dst)
+        write(path, saved)
+
+    with pytest.raises(PackageError, match="changed on disk"):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=author_saves_meanwhile)
+
+    assert package.read_parts(path)["word/document.xml"] == \
+        saved["word/document.xml"], "the author's save stands"
+    assert not list(tmp_path.glob("*pre_annotate*")), "nothing was begun"
+
+
+def test_a_file_OPENED_while_Word_seeds_is_refused_as_locked(tmp_path,
+                                                             monkeypatch):
+    path = write(tmp_path / "working.docx", _proposal(3))
+    asked = iter([False, True])
+    monkeypatch.setattr(tracked, "is_locked", lambda _p: next(asked))
+
+    with pytest.raises(DocumentLocked, match="opened in Word"):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed([]))
+
+
+def test_a_write_REFUSED_by_the_system_is_a_locked_file(tmp_path,
+                                                        monkeypatch):
+    """Not a raw PermissionError, exit 70 "a bug in docxkit"."""
+    path = write(tmp_path / "working.docx", _proposal(3))
+
+    def denied(*_a, **_kw):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(tracked, "write_docx", denied)
+
+    with pytest.raises(DocumentLocked, match="could not be written"):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed([]))
+
+
+_MATH_SPANS = (
+    para(run("Kept. "),
+         '<m:oMath><m:r><m:t>a</m:t></m:r>'
+         f'<w:ins w:id="40" {_STAMP}><m:r><m:t>+b</m:t></m:r></w:ins>'
+         '<m:f><m:fPr><m:ctrlPr>'
+         f'<w:ins w:id="41" {_STAMP}><w:rPr><w:i/></w:rPr></w:ins>'
+         "</m:ctrlPr></m:fPr><m:num><m:r><m:t>1</m:t></m:r></m:num>"
+         "<m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath>"),
+    para('<m:oMathPara><m:oMath><m:r><m:t>c</m:t></m:r>'
+         f'<w:del w:id="42" {_STAMP}><m:r><m:t>d</m:t></m:r></w:del>'
+         "</m:oMath></m:oMathPara>"))
+
+
+def test_a_span_INSIDE_an_equation_is_anchored_round_the_equation(
+        tmp_path):
+    """Finding 3. `m:r` admits no range marker and `m:ctrlPr` only
+    properties: LI7's 446 spans inside equations were anchored in place
+    and the maths rendered as blank boxes, unlinted."""
+    from lxml import etree
+
+    from docxkit.lint import lint_parts
+
+    parts = _proposal(1)
+    doc = parts["word/document.xml"].decode()
+    parts["word/document.xml"] = doc.replace(
+        "</w:body>", "".join(_MATH_SPANS) + "</w:body>").encode()
+    path = write(tmp_path / "working.docx", parts)
+    n = len(revisions.spans(parts["word/document.xml"].decode()))
+    assert n == 4
+
+    added = tracked.annotate_in_place(
+        path, [([0], "prose"), ([1, 2], "the fraction"), ([3], "display")],
+        author=AUTHOR, seed=_word_like_seed([]))
+
+    after = package.read_parts(path)
+    doc = after["word/document.xml"].decode()
+    assert added == 3
+    etree.fromstring(doc.encode())
+    for zone in re.findall(r"<m:oMath\b.*?</m:oMath>", doc, re.DOTALL):
+        assert "commentRange" not in zone and "commentReference" not in zone
+    assert re.search(r'<w:commentRangeStart w:id="\d+"/><m:oMath>', doc)
+    assert re.search(r'<w:commentRangeStart w:id="\d+"/><m:oMathPara>', doc)
+    assert lint_parts(after) == lint_parts(parts)
+
+
+def test_a_finding_LINT_did_not_see_before_is_refused(tmp_path,
+                                                      monkeypatch):
+    path = write(tmp_path / "working.docx", _proposal(3))
+    was = (tmp_path / "working.docx").read_bytes()
+    monkeypatch.setattr(
+        tracked, "lint_parts",
+        lambda parts: (["1 empty math object"] if any(
+            b"commentReference" in b for b in parts.values()) else []))
+
+    with pytest.raises(PackageError, match="1 empty math object"):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed([]))
+    assert (tmp_path / "working.docx").read_bytes() == was
+
+
+def test_running_it_AGAIN_is_refused_not_doubled(tmp_path):
+    """Finding 9. A corrected table on the same proposal put the stale and
+    the corrected reason side by side on every change."""
+    path = write(tmp_path / "working.docx", _proposal(3))
+    tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                              seed=_word_like_seed([]))
+    was = (tmp_path / "working.docx").read_bytes()
+
+    with pytest.raises(AnchorError, match="already carry a comment"):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed([]))
+    assert (tmp_path / "working.docx").read_bytes() == was
+
+
+def test_a_change_NO_block_can_name_is_refused_unless_partial(tmp_path):
+    """Finding 10. A formatting-only paragraph and a footnote revision
+    have no span; the call promised full coverage over them."""
+    parts = _proposal(3)
+    doc = parts["word/document.xml"].decode()
+    formatted = para('<w:r><w:rPr><w:b/><w:rPrChange w:id="60" '
+                     f'{_STAMP}><w:rPr/></w:rPrChange></w:rPr>'
+                     "<w:t>Bold now.</w:t></w:r>")
+    parts["word/document.xml"] = doc.replace(
+        "</w:body>", formatted + "</w:body>").encode()
+    parts["word/footnotes.xml"] = (
+        f'<w:footnotes xmlns:w="{W_NS}"><w:footnote w:id="2"><w:p>'
+        f'<w:ins w:id="61" {_STAMP}><w:r><w:t>new</w:t></w:r></w:ins>'
+        "</w:p></w:footnote></w:footnotes>").encode()
+    path = write(tmp_path / "working.docx", parts)
+
+    with pytest.raises(AnchorError) as exc:
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed([]))
+    said = str(exc.value)
+    assert "1 revision(s) in word/footnotes.xml (ins)" in said, said
+    assert "1 paragraph(s) or row(s)" in said and "rPrChange" in said
+
+    assert tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                     seed=_word_like_seed([]),
+                                     partial=True) == 2
+
+
+def test_a_paragraph_mark_BESIDE_a_span_is_that_span_s_change(tmp_path):
+    """The mark of a paragraph whose text is inserted is explained by the
+    balloon on that text; refusing it would refuse every real proposal."""
+    parts = _proposal(3)
+    doc = parts["word/document.xml"].decode()
+    parts["word/document.xml"] = doc.replace(
+        '<w:p w14:paraId="11111111" w14:textId="11111111">',
+        '<w:p w14:paraId="11111111" w14:textId="11111111"><w:pPr><w:rPr>'
+        f'<w:ins w:id="70" {_STAMP}/></w:rPr></w:pPr>', 1).encode()
+    path = write(tmp_path / "working.docx", parts)
+
+    assert tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                     seed=_word_like_seed([])) == 2
+
+
+def test_an_EMPTY_comments_part_takes_the_seed(tmp_path):
+    """Finding 14. `restore_parts` fills gaps only, so an empty
+    `<w:comments/>` kept its place: a Word session paid for, then "the
+    seed copy carries 0 comments", every time (RU Life_Expectancy)."""
+    parts = _proposal(3)
+    parts["word/comments.xml"] = (
+        f'<w:comments xmlns:w="{W_NS}"/>').encode()
+    path = write(tmp_path / "working.docx", parts)
+    calls: list[int] = []
+
+    assert tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                     seed=_word_like_seed(calls)) == 2
+    assert calls == [1]
+    assert len(C.read_all(package.read_parts(path))) == 2
+
+
+def test_EMPTY_comments_are_refused_BEFORE_Word_is_paid_for(tmp_path):
+    """One self-closing comment left: Word's save renumbers it, and the
+    graft then gave a false "anchored ... has no definition"."""
+    parts = _proposal(3)
+    parts["word/comments.xml"] = (
+        f'<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" '
+        f'w:author="A"/></w:comments>').encode()
+    path = write(tmp_path / "working.docx", parts)
+    calls: list[int] = []
+
+    with pytest.raises(ScaffoldMissing, match="1 empty comment"):
+        tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                  seed=_word_like_seed(calls))
+    assert calls == []
+
+
+def test_the_blocks_may_be_a_GENERATOR(tmp_path):
+    """Read twice — the coverage check, then the anchoring — a generator
+    was spent by the first and the call wrote nothing."""
+    path = write(tmp_path / "working.docx", _proposal(3))
+
+    assert tracked.annotate_in_place(
+        path, (b for b in _blocks(3)), author=AUTHOR,
+        seed=_word_like_seed([])) == 2
+    assert len(C.read_all(package.read_parts(path))) == 2
+
+
+def test_the_backup_goes_where_it_is_TOLD_and_holds_the_file_as_it_was(
+        tmp_path):
+    """A protocol manuscript keeps prior generations in build/rescue/,
+    not beside working.docx."""
+    path = write(tmp_path / "working.docx", _proposal(3))
+    was = (tmp_path / "working.docx").read_bytes()
+    rescue = tmp_path / "build" / "rescue"
+
+    tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                              seed=_word_like_seed([]), backup_into=rescue)
+
+    kept = list(rescue.glob("*pre_annotate*"))
+    assert len(kept) == 1 and kept[0].read_bytes() == was
+    assert not list(tmp_path.glob("*pre_annotate*"))
+
+
+def test_the_GRAFT_brings_the_comment_styles_and_the_author_s_initials(
+        tmp_path):
+    """What the review found no test reading: the styles Word added with
+    the seed, appended to the author's styles; and every balloon's
+    initials and date the author's, not the seed's."""
+    path = write(tmp_path / "working.docx", _proposal(3))
+
+    tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                              seed=_word_like_seed([]))
+
+    after = package.read_parts(path)
+    styles = after["word/styles.xml"].decode()
+    assert styles.index('w:styleId="Normal"') < styles.index(
+        'w:styleId="CommentText"'), "appended, the author's kept first"
+    assert 'w:styleId="CommentReference"' in styles
+    com = after["word/comments.xml"].decode()
+    heads = re.findall(r"<w:comment\b[^>]*>", com)
+    assert len(heads) == 2
+    for head in heads:
+        assert 'w:initials="ML"' in head and 'w:author="Michael Lokshin"' \
+            in head, head
+        assert 'w:date="2026-07-29' not in head, "not the seed's date"

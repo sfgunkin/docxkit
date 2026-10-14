@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1423,6 +1424,79 @@ def test_a_classifier_that_is_not_there_refuses_BEFORE_Word(
     assert fake.called_with == (), "Word was never asked"
 
 
+@pytest.mark.parametrize("source, sibling", [
+    # a dataclass under future annotations looks its module up in
+    # sys.modules while the class is made
+    ("from __future__ import annotations\n"
+     "from dataclasses import dataclass\n"
+     "@dataclass\nclass Rule:\n    sig: str\n    why: str\n"
+     "RULES = [Rule('cut', 'R3: shorter')]\n"
+     "def classify(ctx):\n"
+     "    return next((r.why for r in RULES if r.sig in ctx.text), None)\n",
+     None),
+    # a rules table in a file of its own, beside the classifier
+    ("from rules_1014 import RULES\n"
+     "def classify(ctx):\n"
+     "    return RULES.get(ctx.text)\n",
+     "RULES = {'cut': 'R3: shorter'}\n"),
+])
+def test_a_classifier_LOADS_as_python_would_run_it(project, monkeypatch,
+                                                   source, sibling):
+    """Exec'd with no `sys.modules` entry and its folder off the path,
+    both of these exited 70 as "a bug in docxkit" (review of
+    2026-10-14). Python runs `python why.py` with both in place."""
+    scripts = project.root / "revision" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "why.py").write_text(source, encoding="utf-8")
+    if sibling:
+        (scripts / "rules_1014.py").write_text(sibling, encoding="utf-8")
+    monkeypatch.delitem(sys.modules, "rules_1014", raising=False)
+    paper = _with_classify(project, "revision/scripts/why.py")
+    clean = write(paper.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    revision.build(paper, clean)
+
+    from docxkit.comments import RevisionContext
+    ctx = RevisionContext(text="cut", para="", window="", table_index=None,
+                          start=0, end=0)
+    assert fake.classify(ctx) == "R3: shorter"
+    assert str(scripts) not in sys.path, "the folder is put back"
+
+
+def test_a_classifier_that_RAISES_on_load_is_the_paper_s_error(project,
+                                                               monkeypatch):
+    scripts = project.root / "revision" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "why.py").write_text("def classify(ctx)\n", encoding="utf-8")
+    paper = _with_classify(project, "revision/scripts/why.py")
+    clean = write(paper.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    with pytest.raises(revision.ProtocolError,
+                       match=r"why\.py failed to load .*SyntaxError"):
+        revision.build(paper, clean)
+    assert fake.called_with == ()
+
+
+def test_a_classified_build_resolves_the_SAME_math_as_an_unclassified_one(
+        project, monkeypatch):
+    """`comment_math=False`: the classifier used to swap the math pass to
+    the CONTAINS scan, which applies a straddling revision whole."""
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+
+    revision.build(project, clean)
+
+    assert fake.kwargs["comment_math"] is False
+
+
 def test_build_PASSES_ON_the_two_switches_it_is_given(project, monkeypatch):
     """The other side of the defaults: both reach `tracked.build`
     rather than being read and dropped."""
@@ -1707,6 +1781,28 @@ def test_the_refusal_says_which_kind_only_WORD_can_clear(project,
 
     assert "only Word can clear w:cellMerge (1)" in str(exc.value)
     assert "Open the file in Word" in str(exc.value)
+    assert "the merged-cell change" in str(exc.value)
+
+
+def test_a_NUMBERING_change_is_not_called_a_table_change(project,
+                                                         monkeypatch):
+    """Both WORD_ONLY refusals said "accept or reject the table change"
+    of a `w:numberingChange` too, sending the reader through the tables
+    for a list's numbering (review of 2026-10-14)."""
+    numbered = ('<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId '
+                'w:val="1"/><w:numberingChange w:id="8" w:author="R" '
+                'w:date="2026-09-18T00:00:00Z" w:original="%1."/></w:numPr>'
+                "</w:pPr>" + run("item") + "</w:p>")
+    write(project.working, make_parts(numbered))
+    clean = write(project.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    monkeypatch.setattr(revision.tracked, "build", _FakeBuild())
+
+    with pytest.raises(WorkingPending) as exc:
+        revision.build(project, clean)
+
+    assert "the numbering change" in str(exc.value)
+    assert "table change" not in str(exc.value)
 
 
 @pytest.mark.parametrize("kind", sorted(INVISIBLE))

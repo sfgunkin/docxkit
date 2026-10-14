@@ -1282,12 +1282,13 @@ def test_an_unreachable_equation_does_not_end_the_math_pass():
     assert any("unreachable" in n for n in notes), notes
 
 
-def test_an_unclassified_math_revision_still_gets_the_GENERIC_comment():
-    """`comment or generic or _comments.GENERIC`, and the last term is
+def test_an_unclassified_math_revision_still_gets_the_SCAFFOLD_comment():
+    """`comment or generic or _comments.SCAFFOLD`, and the last term is
     what makes the chain safe: the XML pass CLONES a Word-made comment,
     so this one exists to be cloned. `and` in its place hands Word None
     and the comment is never made — the build then fails much later
-    with ScaffoldMissing."""
+    with ScaffoldMissing. The marker, not GENERIC: under generic=None
+    the build removes it again (review of 2026-10-14)."""
     from docxkit import tracked as T
 
     added: list[str] = []
@@ -1299,7 +1300,7 @@ def test_an_unclassified_math_revision_still_gets_the_GENERIC_comment():
 
     T._comment_revision(doc, rev, lambda ctx: None, None, [])
 
-    assert added == [T._comments.GENERIC], added
+    assert added == [T._comments.SCAFFOLD], added
 
 
 def test_a_comment_word_refuses_names_THIRTY_characters_of_the_revision():
