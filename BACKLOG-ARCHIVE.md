@@ -14,6 +14,171 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `_doomed_bookmarks` drops a bookmark kept by a paragraph mark or a hyphen~~ — FIXED 14.10, `97b0b4e`
+
+<!-- status: fixed -->
+
+Review finding 11. Only `_BOOKMARKED` elements count as surviving
+content, so a bookmark whose only surviving content is a paragraph mark,
+a cell end, or a `noBreakHyphen`/`softHyphen`/`ptab`/note reference/
+`pgNum` is dropped, which the commit's own rule (and Word) keeps; `tab`
+also matches a paragraph's tab stops, erring the other way. `accept` on
+`[bmStart X][del A]¶[del B][bmEnd X]` removes X. On the XML-accept lanes
+(Aging_Well `accept.py`, AFI `accept_batch.py`) X then vanishes and
+`baseline` excuses it. Latent: none of 117 kept redlines has the shape.
+
+**Fixed 2026-10-14**, `97b0b4e`. A surviving paragraph mark between the ends (`_marks_between`, which honours a selective predicate), a cell end, every `_xml.PRINTED_CHILDREN` and the note/page/positional marks count as kept content; `w:tabs/w:tab` does not. 117 kept redlines, accepted, rejected and del-only views of every text part: 1,053 views byte-identical before and after; goldens unchanged.
+
+### ~~S4 — a classified build whose body has no revision dies with `KeyError: word/comments.xml`~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 15. `_seed_scaffold` seeds nothing when Word's body
+`Revisions.Count` is 0 (a footnote-only, bookmark-only or no-op edit),
+and `tracked.build` still runs `comments.annotate`, whose
+`_Scaffold.read` indexes the part: "internal error - KeyError", exit 70,
+after the full Compare, no batch, a stray `~batch.building.docx`. The
+same batch builds without a classifier.
+
+**Fixed 2026-10-14**, `38ffd8b`. `tracked._comment_pass`: a body with no span is said ("comments: none") and skipped; spans with no scaffold refuse with `ScaffoldMissing` by name. Tests: `test_a_body_with_NO_span_and_no_scaffold_is_said_not_crashed`, `test_spans_with_NO_scaffold_are_refused_by_name`.
+
+### ~~S4 — `annotate_in_place` pays for a Word seed, then refuses a file whose comments part is empty~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 14. It seeds whenever `has_scaffold()` is False, but
+grafts with `hygiene.restore_parts`, which copies only MISSING parts. A
+manuscript with an empty `<w:comments/>` (the RU Life_Expectancy
+working copy today: 125 pending spans, `[batch] carry` lists
+`word/comments.xml`; `comments.remove` leaves the same state) runs Word
+(up to 900 s) and is refused "the seed copy carries 0 comments" every
+time; one leftover self-closing `<w:comment/>` gives a false "anchored …
+has no definition" instead.
+
+**Fixed 2026-10-14**, `38ffd8b`. A comments part holding no comment is replaced by the seed's (`_graft_comment_parts`); one holding only empty comments is refused BEFORE Word with what to do (`_no_empty_comments`). Tests: `test_an_EMPTY_comments_part_takes_the_seed`, `test_EMPTY_comments_are_refused_BEFORE_Word_is_paid_for`.
+
+### ~~S2 — `annotate_blocks` reports full coverage over changes no block can name~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 10. Coverage counts `revisions.spans(document.xml)` only:
+run-level ins/del in the body. Property-only changes, moves in span-less
+paragraphs and footnote/endnote revisions get no balloon, and the call
+still reports success. HPPA's kept streamline redline with the paper's
+own 78 blocks: 78 comments, while its script had covered the T12.2
+format-only change with `add_at` (79); all 58 rPrChange and 91
+pPrChange there fall outside every span. LI7: 59 note revisions and 19
+moves unexplained.
+
+**Fixed 2026-10-14**, `38ffd8b`. `comments._unreachable` names what no block can: revisions in any other text part, and paragraphs or rows of the body changed with no span in them (property changes, moves, marks). The call refuses unless `partial=True`. On LI7: "59 revision(s) in word/footnotes.xml; 43 paragraph(s) or row(s) … (del, ins, moveFrom, moveTo, rPrChange, sectPrChange, tblGridChange, tblPrChange, tcPrChange)". A mark beside a span is that span's change and does not refuse (`test_a_paragraph_mark_BESIDE_a_span_…`).
+
+### ~~S2 — re-running `annotate_in_place` adds a second full set of balloons~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 9. `annotate_blocks` anchors by span index and never asks
+whether a span already carries a balloon; `_cover` passes because the
+anchors sit between spans. A corrected re-run on the same proposal
+leaves the stale and the corrected reason on every change and returns
+the count of a clean run. `comments.annotate` is documented idempotent;
+this path is not.
+
+**Fixed 2026-10-14**, `38ffd8b`. `annotate_blocks` refuses, writing nothing, when a span already carries a comment by the same author whose range opens on it, and names the ids to remove. Test: `test_running_it_AGAIN_is_refused_not_doubled`.
+
+### ~~S2 — `generic=None` still writes "Revision (unclassified)" balloons~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 8. `_decide` turns a classifier's `''` into `generic or
+GENERIC`, the Word-side `_comment_revision` writes `comment or generic
+or GENERIC` for the seed and math comments, and `reclassify` returns
+early when `generic is None`, so nothing repairs them. `_init.py`'s
+template promises "an empty answer leaves that revision without one";
+the build reports `unclassified: 0` over a file full of them.
+
+**Fixed 2026-10-14**, `38ffd8b`. `_decide` and `reclassify` treat `''` as no answer. Under `generic=None` Word's comments read `comments.SCAFFOLD`; after `reclassify` has had its chance with the XML context, every comment still reading it is removed and counted unclassified. Test: `test_generic_NONE_leaves_a_revision_with_no_reason_BARE`.
+
+### ~~S2 — a classified build credits every reason balloon to the Office user or a referee~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 7. The XML comment pass in `tracked.build` never gets
+`author`; `_clone_comment` copies the template's `w:author`, initials
+and date. With `author = "Michael Lokshin"` the revisions are his and
+every balloon is the machine's Office user's (the seed) — or "Referee 2"
+when a carried-in referee comment comes first. `annotate_blocks` got
+`_credit` in the same commit; this path did not. AFI's classified
+redlines carry 107 and 246 such balloons, restamped by a paper script.
+
+**Fixed 2026-10-14**, `38ffd8b`. `tracked._credit_new` credits every comment no input explains (counted the de-duplication's way) to `author`, initials and date — the clones and Word's own seed and math comments; a referee's carried-in comment keeps its name. `annotate` takes `credit=` for the clones; `annotate_blocks` uses the same `Credit`. Test: `test_the_comment_pass_CREDITS_the_author_and_leaves_the_referee`.
+
+### ~~S3 — with `[batch] classify` set, every default `revision build` without maths is refused as MathResolved~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 5. With a classifier, `_resolve_math` runs
+`_comment_and_accept_math_revisions`, whose `MathOutcome(seeded or
+_seed_scaffold(...))` counts the SCAFFOLD comment as one accepted math
+revision. `revision build build/clean.docx`, no flags, prose only:
+`math_resolved=1`, refused at `_build.py:426` after the Compare with
+batch.docx written and no BUILT event. Its remedies are `--keep-math` or
+`--allow-math-resolve`, and the second disables the real guard. The
+classifier also silently swaps the math pass from the CONTAINED walk to
+the CONTAINS scan (straddling revisions applied whole, a COM call per
+revision). The 5caf833 tests fake `tracked.build`, so none reached it.
+Reproduced end to end by five agents.
+
+**Fixed 2026-10-14**, `38ffd8b`. `_comment_and_accept_math_revisions` returns the math it ACCEPTED, nothing else; the scaffold is seeded by `_math_pass` when Word holds no comment and is never counted. `tracked.build(comment_math=False)` resolves exactly what an unclassified build does, and `revision build` passes it. `test_a_classified_build_WITHOUT_math_resolves_none` drives the real `tracked.build` through a fake Word with a prose revision: `math_resolved` was 1, is 0.
+
+### ~~S2 — a multi-paragraph, text-less or tracked first comment corrupts every cloned balloon~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 4. `_clone_comment` copies the package's FIRST comment
+with content, renumbers only the first `w14:paraId` and fills only the
+first `w:t`. A two-paragraph template (17 of 274 Word-saved manuscripts
+with a scaffold, HPPA2 among them) leaves each balloon an empty second
+paragraph carrying the template's LAST paraId, which Word (123/123) and
+`threads`/`set_done` key the done-state on: new balloons read done, a
+reply lands on the wrong balloon, `set_done(['2'])` reopens the
+referee's comment. A text-less template (an equation-only remark) keeps
+the referee's words in every balloon; a template holding a `w:ins`
+duplicates its revision id. Clones also keep the template's `w:date`.
+
+**Fixed 2026-10-14**, `38ffd8b`. `comments._plain` cuts the template to the comment's open tag, its first paragraph's open tag and style, the annotation mark and one text run. A clone has one paragraph (its paraId the reserved one the side parts are keyed on), no copied `w:ins`, and a text-less template still takes the text. `test_the_clone_replaces_ONE_id_and_ONE_paraId` had pinned the two-paragraph clone; it is rewritten to assert the fix. Dates: see the credit entry.
+
+### ~~S2 — `annotate_in_place` anchors comments inside equations and writes invalid maths unlinted~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 3. `annotate_blocks` anchors on `revisions.spans()`
+entries, some of which sit inside an equation (math ins/del inside
+`m:r`, and `m:ctrlPr`'s `w:ins`/`w:del` flags). On a copy of
+LI7_tracked.docx (1,759 spans, 446 inside equations), one block per
+paragraph writes `<m:r><w:commentRangeStart/><w:ins>…` and the same
+inside `m:ctrlPr`, which admits only rPr/ins/del. `lint_parts` is clean
+before and afterwards reports 9 empty math objects. `tracked.build`
+would refuse this at its lint step; `annotate_in_place` has none.
+
+**Fixed 2026-10-14**, `38ffd8b`. `comments._place` widens a range that touches an equation to the whole `m:oMathPara`, else `m:oMath` (`_xml.MATH_ZONE_RE`), and writes every range in one ascending pass, so ranges widened to the same equation cannot interleave. `annotate_in_place` lints the result and refuses any finding the file did not already carry. On a copy of LI7_tracked (1,759 spans, one block each, `partial=True`): no anchor inside maths, lint clean before and after (was 9 empty math objects), both views' text unchanged. `tracked.build`'s comment pass shares the writer.
+
+### ~~S1 — `annotate_in_place` writes back stale bytes over a save made during the Word seed~~ — FIXED 14.10, `38ffd8b`
+
+<!-- status: fixed -->
+
+Review finding 2. `tracked.annotate_in_place` checks the lock and reads
+the manuscript once (`tracked.py:978-980`), runs a Word seed (seconds
+warm, ~100 s cold, 900 s ceiling), then backs up and writes those parts
+with no lock or hash re-check. An accept/reject the author saves in that
+window (or a OneDrive sync) is reverted and survives only in
+`*_pre_annotate1.docx`; `_only_comments_changed` compares against the
+same stale read, so it passes. If Word still holds the file at write
+time the result is a raw PermissionError (exit 70), not DocumentLocked.
+HPPA's script this generalises checked `sha16(WORKING) !=
+EXPECTED_WORKING` before installing; the library dropped that guard.
+
+**Fixed 2026-10-14**, `38ffd8b`. The file is hashed when it is read and again just before it is replaced: a file saved meanwhile is refused ("changed on disk … run it again on the new file") and nothing is written; a file opened in Word by then, or a write the system refuses, is `DocumentLocked`, not a raw PermissionError. Tests in `test_comments_in_place.py`: `test_a_save_made_WHILE_WORD_SEEDS_is_not_overwritten`, `test_a_file_OPENED_while_Word_seeds_…`, `test_a_write_REFUSED_by_the_system_…`; all three fail without it.
+
 ### ~~S4 — no supported way to comment a proposal: `revision build` passes no classifier, and nothing annotates a promoted one~~ — FIXED 12.10, `5caf833`
 
 <!-- status: fixed -->
