@@ -1095,8 +1095,19 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     vanish, keep = (("del", "moveFrom"), ("ins", "moveTo")) \
         if mode == FINAL else (("ins", "moveTo"), ("del", "moveFrom"))
 
+    # Asked once per revision and remembered: the bookmark pass and the
+    # content pass both consult it, and `where` may be a person's
+    # judgment or an expensive lookup (review 2026-10-14). Keyed on the
+    # element itself, which the dict keeps alive, so its identity holds.
+    decided: dict[tuple[_Element, str], bool] = {}
+
     def wants(el: _Element, kind: str) -> bool:
-        return where is None or where(_info(el, kind))
+        if where is None:
+            return True
+        key = (el, kind)
+        if key not in decided:
+            decided[key] = where(_info(el, kind))
+        return decided[key]
 
     # BEFORE the content goes: `_apply_content` lifts a removed span's
     # markers out to where it stood, and what decides whether Word keeps

@@ -225,3 +225,31 @@ def test_accepting_an_insertion_leaves_the_DELETION_inside_it_deleted():
 
     assert "<w:delText>struck</w:delText>" in out, out
     assert counts(out) == (0, 1), "Bob's deletion is still pending"
+
+
+def test_the_predicate_is_asked_ONCE_per_revision():
+    """`where` may be a person's judgment behind a prompt or an expensive
+    lookup; the bookmark pass and the content pass each asked it, so
+    every revision in a document with a bookmark was decided twice
+    (review 2026-10-14). A deleted paragraph mark between two cuts
+    inside a bookmark reaches every caller of the predicate."""
+    from collections import Counter
+
+    asked: Counter[tuple[str, str]] = Counter()
+
+    def where(r):
+        asked[(r.kind, r.text)] += 1
+        return True
+
+    xml = doc(
+        '<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="A" '
+        'w:date="2026-07-30T00:00:00Z"/></w:rPr></w:pPr>'
+        + run("Kept ") + '<w:bookmarkStart w:id="1" w:name="b"/>'
+        + del_by("A", "one", 3) + "</w:p>"
+        + para(del_by("A", "two", 4), '<w:bookmarkEnd w:id="1"/>',
+               ins_by("B", "new", 5)))
+
+    accept(xml, where=where)
+    reject(xml, where=where)
+
+    assert set(asked.values()) == {2}, asked     # once per view
