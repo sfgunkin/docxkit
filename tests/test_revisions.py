@@ -880,6 +880,101 @@ def test_a_deleted_PARAGRAPH_MARK_is_not_content_a_bookmark_spans():
     assert _names(accept(xml)) == {"kept_text"}
 
 
+# --- what SURVIVES between a bookmark's ends (review 2026-10-14, #11) ---
+#
+# The rule above counted only text-like run children as content, so a
+# bookmark whose one surviving piece was a paragraph mark, a cell end or
+# a hyphen read as all-deleted and was dropped, which Word does not do.
+
+def _mark(flag: str = "", rid: int = 50) -> str:
+    """A paragraph's opening, its mark flagged `flag` (``del``/``ins``)."""
+    if not flag:
+        return '<w:p w14:paraId="11111111" w14:textId="11111111">'
+    return (f'<w:p w14:paraId="11111111" w14:textId="11111111"><w:pPr>'
+            f'<w:rPr><w:{flag} w:id="{rid}" w:author="Revision" '
+            f'w:date="2026-10-14T00:00:00Z"/></w:rPr></w:pPr>')
+
+
+def test_a_PARAGRAPH_MARK_that_stays_keeps_a_bookmark_across_two_cuts():
+    """`[start][del A] ¶ [del B][end]`: the mark between the cuts stays,
+    so the bookmark spans surviving content."""
+    xml = document(_mark() + run("Kept. ") + _bs(1, "across_a_mark")
+                   + dele("A", rid=60) + "</w:p>"
+                   + para(dele("B", rid=61), _be(1), run(" tail.")))
+
+    assert _names(accept(xml)) == {"across_a_mark"}
+
+
+def test_an_INSERTED_mark_between_two_insertions_goes_on_reject():
+    """The mirror: rejecting removes the inserted mark with the words, so
+    nothing between the ends survives and the bookmark goes; with the
+    mark the baseline's, it stays."""
+    def shape(flag: str) -> str:
+        return document(_mark(flag) + run("Kept ") + _bs(1, "round")
+                        + ins("A", rid=60) + "</w:p>"
+                        + para(ins("B", rid=61), _be(1), run(" tail.")))
+
+    assert _names(reject(shape("ins"))) == set()
+    assert _names(reject(shape(""))) == {"round"}
+
+
+def test_a_DELETED_mark_between_two_cuts_still_dooms_the_bookmark():
+    xml = document(_mark("del") + run("Kept. ") + _bs(1, "all_gone")
+                   + dele("A", rid=60) + "</w:p>"
+                   + para(dele("B", rid=61), _be(1), run(" tail.")))
+
+    assert _names(accept(xml)) == set()
+
+
+def test_a_SELECTIVE_accept_that_leaves_the_mark_pending_keeps_the_bookmark():
+    """`where` approves the two deletions and not the mark, which stays
+    in the document between them."""
+    xml = document(_mark("del") + run("Kept. ") + _bs(1, "mark_pending")
+                   + dele("A", rid=60) + "</w:p>"
+                   + para(dele("B", rid=61), _be(1), run(" tail.")))
+
+    out = accept(xml, where=lambda r: r.kind == "del")
+
+    assert _names(out) == {"mark_pending"}
+
+
+def test_a_CELL_END_between_two_cuts_keeps_the_bookmark():
+    cell = "<w:tc><w:tcPr/>{}</w:tc>"
+    xml = document(
+        "<w:tbl><w:tr>"
+        + cell.format(para(run("x "), _bs(1, "across_cells"),
+                           dele("A", rid=60)))
+        + cell.format(para(dele("B", rid=61), _be(1), run(" y")))
+        + "</w:tr></w:tbl>" + para(run("After.")))
+
+    assert _names(accept(xml)) == {"across_cells"}
+
+
+@pytest.mark.parametrize("child", [
+    "<w:noBreakHyphen/>", "<w:softHyphen/>", '<w:ptab w:relativeTo="margin" '
+    'w:alignment="right" w:leader="none"/>', "<w:pgNum/>",
+    "<w:footnoteRef/>", "<w:endnoteRef/>", "<w:tab/>"])
+def test_a_PRINTED_run_child_that_stays_keeps_the_bookmark(child):
+    xml = document(para(run("Kept "), _bs(1, "printed"), dele("A", rid=60),
+                        f"<w:r>{child}</w:r>", dele("B", rid=61), _be(1),
+                        run(" tail.")))
+
+    assert _names(accept(xml)) == {"printed"}
+
+
+def test_a_paragraphs_TAB_STOPS_are_not_content_a_bookmark_spans():
+    """`w:tabs/w:tab` defines a stop and prints nothing; read as the run
+    child it is spelled like, it kept a bookmark round nothing but a
+    deletion."""
+    xml = document(
+        _bs(1, "over_stops")
+        + '<w:p w14:paraId="11111111"><w:pPr><w:tabs>'
+        '<w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr>'
+        + dele("A", rid=60) + _be(1) + run(" tail.") + "</w:p>")
+
+    assert _names(accept(xml)) == set()
+
+
 def test_TWO_equations_touched_by_one_pass_are_both_pruned():
     """`not any(om is seen for seen in touched)` — the list of equations
     a removal reached into, collected before the elements leave the

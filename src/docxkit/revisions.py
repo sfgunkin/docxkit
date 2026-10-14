@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 from ._xml import (
     MATH_OBJECTS,
     PARA_RE,
+    PRINTED_CHILDREN,
     delta_text,
     matching_close,
     used_prefixes,
@@ -227,10 +228,18 @@ def _lift_anchors(el: _Element,
 #: :func:`_doomed_bookmarks`. A field's own characters are content: a
 #: bookmark round a citation whose result was deleted and whose code
 #: survives is one Word keeps (Aging_Well 2026-08-27, `Olshansky2006txt`).
+#: So is every run child that prints (`_xml.PRINTED_CHILDREN`, and the
+#: marks a note, a page number or a positional tab put on the page): a
+#: kept hyphen between two cuts kept nothing here before 2026-10-14.
+#: A paragraph mark is content too, and is not an element; see
+#: :func:`_marks_between`.
 _BOOKMARKED = frozenset(W + tag for tag in (
     "t", "delText", "instrText", "delInstrText", "fldChar", "fldSimple",
-    "tab", "br", "cr", "sym", "drawing", "object", "pict",
-    "footnoteReference", "endnoteReference")) | {MATH + "t"}
+    *PRINTED_CHILDREN, "sym", "drawing", "object", "pict",
+    "footnoteReference", "endnoteReference", "footnoteRef", "endnoteRef",
+    "ptab", "pgNum", "separator", "continuationSeparator", "dayShort",
+    "dayLong", "monthShort", "monthLong", "yearShort", "yearLong",
+    )) | {MATH + "t"}
 
 _TEXT_BEARING = frozenset({W + "t", W + "delText", MATH + "t"})
 
@@ -252,40 +261,89 @@ def _doomed_bookmarks(root: _Element, tag: str,
     sits inside a removed `tag`. One that spans surviving content stays,
     and so does an EMPTY one inside a revision — Word kept both of the
     two it met (HPPA 2026-10-10, `Findsent2011txt`, `Saisana2005txt`).
+    A paragraph mark that stays between the two ends is surviving
+    content, and so is a cell end, which is the last paragraph's mark.
     Moves are outside the rule: Word dropped a bookmark inside a
     `w:moveTo` on reject (Aging_Well 2026-09-07, `Brown2019txt`), and
     :func:`_lift_anchors` keeps such markers on purpose for DSI's sake,
     with one measurement each way and no rule between them yet.
+
+    A flat pass over the tags that matter, not a recursive walk of every
+    element: that walk cost 27-82 % of a whole accept or reject on the
+    kept redlines (2026-10-14), and its self-referencing closure kept
+    the parsed tree alive until the cycle collector ran.
     """
+    if next(root.iter(W + "bookmarkStart"), None) is None:
+        return []
     flag = W + tag
+    removed: set[_Element] = set()
+    for el in root.iter(flag):
+        parent = el.getparent()
+        if parent is not None and parent.tag not in _FLAG_PARENTS \
+                and wants(el, tag):
+            removed.update(el.iter(*_BOOKMARKED))
+    if not removed:
+        return []        # nothing goes, so nothing can go with it
+
     opened: dict[str | None, _Span] = {}
+    candidates: list[tuple[_Element, _Element]] = []
+    for el in root.iter(W + "bookmarkStart", W + "bookmarkEnd",
+                        *_BOOKMARKED):
+        if el.tag == W + "bookmarkStart":
+            opened[el.get(W + "id")] = _Span(el)
+        elif el.tag == W + "bookmarkEnd":
+            span = opened.pop(el.get(W + "id"), None)
+            if span is not None and span.removed and not span.kept:
+                candidates.append((span.start, el))
+        elif opened and not (el.tag == W + "tab"     # a stop, not a tab
+                             and _parent(el).tag == W + "tabs"):
+            size = len(el.text or "") if el.tag in _TEXT_BEARING else 1
+            gone = el in removed
+            for span in opened.values():
+                if gone:
+                    span.removed += size
+                else:
+                    span.kept += size
     doomed: list[_Element] = []
-
-    def walk(el: _Element, inside: bool) -> None:
-        # A comment or a PI matches no tag below and has no children, so
-        # it needs no case of its own.
-        for child in el:
-            here = inside or (child.tag == flag
-                              and el.tag not in _FLAG_PARENTS
-                              and wants(child, tag))
-            if child.tag == W + "bookmarkStart":
-                opened[child.get(W + "id")] = _Span(child)
-            elif child.tag == W + "bookmarkEnd":
-                span = opened.pop(child.get(W + "id"), None)
-                if span is not None and span.removed and not span.kept:
-                    doomed.extend((span.start, child))
-            elif child.tag in _BOOKMARKED:
-                size = (len(child.text or "")
-                        if child.tag in _TEXT_BEARING else 1)
-                for span in opened.values():
-                    if here:
-                        span.removed += size
-                    else:
-                        span.kept += size
-            walk(child, here)
-
-    walk(root, False)
+    for start, end in candidates:
+        if not _marks_between(root, start, end, flag, wants):
+            doomed.extend((start, end))
     return doomed
+
+
+def _paragraph_of(el: _Element) -> _Element | None:
+    """The nearest ``w:p`` holding `el`, or None at block level."""
+    return next(el.iterancestors(W + "p"), None)
+
+
+def _marks_between(root: _Element, start: _Element, end: _Element,
+                   flag: str, wants: Callable[[_Element, str], bool]
+                   ) -> bool:
+    """Does a paragraph mark that STAYS lie between `start` and `end`?
+
+    Asked only of a bookmark whose every other piece of content goes,
+    which is rare, so the document-order positions are paid for only
+    then. A paragraph's mark sits after its last descendant; it stays
+    unless its own ``w:rPr`` flag is the side going and `wants` it —
+    under a predicate a deleted mark left pending is still there.
+    """
+    if _paragraph_of(start) is _paragraph_of(end) is not None:
+        return False                 # one paragraph: no mark between
+    order = {el: i for i, el in enumerate(root.iter())}
+    lo, hi = order[start], order[end]
+    for para in root.iter(W + "p"):
+        if order[para] > hi:
+            break
+        last = para
+        while len(last):
+            last = last[-1]
+        # the mark follows `last`, so a start that IS `last` precedes it
+        if not lo <= order[last] < hi:
+            continue
+        mark = _mark_flag(para, (flag[len(W):],))
+        if mark is None or not wants(mark, "paragraph-mark"):
+            return True
+    return False
 
 
 class _Span:
