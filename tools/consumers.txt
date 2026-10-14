@@ -50,15 +50,19 @@ docxkit._table_layout	_column_needs
 docxkit._table_layout	_side_margins
 docxkit._table_layout	booktabs
 docxkit._table_layout	plan_booktabs
+docxkit._xml	COMMENTS
 docxkit._xml	DOCUMENT
 docxkit._xml	ENDNOTES
 docxkit._xml	FOOTNOTES
 docxkit._xml	INSTR_ANCHOR_RE
 docxkit._xml	INSTR_RE
 docxkit._xml	PARA_RE
+docxkit._xml	Parts
 docxkit._xml	RUN_RE
 docxkit._xml	_FIELD_RE
 docxkit._xml	_HYPERLINK_EL_RE
+docxkit._xml	delta_text
+docxkit._xml	editable_text
 docxkit._xml	field_spans
 docxkit._xml	internal_links
 docxkit._xml	own_properties
@@ -106,6 +110,7 @@ docxkit.comments	annotate
 docxkit.comments	match
 docxkit.comments	reclassify
 docxkit.compare	compare
+docxkit.console	utf8_stdout
 docxkit.crossrefs	audit
 docxkit.crossrefs	find_captions
 docxkit.crossrefs	link
@@ -150,6 +155,7 @@ docxkit.hygiene	restore_math_glyphs
 docxkit.hygiene	restore_parts
 docxkit.hygiene	smarten
 docxkit.hygiene	smarten_parts
+docxkit.hygiene	strip_parts
 docxkit.lint	lint_parts
 docxkit.package	changed_parts
 docxkit.package	edit_in_place
@@ -157,6 +163,7 @@ docxkit.package	read_parts
 docxkit.package	readable
 docxkit.package	text_parts
 docxkit.package	write_docx
+docxkit.paragraph	split
 docxkit.refstyle	_fold
 docxkit.refstyle	audit
 docxkit.refstyle	convert
@@ -169,6 +176,7 @@ docxkit.revision	load_paper
 docxkit.revision	rescue_path
 docxkit.revision	state
 docxkit.revision._config	load_paper
+docxkit.revision._promote	rescue_path
 docxkit.revisions	accept
 docxkit.revisions	counts
 docxkit.save	edit_in_place
