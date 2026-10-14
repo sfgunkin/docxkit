@@ -1316,7 +1316,7 @@ def test_the_build_SAYS_it_carried_Track_Changes_across():
         return (f"<w:settings {NS}>{inner}</w:settings>").encode()
 
     parts = {"word/settings.xml": settings("<w:zoom/>")}
-    report, said = tracked.BuildReport(), []
+    report, said = tracked.BuildReport(), list[str]()
 
     tracked._carry_rewrites(parts,
                             {"word/settings.xml": settings(
