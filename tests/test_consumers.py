@@ -86,6 +86,16 @@ PRIVATE = {
     # `docxkit.revision.load_paper` — so this is a path to move off, not
     # machinery to promote.
     ("docxkit.revision._config", "load_paper"),
+    # 2026-10-14, seen when the snapshot was refreshed after the review
+    # of that day: HPPA_Index's `scripts/applied/streamline_comments.py`
+    # (spent; the 500-line script `tracked.annotate_in_place` replaced)
+    # and Misconceptions' `revision/do/W19_eh_7500.py`. `rescue_path` is
+    # also public as `docxkit.revision.rescue_path`.
+    ("docxkit._xml", "COMMENTS"),
+    ("docxkit._xml", "Parts"),
+    ("docxkit._xml", "delta_text"),
+    ("docxkit._xml", "editable_text"),
+    ("docxkit.revision._promote", "rescue_path"),
 }
 
 #: The four promoted on 2026-09-01, with the public path they now have.
