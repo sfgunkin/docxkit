@@ -1309,6 +1309,51 @@ def test_generic_NONE_leaves_a_revision_with_no_reason_BARE(monkeypatch):
     assert report.unclassified == 2       # "gone", and the seed's span
 
 
+def test_the_build_SAYS_it_carried_Track_Changes_across():
+    """Compare writes settings.xml with tracking off; the carry is made
+    by `keep_tracking` and this is where the build names it."""
+    def settings(inner: str) -> bytes:
+        return (f"<w:settings {NS}>{inner}</w:settings>").encode()
+
+    parts = {"word/settings.xml": settings("<w:zoom/>")}
+    report, said = tracked.BuildReport(), []
+
+    tracked._carry_rewrites(parts,
+                            {"word/settings.xml": settings(
+                                "<w:trackRevisions/>")}, {}, report,
+                            said.append)
+
+    assert report.carried_properties == ["w:trackRevisions"]
+    assert any("Track Changes was ON" in s for s in said)
+
+
+def test_a_comment_count_Word_cannot_give_reads_as_NONE():
+    """...so the scaffold is seeded: one comment too many costs nothing,
+    one too few fails the build with ScaffoldMissing."""
+    class _Hostile:
+        @property
+        def Comments(self):
+            raise RuntimeError("Word is busy")
+
+    assert tracked._comment_count(_Hostile()) == 0
+
+
+def test_credit_goes_to_NOTHING_an_input_explains_or_that_has_no_text():
+    """Counted, not looked up: the input's ONE copy explains one copy
+    here, and an empty comment is nothing this build writes."""
+    empty = ('<w:comment w:id="5" w:author="Referee 2" w:initials="R">'
+             "<w:p/></w:comment>")
+    referee = _word_comment(1, "Clarify the sample.", "Referee 2",
+                            "AAAA0002")
+    parts = make_parts(para(run("x")), comment_items=(referee, empty))
+    was = parts["word/comments.xml"]
+    credit = tracked._comments.Credit("A", "A", "2026-10-14T00:00:00Z")
+
+    assert tracked._credit_new(parts, (make_parts(
+        para(run("x")), comment_items=(referee,)),), credit) == 0
+    assert parts["word/comments.xml"] == was
+
+
 def test_a_body_with_NO_span_and_no_scaffold_is_said_not_crashed():
     """Finding 15. A footnote-only batch: Word seeds on body revision 1,
     there is none, and `annotate` died on KeyError after the Compare."""
