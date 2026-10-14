@@ -418,6 +418,39 @@ def test_a_link_Word_STRIPPED_beside_the_cuts_refuses_them_all(tmp_path):
     assert "Sen1999" in str(caught.value)
 
 
+# ------------------------------------------------------ the evidence
+
+def test_the_stream_skips_comments_snapshots_and_field_codes():
+    """What `_accepted_here` compares is what a reader sees: an XML
+    comment, a formatting snapshot and a field's code are not text, and
+    the note mark's place and state are kept."""
+    from lxml import etree
+
+    from docxkit.revision._losses import _DEL, _SAME, _stream
+
+    xml = (f'<w:body {_NS_W}><w:p><!-- a remark -->'
+           '<w:r><w:rPr><w:rPrChange w:id="1"><w:rPr/></w:rPrChange>'
+           '</w:rPr><w:instrText>REF x</w:instrText><w:t>Kept.</w:t></w:r>'
+           + _del('<w:r><w:delText>Cut.</w:delText></w:r>' + _ref(3), 7)
+           + "</w:p></w:body>")
+    texts, marks = _stream(etree.fromstring(xml))
+
+    assert texts == [("Kept.", _SAME), ("Cut.", _DEL)]
+    assert [(m.kind, m.key, m.state, m.at) for m in marks] == [
+        ("footnote", "3", _DEL, 2)]
+
+
+def test_a_loss_no_batch_proposes_is_never_excused():
+    """A glyph Word flattened or a comment count is not a kind a batch
+    deletes, so `batch_deletions` hands the list back untouched."""
+    from docxkit.revision._losses import Loss, batch_deletions
+
+    gone = [Loss("glyph", "− -> -"), Loss("comment", "1 comment(s)")]
+    parts = make_parts(para(run("x")))
+
+    assert batch_deletions(gone, parts, parts, parts) == ([], gone)
+
+
 # ------------------------------------------------- a batch Word holds
 
 def _word_holds_batch(monkeypatch, paper):
