@@ -784,8 +784,16 @@ def restored_bookmarks(baseline: Parts, clean: Parts,
     as the author's deletion sends them looking for an edit they never
     made. Only a name the baseline already carried is one the clean edit
     can have removed.
+
+    And the build is read ACCEPTED (review of 2026-10-14). A bookmark
+    round words the clean edit deleted sits round a ``w:del`` in the
+    redline, and accepting drops it with them, as Word does
+    (2026-10-12). Read off the raw redline, it was reported here and
+    the author told to delete it by hand after the promote — which
+    removes a back-link target from a deletion they can still REJECT.
     """
-    return sorted((_bookmarks(baseline) & _bookmarks(built))
+    return sorted((_bookmarks(baseline)
+                   & _bookmarks(tracked.accepted_view(built)))
                   - _bookmarks(clean))
 
 

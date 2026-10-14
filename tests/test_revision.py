@@ -3606,6 +3606,26 @@ def test_build_says_which_bookmark_compare_put_back(project, monkeypatch):
     assert "Lari2023" in said and "AFTER the promote" in said
 
 
+def test_a_bookmark_ACCEPTING_drops_is_not_reported_as_restored():
+    """Review 2026-10-14, finding 6. The clean edit deleted a citation,
+    Compare kept its `*txt` bookmark round the deleted words, and since
+    2026-10-12 accepting drops a bookmark whose content was all deleted,
+    as Word does. Advising a manual deletion after the promote was
+    advice to remove a back-link target the author could still REJECT
+    the deletion of, and the target is then gone for good."""
+    base_mark = ('<w:bookmarkStart w:id="4" w:name="Smith2020txt"/>'
+                 + run(" by Smith (2020)") + '<w:bookmarkEnd w:id="4"/>')
+    baseline = make_parts(para(run("As shown"), base_mark))
+    clean = make_parts(para(run("As shown")))
+    built = make_parts(para(
+        run("As shown"),
+        '<w:bookmarkStart w:id="4" w:name="Smith2020txt"/>'
+        '<w:del w:id="9" w:author="R" w:date="2026-10-14T00:00:00Z">'
+        '<w:r><w:delText xml:space="preserve"> by Smith (2020)</w:delText>'
+        '</w:r></w:del><w:bookmarkEnd w:id="4"/>'))
+    assert revision.restored_bookmarks(baseline, clean, built) == []
+
+
 def test_a_bookmark_the_BUILD_invented_is_not_the_authors_deletion():
     """"in the build, not in the clean edit" also describes a name Word
     minted during the compare. Reporting that as a deletion the author
