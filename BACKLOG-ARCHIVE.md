@@ -14,6 +14,104 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — eleven smaller findings of the 2026-10-14 review~~ — FIXED 14.10, `bdbccd5`
+
+<!-- status: fixed -->
+
+Confirmed by the review and cut from its list of fifteen:
+
+1. `_build._classifier` (`_build.py:84`) execs the file without a
+   `sys.modules` entry or its folder on the path: a `@dataclass` under
+   future annotations fails on 3.14, a sibling import or a syntax error
+   on any version — all exit 70 as "a bug in docxkit".
+2. `baseline` runs the loss gate before the pending gate, so one stray
+   pending revision gets `--accept-loss` advice for the batch's own
+   deletions.
+3. `annotate_in_place`'s `_pre_annotate` backup lands beside the
+   protocol manuscript instead of `rescue_dir`.
+4. The WORD_ONLY refusal (`_build.py:125`, `_baseline.py:78`) says "the
+   table change" for a `numberingChange`.
+5. `_registry.scan` returns configs it did not register, and a
+   drive-root TEMP disables the TEMP guard (`_registry.py:105`).
+6. `_cover` accepts a one-shot generator of blocks, then writes nothing.
+7. `withdraw` hashes a rebuilt batch before knowing it could be the
+   proposal (`_promote.py:466`).
+8. `revisions._simulate_where` calls the `where` predicate twice per
+   revision (`revisions.py:1046`).
+9. (plausible) an unparseable proposal crashes `ingest`: `_verdict.py:247`
+   computes the views outside the try.
+10. Tests: `test_comments_in_place` never checks seed-on-copy, the style
+    graft, the initials restamp or the backup;
+    `test_revision_batch_deletions.py` is not in `cli.py`'s harness;
+    `--json`'s `"deleted"` key is untested.
+11. `_doomed_bookmarks` adds ~20-43 % to every accept/reject simulation,
+    under the perf gate's floor, and its self-referencing closure keeps
+    up to ~16 parsed trees alive until GC.
+
+**All eleven fixed 2026-10-14.** 1 classifier loading, 3 backup into rescue, 4 numbering-change wording, 6 generator blocks, 10 (in-place tests): `38ffd8b`. 2 pending before loss: `d73b3b8`. 5 registry scan and drive-root TEMP: `d44d289`. 7 withdraw sizes before hashing: `08b6f37`. 8 predicate asked once: `2810656`. 9 unparseable proposal: `e8a619d`. 10 (harness and `--json` "deleted"): `d4e8917`. 11 `_doomed_bookmarks` cost and cycle: `97b0b4e` (217 -> 34 ms on a 3.6 MB redline, no cycle).
+
+### ~~S2 — baseline and `ingest --check` call the batch's own deletions LOST while Word holds batch.docx~~ — FIXED 14.10, `e8a619d`
+
+<!-- status: fixed -->
+
+Review finding 13. `deleted_by_batch` (`_verdict.py:243`) swallows the
+PermissionError from `_promoted`'s hash as "no excuse", so with
+batch.docx open in Word (HPPA, 2026-10-09) `baseline` exits 5 "lost 2
+thing(s) … --accept-loss", re-running with the advised flags exits 70,
+and `ingest --check` prints LOST (2) where a free batch gives DELETED BY
+THE BATCH. Only `withdraw` turns the lock into DocumentLocked.
+
+**Fixed 2026-10-14**, `e8a619d`. `_readable_hash` moved to `revision/_common.py`; a batch Word holds raises `DocumentLocked` ("close it and run again") instead of becoming LOST with `--accept-loss` advice. The proposal's views are computed inside the guard, so an unparseable proposal no longer crashes `ingest` (smaller finding 9, reproduced).
+
+### ~~S2 — `withdraw` restores the manuscript, then fails on a read-only batch.docx~~ — FIXED 14.10, `08b6f37`
+
+<!-- status: fixed -->
+
+Review finding 12. The "decide the batch before writing" check
+(`_promote.py:467`) asks `package.is_locked`, which answers False for a
+READ-ONLY file by design, so `paper.batch.unlink()` (line 498) raises
+WinError 5 after the manuscript was restored and its stamp deleted: exit
+70, batch still staged, no WITHDRAWN event. A re-run then advises
+`baseline`, which logs "rejected in full -> truth" for a proposal the
+author never saw. `package._discard` clears the bit for this reason.
+
+**Fixed 2026-10-14**, `08b6f37`. A read-only `batch.docx` has its bit cleared before anything is written; a rebuilt batch is compared by size before it is hashed (smaller finding 7).
+
+### ~~S2 — `revision build` advises deleting a bookmark the accept already drops~~ — FIXED 14.10, `981000e`
+
+<!-- status: fixed -->
+
+Review finding 6. `restored_bookmarks` (`_losses.py:603`) still compares
+against the raw redline, so after `e461519` a `*txt` bookmark whose
+content is all deleted — which accepting now drops by itself — is still
+reported "Apply the deletion to working.docx AFTER the promote". Acting
+on it (Aging_Well's `r34_stale_bookmarks.py` did, for `Figure3txt`)
+loses the target if the author REJECTS the deletion, and
+`batch_deletions` then excuses the loss. 51 such bookmarks in 14 kept
+redlines.
+
+**Fixed 2026-10-14**, `981000e`. `restored_bookmarks` reads the build's ACCEPTED view, so a bookmark the accept drops with its content is not reported for a manual deletion.
+
+### ~~S1 — `batch_deletions` excuses a note or bookmark the author's REJECTED cut lost~~ — FIXED 14.10, `e8d34db`
+
+<!-- status: fixed -->
+
+Code review 2026-10-14, finding 1 (`REVIEW_2026-10-14.md`).
+`_losses.batch_deletions` (`_losses.py:546`) excuses a whole kind when
+the hand-back's note texts or bookmark names equal the proposal's
+accepted view. It never asks whether the batch's deletion was ACCEPTED.
+The batch cuts "Claim 2." with footnote 2; the author rejects the cut and
+copyedits the paragraph; Word collapses it (the LI7 mechanism in
+`losses`' own docstring) and eats footnote 2. The hand-back's notes now
+equal `accepted_view(proposal)`, so `ingest --check` prints DELETED BY
+THE BATCH and exits 0, and `baseline` writes a `prev.docx` holding
+"Claim 2." with no note, ledger `deleted=['footnote:Note 2…']`. The same
+for a `*txt` bookmark (no words guard) and for two notes of identical
+text. Contradicts the docstring's "a deletion rejected … breaks the
+equality". Reproduced with Word-shaped XML through the real CLI.
+
+**Fixed 2026-10-14**, `e8d34db`. No derived key: each deletion the batch made is located in the proposal (a note by its deleted reference, a bookmark by what the accept drops), and the hand-back must read that place — the changed text and 20 unchanged characters either side — as the proposal ACCEPTED and not as it rejected (`_losses._accepted_here`). A note kind is excused only when every note cut of that kind is shown so; a bookmark one by one. Fails closed: a rejected cut, a copyedit at the place, a key seen twice, or a cut with no words stays a LOSS with `--accept-loss`. An excused note is named by its own definition, not `_lost_notes`' best effort. The review's seven verifier scenarios refuse through the real CLI; its all-accepted control passes and names the right note.
+
 ### ~~S2 — `_doomed_bookmarks` drops a bookmark kept by a paragraph mark or a hyphen~~ — FIXED 14.10, `97b0b4e`
 
 <!-- status: fixed -->
