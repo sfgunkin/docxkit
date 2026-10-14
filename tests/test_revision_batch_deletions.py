@@ -503,6 +503,27 @@ def test_ingest_check_PASSES_and_names_the_batch_s_deletions(
     assert "== LOST" not in out
 
 
+def test_ingest_JSON_carries_the_batch_s_deletions_apart_from_the_losses(
+        monkeypatch, tmp_path, capsys):
+    """A script reads `--json`, and the review found its "deleted" key
+    pinned by nothing: dropped or merged into "lost", the console would
+    still have read right."""
+    import json
+
+    paper = _round(tmp_path)
+    _accept_all(paper)
+    out = tmp_path / "ingest.json"
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest", "--check",
+                      "--json", str(out), "--paper", str(paper.root))
+
+    assert code == 0, capsys.readouterr().out
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["lost"] == []
+    assert sorted(report["deleted"]) == sorted(
+        f"footnote:{NOTES[k]}" for k in (2, 4, 6))
+
+
 def test_baseline_LISTS_what_it_recorded_as_the_batch_s_deletion(
         monkeypatch, tmp_path, capsys):
     """Recorded, not refused, and said: the one decision `baseline` takes

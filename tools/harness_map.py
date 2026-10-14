@@ -74,7 +74,12 @@ HARNESS: dict[str, list[str]] = {
                # `revision status --all`'s printing is tested through
                # run_cli there: measured 2026-09-29, it kills 9 of the
                # module's 21 sweep survivors and the four above none
-               "tests/test_revision_survey.py"],
+               "tests/test_revision_survey.py",
+               # `ingest --check`'s DELETED BY THE BATCH block, `--json`'s
+               # "deleted" key and `baseline`'s "deleted by the batch"
+               # lines are tested through run_cli there (review,
+               # 2026-10-14: the harness left them to no test)
+               "tests/test_revision_batch_deletions.py"],
     "comments.py": ["tests/test_comments.py", "tests/test_comment_threads.py",
                     "tests/test_comments_in_place.py",
                     "tests/test_classify_match.py",
