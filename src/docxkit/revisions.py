@@ -305,10 +305,28 @@ def _doomed_bookmarks(root: _Element, tag: str,
                 else:
                     span.kept += size
     doomed: list[_Element] = []
+    order = _Order(root) if candidates else None
     for start, end in candidates:
-        if not _marks_between(root, start, end, flag, wants):
+        if not _marks_between(root, start, end, flag, wants, order=order):
             doomed.extend((start, end))
     return doomed
+
+
+class _Order:
+    """Document-order positions, and each paragraph with the position of
+    its last descendant — where its mark sits — computed ONCE for every
+    candidate a simulation asks about. Built per candidate it cost 20 s
+    of a 20 MB view with 100 candidates, 0.27 s hoisted (review of
+    2026-10-24)."""
+
+    def __init__(self, root: _Element) -> None:
+        self.at = {el: i for i, el in enumerate(root.iter())}
+        self.paras: list[tuple[int, int, _Element]] = []
+        for para in root.iter(W + "p"):
+            last = para
+            while len(last):
+                last = last[-1]
+            self.paras.append((self.at[para], self.at[last], para))
 
 
 def _paragraph_of(el: _Element) -> _Element | None:
@@ -317,28 +335,26 @@ def _paragraph_of(el: _Element) -> _Element | None:
 
 
 def _marks_between(root: _Element, start: _Element, end: _Element,
-                   flag: str, wants: Callable[[_Element, str], bool]
-                   ) -> bool:
+                   flag: str, wants: Callable[[_Element, str], bool],
+                   *, order: _Order | None = None) -> bool:
     """Does a paragraph mark that STAYS lie between `start` and `end`?
 
     Asked only of a bookmark whose every other piece of content goes,
     which is rare, so the document-order positions are paid for only
-    then. A paragraph's mark sits after its last descendant; it stays
-    unless its own ``w:rPr`` flag is the side going and `wants` it —
-    under a predicate a deleted mark left pending is still there.
+    then — once per simulation (:class:`_Order`). A paragraph's mark
+    sits after its last descendant; it stays unless its own ``w:rPr``
+    flag is the side going and `wants` it — under a predicate a deleted
+    mark left pending is still there.
     """
     if _paragraph_of(start) is _paragraph_of(end) is not None:
         return False                 # one paragraph: no mark between
-    order = {el: i for i, el in enumerate(root.iter())}
-    lo, hi = order[start], order[end]
-    for para in root.iter(W + "p"):
-        if order[para] > hi:
+    order = order or _Order(root)
+    lo, hi = order.at[start], order.at[end]
+    for at_para, at_last, para in order.paras:
+        if at_para > hi:
             break
-        last = para
-        while len(last):
-            last = last[-1]
         # the mark follows `last`, so a start that IS `last` precedes it
-        if not lo <= order[last] < hi:
+        if not lo <= at_last < hi:
             continue
         mark = _mark_flag(para, (flag[len(W):],))
         if mark is None or not wants(mark, "paragraph-mark"):

@@ -706,8 +706,13 @@ def _accepted_here(texts: Sequence[tuple[str, int]], at: int,
             and _once(accepted, proposed) and rejected not in handback)
 
 
+_Read = tuple[list[tuple[str, int]], list[_Mark], str, str]
+
+
 def _places(proposal: Parts, working: Parts,
-            wanted: Callable[[_Mark], bool]) -> list[tuple[_Mark, bool]]:
+            wanted: Callable[[_Mark], bool],
+            read: dict[str, _Read] | None = None,
+            ) -> list[tuple[_Mark, bool]]:
     """Every `wanted` mark in the proposal's text parts, each with
     whether the hand-back shows its place ACCEPTED (:func:`_accepted_here`).
 
@@ -715,17 +720,25 @@ def _places(proposal: Parts, working: Parts,
     name — is no identity, and is never shown. A link's anchor is not
     one either (a citation repeated), and need not be: a link is shown
     by its place alone.
+
+    `read` keeps each part's parse for the next call: `batch_deletions`
+    asks once per kind, and parsed both packages afresh every time —
+    3.9 to 5.1 s of a 10 MB hand-back (review of 2026-10-24).
     """
     from ..tracked import _root
 
+    read = {} if read is None else read
     out: list[tuple[_Mark, bool]] = []
     for name in TEXT_PARTS:
-        texts, marks = _stream(_root(proposal, name))
+        if name not in read:
+            texts, marks = _stream(_root(proposal, name))
+            here, _ = _stream(_root(working, name))
+            read[name] = (texts, marks, _reading(here, _DEL),
+                          _reading(texts, _DEL))
+        texts, marks, handback, proposed = read[name]
         chosen = [m for m in marks if wanted(m)]
         if not chosen:
             continue
-        here, _ = _stream(_root(working, name))
-        handback, proposed = _reading(here, _DEL), _reading(texts, _DEL)
         seen = Counter((m.kind, m.key) for m in marks)
         for mark in chosen:
             unique = mark.kind == "link" or seen[(mark.kind, mark.key)] == 1
@@ -814,19 +827,20 @@ def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
     equal = {kind for kind in built_on
              if _structure(accepted, kind) == _structure(working, kind)}
     shown: dict[str, list[Loss]] = {}
+    read: dict[str, _Read] = {}
     for kind in sorted(equal & {"footnote", "endnote"}):
-        cut = _places(proposal, working, _cut_of(kind))
+        cut = _places(proposal, working, _cut_of(kind), read)
         if cut and all(ok for _m, ok in cut):
             shown[kind] = _cut_named(kind, {m.key for m, _ok in cut},
                                      rejected, gone)
     links = "link" in equal and _links_shown(proposal, working, accepted,
-                                             rejected)
+                                             rejected, read)
     marks: set[str] = set()
     if "bookmark" in built_on:
         removed = _bookmarks(rejected) - _bookmarks(accepted)
         marks = {m.key for m, ok in _places(
             proposal, working,
-            lambda m: m.kind == "bookmark" and m.key in removed) if ok}
+            lambda m: m.kind == "bookmark" and m.key in removed, read) if ok}
     comments = _comments_cut(prev, proposal) if "comment" in kinds \
         else Counter()
     excused = [loss for loss in gone
@@ -847,7 +861,7 @@ def _cut_of(kind: str) -> Callable[[_Mark], bool]:
 
 
 def _links_shown(proposal: Parts, working: Parts, accepted: Parts,
-                 rejected: Parts) -> bool:
+                 rejected: Parts, read: dict[str, _Read]) -> bool:
     """Is every link the batch cut shown ACCEPTED at its own place?
 
     And are the links this reads as cut the ones the views say the
@@ -863,7 +877,7 @@ def _links_shown(proposal: Parts, working: Parts, accepted: Parts,
 
     removed = anchors(_links(rejected)) - anchors(_links(accepted))
     placed = _places(proposal, working, lambda m: m.kind == "link"
-                     and m.state != _SAME)
+                     and m.state != _SAME, read)
     cut = Counter(named(m) for m, _ok in placed if m.state == _DEL)
     put = Counter(named(m) for m, _ok in placed if m.state == _INS)
     return (bool(removed) and cut - put == removed

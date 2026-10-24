@@ -196,13 +196,38 @@ def match(rules: Iterable[tuple[str, str]],
 
 
 def _context(doc: str, start: int, end: int,
-             spans: list[tuple[int, int]]) -> RevisionContext:
+             spans: list[tuple[int, int]],
+             paras: _Paragraphs | None = None) -> RevisionContext:
     return RevisionContext(
         text=delta_text(doc[start:end]),
-        para=para_text_at(doc, start),
+        para=paras.text_at(start) if paras else para_text_at(doc, start),
         window=re.sub("<[^>]+>", "", doc[max(0, start - _WINDOW_BACK):end]),
         table_index=table_index_at(spans, start),
         start=start, end=end)
+
+
+class _Paragraphs:
+    """:func:`docxkit.find.para_text_at`, for many offsets of one part.
+
+    That function walks the part from its first paragraph for every
+    offset, and the classified build asks once per span: 47 of the 52 s
+    the comment pass took on an HPPA-sized redline (2,142 spans, 6.5 MB;
+    review of 2026-10-24). The same paragraphs, found once — `PARA_RE`'s
+    matches do not overlap, so the one holding an offset is the last to
+    start at or before it — and each one's text read once."""
+
+    def __init__(self, doc: str) -> None:
+        self.matches = list(PARA_RE.finditer(doc))
+        self.starts = [m.start() for m in self.matches]
+        self.texts: dict[int, str] = {}
+
+    def text_at(self, pos: int) -> str:
+        i = bisect_right(self.starts, pos) - 1
+        if i < 0 or pos >= self.matches[i].end():
+            return ""
+        if i not in self.texts:
+            self.texts[i] = visible_text(self.matches[i].group(0))
+        return self.texts[i]
 
 
 #: Every comment this package writes carries a paraId in
@@ -261,10 +286,28 @@ def _about(ranges: Sequence[_Range], zones: list[tuple[int, int]],
     of 2026-10-24). `_ANCHOR_SLACK` either side is for the markers a
     range sits beside: a revision's own, another comment's.
     """
-    lo, hi = _outside_math(zones, start, end)
-    return [r.cid for r in ranges if r.cid in ids
-            and lo - _ANCHOR_SLACK <= r.start <= lo
-            and hi <= r.end <= hi + _ANCHOR_SLACK]
+    return _Anchored(ranges, ids).on(zones, start, end)
+
+
+class _Anchored:
+    """The ranges of the comments `ids`, sorted by where they open, so
+    :func:`_about` is a bisection per span and not a walk over every
+    range: per span over every range was quadratic in the balloons a
+    package already carries (2026-10-24)."""
+
+    def __init__(self, ranges: Sequence[_Range], ids: set[str]) -> None:
+        self.ranges = sorted((r for r in ranges if r.cid in ids),
+                             key=lambda r: r.start)
+        self.starts = [r.start for r in self.ranges]
+
+    def on(self, zones: list[tuple[int, int]], start: int,
+           end: int) -> list[str]:
+        """:func:`_about` of one span."""
+        lo, hi = _outside_math(zones, start, end)
+        first = bisect_left(self.starts, lo - _ANCHOR_SLACK)
+        last = bisect_right(self.starts, lo)
+        return [r.cid for r in self.ranges[first:last]
+                if hi <= r.end <= hi + _ANCHOR_SLACK]
 
 
 def _ours_by(com: str, author: str | None) -> set[str]:
@@ -427,12 +470,13 @@ def _plan(doc: str, classify: Callable[[RevisionContext], str | None],
     apart, the two coalesced as different texts and a table read as two
     unclassified balloons.
     """
-    zones, ranges = _math_zones(doc), _ranges(doc)
+    zones, paras = _math_zones(doc), _Paragraphs(doc)
+    anchored = _Anchored(_ranges(doc), done)
     out = []
     for i, (s, e) in enumerate(_revisions.spans(doc)):
-        if i not in reuse and _about(ranges, zones, s, e, done):
+        if i not in reuse and anchored.on(zones, s, e):
             continue
-        out.append(_Planned(s, e, classify(_context(doc, s, e, spans))
+        out.append(_Planned(s, e, classify(_context(doc, s, e, spans, paras))
                             or None, table_index_at(spans, s), reuse.get(i)))
     return out
 
@@ -627,6 +671,12 @@ def _place(doc: str, anchors: Sequence[tuple[int, int, int]],
     offsets, and a back-to-front splice put the second one's end inside
     the first one's range start.
     """
+    return _placed(doc, anchors, style)[0]
+
+
+def _placed(doc: str, anchors: Sequence[tuple[int, int, int]],
+            style: str) -> tuple[str, list[tuple[int, str]]]:
+    """:func:`_place`, and where in the result each tag was written."""
     zones = _math_zones(doc)
     events: list[tuple[int, int, int, str]] = []
     for n, (at_start, at_end, cid) in enumerate(anchors):
@@ -634,11 +684,15 @@ def _place(doc: str, anchors: Sequence[tuple[int, int, int]],
         open_tag, close_tag = _anchor(cid, style)
         # at one offset: a range that ENDS there closes before one opens
         events += [(start, 1, n, open_tag), (end, 0, -n, close_tag)]
-    out, at = [], 0
+    out, at, size = [], 0, 0
+    written: list[tuple[int, str]] = []
     for pos, _kind, _n, tag in sorted(events):
         out += [doc[at:pos], tag]
+        size += pos - at
+        written.append((size, tag))
+        size += len(tag)
         at = pos
-    return "".join(out) + doc[at:]
+    return "".join(out) + doc[at:], written
 
 
 _SIDE_PARTS = (("word/commentsExtended.xml", "</w15:commentsEx>"),
@@ -705,12 +759,8 @@ def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
                     f'"{durable}" w16cex:dateUtc="{date_utc}"/>')
         anchors.append((d.start, d.end, cid))
         written.append(str(cid))
-    placed = _place(doc, anchors, scaffold.style)
-    bare = placed
-    for _start, _end, cid in anchors:
-        open_tag, close_tag = _anchor(cid, scaffold.style)
-        bare = bare.replace(open_tag, "", 1).replace(close_tag, "", 1)
-    if bare != doc:
+    placed, placed_at = _placed(doc, anchors, scaffold.style)
+    if _without_anchors(placed, placed_at) != doc:
         raise PackageError("annotating changed document.xml beyond its "
                            "comment anchors; nothing was written")
     parts[DOCUMENT] = placed.encode("utf-8")
@@ -723,6 +773,21 @@ def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
             parts[name] = _append_before_close(
                 side[name], close, "".join(adds[name])).encode("utf-8")
     return written
+
+
+def _without_anchors(doc: str,
+                     placed_at: Sequence[tuple[int, str]]) -> str:
+    """`doc` less the tags `_place` says it wrote at those offsets, or
+    ``""`` when one is not there — in one pass: a `str.replace` per
+    anchor was 7.7 s of an HPPA-sized build (2026-10-24)."""
+    out, at = [], 0
+    for pos, tag in placed_at:
+        if doc[pos:pos + len(tag)] != tag:
+            return ""                       # not where it was put: refuse
+        out.append(doc[at:pos])
+        at = pos + len(tag)
+    out.append(doc[at:])
+    return "".join(out)
 
 
 def _remint(com: str, side: dict[str, str], cid: str,
@@ -1045,10 +1110,10 @@ def _commented_spans(parts: Parts, doc: str, spans: list[tuple[int, int]],
     mine = _ours_by(parts.get(COMMENTS, b"").decode("utf-8"), author)
     if not mine:
         return []
-    zones, ranges = _math_zones(doc), _ranges(doc)
+    zones, anchored = _math_zones(doc), _Anchored(_ranges(doc), mine)
     found: set[str] = set()
     for start, end in spans:
-        found.update(_about(ranges, zones, start, end, mine))
+        found.update(anchored.on(zones, start, end))
     return sorted(found, key=int)
 
 
@@ -1095,8 +1160,28 @@ def _unreachable(parts: Parts) -> list[str]:
              if (kinds := _revisions.revision_kinds(
                  parts[name].decode("utf-8", "replace")))]
     starts = [start for start, _end in spans]
-    holders = sorted(_paragraph_spans(doc) + element_spans(doc, "tr"),
-                     key=lambda span: span[1] - span[0])
+    tiers = []
+    for boxes in (sorted(_paragraph_spans(doc)),
+                  sorted(element_spans(doc, "tr"))):
+        reach, furthest = [], -1
+        for _lo, hi in boxes:
+            furthest = max(furthest, hi)
+            reach.append(furthest)
+        tiers.append((boxes, reach))
+
+    def holder(at: int) -> tuple[int, int]:
+        """The innermost paragraph holding `at`, else its row: the
+        LAST-opening of those open at `at`, found by bisection rather
+        than by a walk over every paragraph (2026-10-24). `reach` stops
+        the walk back where nothing earlier extends to `at`."""
+        for boxes, reach in tiers:
+            i = bisect_right(boxes, (at, len(doc))) - 1
+            while i >= 0 and reach[i] > at:
+                lo, hi = boxes[i]
+                if lo <= at < hi:
+                    return lo, hi
+                i -= 1
+        return at, at
 
     def in_a_span(at: int) -> bool:
         i = bisect_right(starts, at) - 1
@@ -1110,9 +1195,7 @@ def _unreachable(parts: Parts) -> list[str]:
     for m in _revisions.REVISION_RE.finditer(doc):
         if in_a_span(m.start()):
             continue
-        # the innermost paragraph, else row, that holds it
-        box = next(((lo, hi) for lo, hi in holders
-                    if lo <= m.start() < hi), (m.start(), m.start()))
+        box = holder(m.start())
         if not holds_span(*box):
             bare.setdefault(box, set()).update(
                 _revisions.revision_kinds(m.group(0)))
