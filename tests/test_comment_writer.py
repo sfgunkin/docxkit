@@ -486,8 +486,35 @@ def test_a_restamped_Word_comment_s_DATEUTC_moves_with_it():
 
     assert tracked._credit_new(parts, (), credit) == 1
 
-    assert 'w16cex:dateUtc="2026-10-24T12:00:00Z"' in parts[
+    utc = C._utc_of("2026-10-24T12:00:00Z")      # its UTC, on this machine
+    assert f'w16cex:dateUtc="{utc}"' in parts[
         "word/commentsExtensible.xml"].decode()
+
+
+def test_w_date_is_LOCAL_time_as_Word_writes_it_and_dateUtc_is_UTC():
+    """Split out of case 9 and measured (2026-10-24): every Word-made
+    comment in the papers reads `w:date` five hours ahead of its
+    `dateUtc` on this UTC+5 machine — local time labelled Z. docxkit
+    wrote true UTC, so its balloons showed five hours early."""
+    from datetime import datetime
+
+    parts = make_parts(para(run("a "), ins("b")),
+                       comment_items=(comment(1, "seed", OURS),))
+    (cid,) = C.annotate_blocks(parts, [([0], "why")], author="A",
+                               initials="A")
+
+    head = re.search(rf'<w:comment w:id="{cid}"[^>]*>', _com(parts))
+    assert head is not None
+    when = re.search(r'w:date="([^"]+)"', head.group(0))
+    utc = re.findall(r'w16cex:dateUtc="([^"]+)"',
+                     parts["word/commentsExtensible.xml"].decode())
+    assert when is not None and utc
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    shift = (datetime.strptime(when.group(1), fmt)
+             - datetime.strptime(utc[-1], fmt))
+    offset = datetime.now().astimezone().utcoffset()
+    assert offset is not None
+    assert abs((shift - offset).total_seconds()) < 120
 
 
 def test_EMPTY_and_NONE_answers_in_one_table_are_one_balloon():

@@ -599,7 +599,8 @@ def _credit_new(parts: Parts, inputs: tuple[Parts, ...],
         side = {name: parts[name].decode("utf-8")
                 for name, _close in _comments._SIDE_PARTS if name in parts}
         for cid in mine:
-            _comments._set_date_utc(com, side, cid, credit.date)
+            _comments._set_date_utc(com, side, cid,
+                                    _comments._utc_of(credit.date))
         parts[COMMENTS] = com.encode("utf-8")
         for name, xml in side.items():
             parts[name] = xml.encode("utf-8")

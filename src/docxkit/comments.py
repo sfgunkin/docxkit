@@ -638,7 +638,7 @@ class Credit(NamedTuple):
 
     author: str
     initials: str
-    date: str        # w:date, ISO 8601 UTC
+    date: str        # w:date, Word's way: local time labelled Z (`_now`)
 
 
 def _math_zones(doc: str) -> list[tuple[int, int]]:
@@ -732,7 +732,7 @@ def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
             for name, _close in _SIDE_PARTS if name in parts}
     adds: dict[str, list[str]] = {name: [] for name, _close in _SIDE_PARTS}
     elements, anchors, written = [], [], []
-    date_utc = credit.date if credit else scaffold.date_utc
+    date_utc = _utc_of(credit.date) if credit else scaffold.date_utc
     next_id = scaffold.next_id
     for d in decided:
         if d.cid is not None:
@@ -741,7 +741,7 @@ def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
             com = _remint(com, side, d.cid, minted)
             if credit:
                 com = _restamp(com, {d.cid}, credit)
-                _set_date_utc(com, side, d.cid, credit.date)
+                _set_date_utc(com, side, d.cid, _utc_of(credit.date))
         else:
             cid, next_id = next_id, next_id + 1
             para_id, durable = minted.take(cid)
@@ -1050,8 +1050,9 @@ def annotate_blocks(parts: Parts, blocks: Iterable[Block], *, author: str,
       see. ``partial=True`` accepts that the balloons explain the spans
       only.
 
-    `date` is the new comments' ``w:date`` (UTC, ISO 8601), now when
-    omitted.
+    `date` is the new comments' ``w:date``, written Word's way — local
+    time labelled Z (:func:`_now`) — now when omitted; their ``dateUtc``
+    is its true UTC.
     """
     doc = parts[DOCUMENT].decode("utf-8")
     spans = _revisions.spans(doc)
@@ -1095,8 +1096,26 @@ def _check_blocks(parts: Parts, blocks: Iterable[Block], *, author: str,
 
 
 def _now() -> str:
-    """A comment's ``w:date`` for this moment."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """A comment's ``w:date`` for this moment, as WORD writes one: the
+    local wall clock, labelled ``Z``.
+
+    Measured 2026-10-24 over the papers on this machine (UTC+5): every
+    Word-made comment beside a ``w16cex:dateUtc`` reads five hours
+    ahead of it — ``w:date`` local, ``dateUtc`` true UTC. Written as
+    true UTC, a docxkit balloon sorted and showed five hours before the
+    author's own (review of 2026-10-24). :func:`_utc_of` gives the
+    ``dateUtc`` beside it."""
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _utc_of(word_date: str) -> str:
+    """The true-UTC ``dateUtc`` for a ``w:date`` written Word's way
+    (:func:`_now`); `word_date` itself when it does not parse."""
+    try:
+        local = datetime.strptime(word_date, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return word_date
+    return local.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _commented_spans(parts: Parts, doc: str, spans: list[tuple[int, int]],
