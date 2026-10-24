@@ -73,11 +73,17 @@ that). Not diagnosed. Workaround: measure floors with `tools/gates.py`
 or on the module's harness, not on the whole folder with a one-module
 `--cov`.
 
-### S2 — latent revision shapes the review reasoned out but found in no file
-<!-- status: open -->
+### Latent revision shapes the 2026-10-24 review reasoned out but found in no file
+<!-- status: note -->
 
 Review, all PLAUSIBLE, none seen in the corpus today; recorded so they are
-not re-derived:
+not re-derived. **A record, not a defect list** (2026-10-24): each is a
+claim about what Word writes or does that no file here shows, and the
+rule for this package is to measure a shape before changing a view —
+the accept/reject views are held byte-identical on 1,053 kept redlines,
+and a fix for a shape nobody has met would trade that for a guess. Each
+becomes a defect, with its own entry, the day a real file shows it. 5 had
+a fix that cannot change any real output and is its own entry, fixed.
 
 1. `revisions._FLAG_PARENTS` lacks `numPr`: a `w:ins` inside `numPr` is
    treated as content, and reject keeps the numbering (V22b).
@@ -90,7 +96,8 @@ not re-derived:
    as surviving, so a bookmark the rule says to drop is kept.
 5. `tracked._graft_styles`' `_STYLE_RE` lets a self-closing `<w:style/>`
    swallow the next style, appending a duplicate CommentText; 0 of 37,698
-   styles in Word files are self-closing (`styles.ensure` exists).
+   styles in Word files are self-closing (`styles.ensure` exists). FIXED,
+   its own entry in the archive.
 6. `_registry.register`'s TEMP filter with a drive-root TEMP unregisters
    every paper on that drive and `init` ignores the False (not this
    machine's TEMP).

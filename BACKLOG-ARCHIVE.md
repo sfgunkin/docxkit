@@ -14,6 +14,20 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `tracked._graft_styles` reads an empty `<w:style/>` as an opening tag~~ — FIXED 24.10, `bee928a`
+
+<!-- status: fixed -->
+
+Latent shape 5 of the 2026-10-24 review's list (V23c, PLAUSIBLE: 0 of
+37,698 styles in Word's files are self-closing, and the form is legal).
+`_STYLE_RE` had no `(?<!/)` guard, so an empty style opened a match that
+ran on to the next style's `</w:style>`: the graft took the pair for ONE
+style under the empty one's id, and the next style — `CommentText`, say —
+was never seen by its own id. Split out of the latent entry because it is
+the one of the six with a fix that cannot change any real file's output.
+
+**Fixed 2026-10-24**, `bee928a`. `_STYLE_RE` takes the `(?<!/)` guard. Test: `test_an_EMPTY_style_does_not_swallow_the_next_one_in_the_graft` (red at `63e0d05`). The other five latent shapes stay a record (note) in BACKLOG.md: none is in a real file.
+
 ### ~~S4 — a comment's `w:date` is true UTC where Word may write local time labelled Z~~ — FIXED 24.10, `a6f31ee`
 
 <!-- status: fixed -->
