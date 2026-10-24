@@ -48,21 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S4 — a comment's `w:date` is true UTC where Word may write local time labelled Z
-<!-- status: open -->
-
-Split out of the comment-writer entry (review of 2026-10-24, V28c,
-PLAUSIBLE), and the one case of it `082da00` did not change, because it
-is a claim about WORD nobody has measured: `comments._now()` writes the
-moment in UTC with a `Z`, and the verifier read Word-made comments whose
-`w:date` runs ahead of their `w16cex:dateUtc` by the local offset — Word
-writing local time labelled Z. If so, a docxkit balloon sorts and shows
-five hours early beside the author's own on this machine. Measure first:
-over the corpus's Word-made comments, compare `w:date` with the
-`dateUtc` beside it (the verifier's probe is in that session's
-`V28/c_dates.py`). Then either match Word's convention in `_now()` (and
-keep `dateUtc` true UTC), or record that it does not hold.
-
 ### S4 — four tests fail by ORDER in a full run under a one-module `--cov`
 <!-- status: open -->
 

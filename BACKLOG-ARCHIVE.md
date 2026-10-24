@@ -14,6 +14,24 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — a comment's `w:date` is true UTC where Word may write local time labelled Z~~ — FIXED 24.10, `a6f31ee`
+
+<!-- status: fixed -->
+
+Split out of the comment-writer entry (review of 2026-10-24, V28c,
+PLAUSIBLE), and the one case of it `082da00` did not change, because it
+is a claim about WORD nobody has measured: `comments._now()` writes the
+moment in UTC with a `Z`, and the verifier read Word-made comments whose
+`w:date` runs ahead of their `w16cex:dateUtc` by the local offset — Word
+writing local time labelled Z. If so, a docxkit balloon sorts and shows
+five hours early beside the author's own on this machine. Measure first:
+over the corpus's Word-made comments, compare `w:date` with the
+`dateUtc` beside it (the verifier's probe is in that session's
+`V28/c_dates.py`). Then either match Word's convention in `_now()` (and
+keep `dateUtc` true UTC), or record that it does not hold.
+
+**Fixed 2026-10-24**, `a6f31ee`. Measured first, with the verifier's probe over F:/OneDrive/__Documents/Papers: 286 packages with comments; in the three holding both docxkit-made and Word-made comments, every Word-made one reads `w:date` +5.0 h ahead of its `dateUtc` (this machine is UTC+5) — local time labelled Z. `comments._now()` is the local wall clock now, `_utc_of` gives the true-UTC `dateUtc` beside it on new, reused and restamped comments (`_write`, `_credit_new`). Test: `test_w_date_is_LOCAL_time_as_Word_writes_it_and_dateUtc_is_UTC` (red at `205f909`), machine-independent.
+
 ### ~~S4 — cleanups from the 2026-10-24 review~~ — FIXED 24.10, `75d9ede`
 
 <!-- status: fixed -->
