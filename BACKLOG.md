@@ -69,9 +69,24 @@ imported; a "DID NOT RAISE" there says the code under test reached a
 DIFFERENT object, i.e. something in the same worker left a module
 replaced or a `None` in `sys.modules` (conftest's pywin32 stub at
 `conftest.py:385` uses `monkeypatch.setitem`, so it is not obviously
-that). Not diagnosed. Workaround: measure floors with `tools/gates.py`
-or on the module's harness, not on the whole folder with a one-module
-`--cov`.
+that). Workaround: measure floors with `tools/gates.py` or on the
+module's harness, not on the whole folder with a one-module `--cov`.
+
+**Narrowed 2026-10-24, not yet fixed.** A probe test in that run read
+`tracked._comments is docxkit.comments` as **False**: the code and the
+tests hold two different `docxkit.comments` module objects, so a
+`monkeypatch` on the test's copy never reaches the code (the lock tests'
+fakes, the leaky `_write`). A pytest plugin recording identity at every
+test boundary saw NO swap during any test, so the second object exists
+before a worker's first test. It reproduces only under xdist with a
+ONE-module `--cov`: serially, collecting the whole suite and running the
+probe, identity holds, and with `--cov=docxkit` (the gates) it holds
+too. Suspect: pytest-cov starting coverage in each worker with a module
+`source`, whose spec lookup imports `docxkit` and `docxkit.revision`
+before the worker has its `pythonpath` — not proved. Next: the same
+probe with `--cov=docxkit.revision._baseline -n 1`, then
+`-p no:randomly`, then coverage's `source_pkgs`. (The leaky-write test
+it also broke led to the `_write` regression entry, fixed.)
 
 ### Latent revision shapes the 2026-10-24 review reasoned out but found in no file
 <!-- status: note -->

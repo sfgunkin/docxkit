@@ -14,6 +14,22 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `comments._write` checked the body against the text it was HANDED, not the part~~ — FIXED 24.10, `c841316`
+
+<!-- status: fixed -->
+
+A regression from the one-writer refactor (`082da00`, 2026-10-24), found
+the same day while chasing the order-dependent test entry. `annotate_blocks`
+had compared `document.xml` minus its new anchors with the part as it READ
+it; the shared `_write` compared with its own `doc` argument instead. So a
+write step that changed the text before handing it over passed the guard:
+`test_a_change_beyond_the_anchors_is_REFUSED_and_nothing_written` still
+passed, but only because the leaked edit shifted every offset, the anchors
+landed inside tags, and lint refused the result as malformed XML — a guard
+by accident. A same-length edit would have been written.
+
+**Fixed 2026-10-24**, `c841316`. `_write` reads the part as it stands from `parts` and `_write_checked` compares the body minus its anchors with THAT. `test_a_change_beyond_the_anchors_is_REFUSED_and_nothing_written` now matches the guard's own message (red at `5c1d9be`, where lint's malformed-XML finding was what stopped it).
+
 ### ~~S2 — `tracked._graft_styles` reads an empty `<w:style/>` as an opening tag~~ — FIXED 24.10, `bee928a`
 
 <!-- status: fixed -->
