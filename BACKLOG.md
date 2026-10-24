@@ -48,6 +48,31 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S4 — four tests fail by ORDER in a full run under a one-module `--cov`
+<!-- status: open -->
+
+Found 2026-10-24 while measuring a coverage floor by hand. At `21636d2`
+(and with the step-3 lock work on top) this run fails four tests every
+time:
+
+    pytest -q -p no:cacheprovider -n 8 --cov=docxkit.revision._baseline --cov-branch tests
+
+`test_pending_working::test_a_clean_working_file_REACHES_the_comparison`
+(`ModuleNotFoundError: import of pythoncom halted; None in sys.modules`),
+`test_comments_in_place::test_a_change_beyond_the_anchors_is_REFUSED_and_nothing_written`
+("DID NOT RAISE PackageError"), and the two lock-faking tests in
+`test_revision_batch_deletions.py` ("DID NOT RAISE DocumentLocked").
+Each passes alone, and `tools/gates.py`'s own pytest run passes them all,
+so no gate is red. The lock tests fake Word by monkeypatching
+`guard.sha256` and `package.is_locked` on the module objects they
+imported; a "DID NOT RAISE" there says the code under test reached a
+DIFFERENT object, i.e. something in the same worker left a module
+replaced or a `None` in `sys.modules` (conftest's pywin32 stub at
+`conftest.py:385` uses `monkeypatch.setitem`, so it is not obviously
+that). Not diagnosed. Workaround: measure floors with `tools/gates.py`
+or on the module's harness, not on the whole folder with a one-module
+`--cov`.
+
 ### S1 — the two comment writers have drifted again: one writer holding every guard
 <!-- status: open -->
 
@@ -159,63 +184,6 @@ The refactor is a design change, not nine patches: one function that
 widens first, then asks one "already annotated?" question of the range it
 will write, covers every revision kind and story the protocol reads,
 credits, and mints ids against everything in the package.
-
-### S2 — `deleted_by_batch` gets locks wrong in both directions
-<!-- status: open -->
-
-Review finding 11 (V06 CONFIRMED, V07 PLAUSIBLE). The 10-14 fix
-(`e8a619d`) re-raises `DocumentLocked` from `_promoted`'s hash
-(`_verdict.py:254`):
-
-- **Too strict.** The read-only `revision ingest` — which snapshots
-  working.docx so it can run while Word holds files — now exits 1 "batch.docx
-  is open in Word … nothing has been changed" with no content or state
-  sections when Word holds batch.docx, or a kept redline of the same size.
-  At 4deb0f9 it printed the full report; a `package.readable` copy hashes
-  equal.
-- **Too loose.** A lock `is_locked` cannot see (a read-only file held
-  open, a byte-range lock), a transient OneDrive/AV `PermissionError`
-  (`_readable_hash` has no retry, `_common.py:176`), or `read_parts`' lock
-  raised as a plain `PackageError` in a 4–5 ms window, is swallowed by
-  the broad except. The batch's own accepted deletions come back LOST;
-  following the `--accept-loss` advice then exits 70 inside `verdict`.
-
-**Fix:** hash through `package.readable` (a snapshot), retry like
-`read_parts`, and let anything still unreadable fail the command as
-"cannot read batch.docx" — never become an empty excuse.
-
-### S3 — `baseline --repair-math` rewrites working.docx, then a lock says "nothing has been changed"
-<!-- status: open -->
-
-Review, cut from the fifteen (V10, CONFIRMED). `--repair-math` writes
-working.docx before `verdict()` runs (`_baseline.py:234`); `verdict` ->
-`_proposal` -> `_readable_hash` raises `DocumentLocked` when Word holds the
-batch or a redline, and its message says nothing has been changed. Either
-decide the lock before the repair, or say what was written.
-
-### S3 — `withdraw` on a read-only working.docx, or a read-only batch Word holds
-<!-- status: open -->
-
-Review finding 12 (V13 CONFIRMED, V13b PLAUSIBLE). The 10-14 fix
-(`08b6f37`) clears the read-only bit on build/batch.docx only, and before
-the `proved` refusal can still refuse (a metadata write on a refusal
-path). It does nothing for the manuscript `withdraw` overwrites, and
-`is_locked` answers False for any read-only file, so:
-
-- OneDrive leaves working.docx read-only: `shutil.copyfile(paper.prev,
-  live)` (`_promote.py:488`) raises PermissionError, exit 70, after the
-  batch's attribute has already been flipped;
-- batch.docx read-only AND open: the manuscript is restored and its stamp
-  removed, then `paper.batch.unlink()` fails WinError 32, exit 70, ledger
-  still ['promoted']; a re-run says the manuscript was "opened and saved
-  since" — the half-finished withdraw `08b6f37` meant to rule out.
-
-Pre-existing sibling (Alt-1): `promote`'s copyfile onto a read-only
-working.docx fails after the redline copy landed, so `_promoted` reads
-True and `withdraw`/`verdict` then answer wrongly.
-
-**Fix:** decide every file the command will touch — writable, not held —
-before writing any of them; clear bits only after the refusals.
 
 ### S3 — the `[batch] classify` loader: path dropped too early, modules shared across papers
 <!-- status: open -->

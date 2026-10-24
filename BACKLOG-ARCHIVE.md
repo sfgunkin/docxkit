@@ -14,6 +14,72 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — `withdraw` on a read-only working.docx, or a read-only batch Word holds~~ — FIXED 24.10, `e3b9f78`
+
+<!-- status: fixed -->
+
+Review finding 12 (V13 CONFIRMED, V13b PLAUSIBLE). The 10-14 fix
+(`08b6f37`) clears the read-only bit on build/batch.docx only, and before
+the `proved` refusal can still refuse (a metadata write on a refusal
+path). It does nothing for the manuscript `withdraw` overwrites, and
+`is_locked` answers False for any read-only file, so:
+
+- OneDrive leaves working.docx read-only: `shutil.copyfile(paper.prev,
+  live)` (`_promote.py:488`) raises PermissionError, exit 70, after the
+  batch's attribute has already been flipped;
+- batch.docx read-only AND open: the manuscript is restored and its stamp
+  removed, then `paper.batch.unlink()` fails WinError 32, exit 70, ledger
+  still ['promoted']; a re-run says the manuscript was "opened and saved
+  since" — the half-finished withdraw `08b6f37` meant to rule out.
+
+Pre-existing sibling (Alt-1): `promote`'s copyfile onto a read-only
+working.docx fails after the redline copy landed, so `_promoted` reads
+True and `withdraw`/`verdict` then answer wrongly.
+
+**Fix:** decide every file the command will touch — writable, not held —
+before writing any of them; clear bits only after the refusals.
+
+**Fixed 2026-10-24**, `e3b9f78`. after every refusal and before the manuscript is touched, `withdraw` clears the bits it needs and moves the batch aside with `os.replace` (refused for a file something holds, undone in one call); a refused move or copy is `DocumentLocked` with nothing written, and a failed or half copy puts the batch back. `promote` clears a read-only manuscript's bit and takes the kept redline back out when the copy fails (the Alt-1 sibling). Tests: `test_WITHDRAW_restores_a_READ_ONLY_manuscript`, `test_WITHDRAW_of_a_READ_ONLY_batch_something_HOLDS_writes_nothing`, `test_WITHDRAW_whose_copy_is_REFUSED_puts_the_batch_back`, `test_PROMOTE_onto_a_READ_ONLY_manuscript_lands`, `test_PROMOTE_whose_copy_is_REFUSED_keeps_no_redline` (each red at `21636d2`).
+
+### ~~S3 — `baseline --repair-math` rewrites working.docx, then a lock says "nothing has been changed"~~ — FIXED 24.10, `e3b9f78`
+
+<!-- status: fixed -->
+
+Review, cut from the fifteen (V10, CONFIRMED). `--repair-math` writes
+working.docx before `verdict()` runs (`_baseline.py:234`); `verdict` ->
+`_proposal` -> `_readable_hash` raises `DocumentLocked` when Word holds the
+batch or a redline, and its message says nothing has been changed. Either
+decide the lock before the repair, or say what was written.
+
+**Fixed 2026-10-24**, `e3b9f78`. the batch is read (`_proposal`) before the repair is written, and a lock in `verdict` after the write says the file HAS been changed and names the backup. Tests: `test_repair_math_asks_for_the_BATCH_before_it_writes`, `test_a_lock_AFTER_the_repair_says_the_file_was_changed` (red at `21636d2`), and the no-log and no-repair branches.
+
+### ~~S2 — `deleted_by_batch` gets locks wrong in both directions~~ — FIXED 24.10, `e3b9f78`
+
+<!-- status: fixed -->
+
+Review finding 11 (V06 CONFIRMED, V07 PLAUSIBLE). The 10-14 fix
+(`e8a619d`) re-raises `DocumentLocked` from `_promoted`'s hash
+(`_verdict.py:254`):
+
+- **Too strict.** The read-only `revision ingest` — which snapshots
+  working.docx so it can run while Word holds files — now exits 1 "batch.docx
+  is open in Word … nothing has been changed" with no content or state
+  sections when Word holds batch.docx, or a kept redline of the same size.
+  At 4deb0f9 it printed the full report; a `package.readable` copy hashes
+  equal.
+- **Too loose.** A lock `is_locked` cannot see (a read-only file held
+  open, a byte-range lock), a transient OneDrive/AV `PermissionError`
+  (`_readable_hash` has no retry, `_common.py:176`), or `read_parts`' lock
+  raised as a plain `PackageError` in a 4–5 ms window, is swallowed by
+  the broad except. The batch's own accepted deletions come back LOST;
+  following the `--accept-loss` advice then exits 70 inside `verdict`.
+
+**Fix:** hash through `package.readable` (a snapshot), retry like
+`read_parts`, and let anything still unreadable fail the command as
+"cannot read batch.docx" — never become an empty excuse.
+
+**Fixed 2026-10-24**, `e3b9f78`. `_readable_hash` retries a denial nothing holds, then hashes a byte copy, and refuses only a file neither reads (`DocumentLocked` when Word holds it, `PackageError` naming it otherwise); `_readable_parts` reads the batch through `package.readable`; `deleted_by_batch` swallows only a proposal that does not parse. Tests: `test_a_batch_Word_holds_is_read_through_a_COPY`, `test_a_lock_is_locked_UNSEEN_says_so_and_is_not_LOST`, `test_a_denial_RIDDEN_OUT_reads_the_file`, `test_a_PERMISSION_error_on_a_file_nothing_holds_is_not_called_Word` (each red at `21636d2`).
+
 ### ~~S4 — the HPPA footnote-8 shape (a cut of the reference mark alone) is refused again~~ — FIXED 24.10, `8b3b8e0`
 
 <!-- status: fixed -->
