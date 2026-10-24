@@ -5,6 +5,7 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -315,7 +316,20 @@ def promote(paper: Paper, batch: str | Path | None = None,
             f"removed; {rescue.name} still holds the file this would have "
             f"replaced.")
 
-    shutil.copyfile(batch, live)
+    # A READ-ONLY manuscript passes `is_locked` (see `withdraw`), and the
+    # copy then failed with the redline already kept — which `verdict`
+    # reads as "this batch reached the manuscript" (review of
+    # 2026-10-24). Made writable, and a copy that still fails takes the
+    # redline back out, so the record says what happened.
+    package._clear_readonly(live)
+    try:
+        shutil.copyfile(batch, live)
+    except OSError as exc:
+        redline.unlink(missing_ok=True)    # no promote happened to record
+        raise DocumentLocked(
+            f"{live.name} could not be written ({exc.strerror}). Close "
+            f"whatever holds it and promote again — the manuscript is as "
+            f"it was, and {rescue.name} holds a copy of it.") from exc
     if _guard.sha256(live) != _guard.sha256(batch):
         raise ProtocolError(f"the copy did not land: {live}")
 
@@ -461,12 +475,6 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"{paper.batch.name} is the proposal being withdrawn, and it is "
             f"open in Word. Close it first — withdrawing removes it, and "
             f"nothing has been changed yet.")
-    if removed:
-        # `is_locked` answers False for a READ-ONLY file, by design
-        # (OneDrive sets the bit mid-write), and the unlink below then
-        # raised after the manuscript was restored. Cleared here, while
-        # nothing has been written; `_discard` does the same.
-        package._clear_readonly(paper.batch)
 
     base_hash = _readable_hash(paper.prev)
     built_on = _guard.base_of(live)
@@ -485,15 +493,46 @@ def withdraw(paper: Paper, *, why: str) -> WithdrawReport:
             f"file that promote replaced. Restore the right copy from "
             f"{paper.rescue_dir.name}/ by hand, then rebuild.")
 
-    shutil.copyfile(paper.prev, live)
+    # Every refusal is behind us; now every file this writes is made
+    # writable and the batch moved aside, before the manuscript is
+    # touched (review of 2026-10-24). `is_locked` answers False for any
+    # READ-ONLY file, by design (OneDrive sets the bit mid-write), so a
+    # read-only manuscript passed every check and the copy raised a bare
+    # PermissionError, and a read-only batch something held was found
+    # only by the unlink AFTER the manuscript had been restored. A
+    # rename is refused for a file something holds, and it is undone in
+    # one call; an unlink is neither.
+    aside = paper.batch.with_name(paper.batch.name + ".withdrawing")
+    if removed:
+        package._clear_readonly(paper.batch)
+        try:
+            os.replace(paper.batch, aside)
+        except OSError as exc:
+            raise DocumentLocked(
+                f"{paper.batch.name} is the proposal being withdrawn, and "
+                f"something holds it ({exc.strerror}). Close it first — "
+                f"withdrawing removes it, and nothing has been changed "
+                f"yet.") from exc
+    package._clear_readonly(live)
+    try:
+        shutil.copyfile(paper.prev, live)
+    except OSError as exc:
+        if removed:
+            os.replace(aside, paper.batch)
+        raise DocumentLocked(
+            f"{live.name} could not be written ({exc.strerror}). Close "
+            f"whatever holds it and run withdraw again — nothing has been "
+            f"changed.") from exc
     if _guard.sha256(live) != base_hash:
+        if removed:
+            os.replace(aside, paper.batch)
         raise ProtocolError(
             f"the copy did not land: {live} — {newest.name} still holds the "
             f"proposal")
     _guard.stamp_path(live).unlink(missing_ok=True)
 
     if removed:
-        paper.batch.unlink()
+        aside.unlink()
         _guard.stamp_path(paper.batch).unlink(missing_ok=True)
 
     _ledger.record(paper, _ledger.WITHDRAWN,

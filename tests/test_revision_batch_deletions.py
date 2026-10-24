@@ -731,27 +731,41 @@ def test_a_loss_no_batch_proposes_is_never_excused():
 
 # ------------------------------------------------- a batch Word holds
 
-def _word_holds_batch(monkeypatch, paper):
-    """Word holding `batch.docx` with the read denied (HPPA, 2026-10-09)."""
+def _word_holds_batch(monkeypatch, paper, *, copies=False, seen=True):
+    """Word holding `batch.docx` with the read denied (HPPA, 2026-10-09).
+
+    `copies`: a byte copy of it still reads, as one of a file Word holds
+    usually does (`package.readable`). `seen`: `is_locked` answers True —
+    False is a lock it cannot see, a read-only file something holds."""
+    import shutil
     from pathlib import Path
 
-    held, real = paper.batch.resolve(), guard.sha256
+    held, real, real_copy = paper.batch.resolve(), guard.sha256, \
+        shutil.copyfile
 
     def sha256(p):
         if Path(p).resolve() == held:
             raise PermissionError(13, "Permission denied", str(p))
         return real(p)
 
+    def copyfile(src, dst, *args, **kwargs):
+        if not copies and Path(src).resolve() == held:
+            raise PermissionError(13, "Permission denied", str(src))
+        return real_copy(src, dst, *args, **kwargs)
+
     monkeypatch.setattr(guard, "sha256", sha256)
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
     monkeypatch.setattr(package, "is_locked",
-                        lambda p: Path(p).resolve() == held)
+                        lambda p: seen and Path(p).resolve() == held)
+    monkeypatch.setattr(package, "_back_off", lambda *_a: None)
 
 
 def test_a_LOCKED_batch_is_said_to_be_locked_not_LOST(monkeypatch, tmp_path):
     """Review 2026-10-14, finding 13. The batch's own deletions, all
-    accepted, with batch.docx open in Word: the PermissionError from its
-    hash was swallowed as "no excuse", `baseline` printed LOST with
-    `--accept-loss` advice, and following it crashed with exit 70."""
+    accepted, with batch.docx open in Word and no copy of it readable
+    either: the PermissionError from its hash was swallowed as "no
+    excuse", `baseline` printed LOST with `--accept-loss` advice, and
+    following it crashed with exit 70."""
     from docxkit.errors import DocumentLocked
 
     paper = _round(tmp_path)
@@ -776,6 +790,45 @@ def test_ingest_check_says_the_batch_is_LOCKED(monkeypatch, tmp_path,
 
     assert "batch.docx is open in Word" in str(code)
     assert "== LOST" not in capsys.readouterr().out
+
+
+def test_a_batch_Word_holds_is_read_through_a_COPY(monkeypatch, tmp_path,
+                                                   capsys):
+    """Review 2026-10-24, finding 11. Refusing at once made the read-only
+    `ingest` die with no report while Word held batch.docx, though a copy
+    of it reads and hashes the same. Read through the copy, the round
+    passes as it would with the batch closed."""
+    paper = _round(tmp_path)
+    _accept_all(paper)
+    _word_holds_batch(monkeypatch, paper, copies=True)
+
+    code, _ = run_cli(monkeypatch, "revision", "ingest", "--check",
+                      "--paper", str(paper.root))
+
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "DELETED BY THE BATCH (3)" in out
+    assert len(revision.baseline(paper, log=False).deleted) == 3
+
+
+def test_a_lock_is_locked_UNSEEN_says_so_and_is_not_LOST(monkeypatch,
+                                                         tmp_path):
+    """Review 2026-10-24, finding 11, the other direction. A read-only
+    file something holds is no lock `is_locked` can see, so the bare
+    PermissionError went to the broad except, the batch's own deletions
+    came back LOST, and `--accept-loss` then exited 70 in `verdict`. It
+    is a file that cannot be read, named."""
+    from docxkit.errors import PackageError
+
+    paper = _round(tmp_path)
+    _accept_all(paper)
+    _word_holds_batch(monkeypatch, paper, seen=False)
+
+    with pytest.raises(PackageError, match=r"cannot read batch\.docx"):
+        revision.baseline(paper, log=False)
+    with pytest.raises(PackageError, match=r"cannot read batch\.docx"):
+        revision.baseline(paper, log=False,
+                          accept_loss=tuple(NOTES[k][:30] for k in (2, 4, 6)))
 
 
 def test_an_UNPARSEABLE_proposal_leaves_the_losses_where_they_are(tmp_path):

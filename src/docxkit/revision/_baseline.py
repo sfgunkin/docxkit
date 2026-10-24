@@ -18,7 +18,7 @@ from ._common import word_only_what
 from ._config import Paper
 from ._losses import Loss, _names, _unmet, losses
 from ._state import State, state
-from ._verdict import Verdict, deleted_by_batch, log_batch, verdict
+from ._verdict import Verdict, _proposal, deleted_by_batch, log_batch, verdict
 
 
 @dataclass(frozen=True)
@@ -225,16 +225,32 @@ def baseline(paper: Paper, *, force: bool = False,
                 f"{cause}, or name the deliberate ones with the flag shown "
                 f"above (a prefix is enough); a loss whose WORDS are gone "
                 f"is usually an editorial cut, and nothing to repair.")
+    saved: Path | None = None
     if repaired is not None:
+        # The verdict below reads the batch, and a batch Word holds is
+        # refused there with "nothing has been changed" — which, once the
+        # repair is written, is false (review of 2026-10-24). So the read
+        # that can refuse is made before the write.
+        if log:
+            _proposal(paper)
         # `state` above read the file on disk, which is the unrepaired
         # one — and reads the same either way: restoring a glyph rewrites
         # run TEXT and touches no `w:ins` or `w:del`, so it cannot move
         # the count this gate is about.
-        package.backup(paper.working, tag="pre_math_repair")
+        saved = package.backup(paper.working, tag="pre_math_repair")
         package.write_docx(paper.working, repaired)
     # BEFORE the copy: the whole computation is against the truth the
     # batch was built on, and the next line overwrites it.
-    recorded = verdict(paper) if log else None
+    try:
+        recorded = verdict(paper) if log else None
+    except DocumentLocked as exc:
+        if saved is None:
+            raise
+        raise DocumentLocked(
+            f"{str(exc).split('. ')[0]}. And {paper.working.name} HAS "
+            f"been changed: --repair-math restored its maths (the file "
+            f"before is {saved.name}). Close it and run baseline again; the "
+            f"repair will find nothing left to do.") from exc
     paper.build_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(paper.working, paper.prev)
     row = log_batch(paper, recorded, note) if recorded is not None else None

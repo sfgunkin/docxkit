@@ -14,8 +14,7 @@ from pathlib import Path
 from .. import guard as _guard
 from .. import package, revisions, tracked
 from .._xml import Parts
-from ..errors import DocumentLocked, DocxKitError
-from ._common import TEXT_PARTS, _readable_hash, _today
+from ._common import TEXT_PARTS, _readable_hash, _readable_parts, _today
 from ._config import Paper
 from ._losses import BATCH_KINDS, Loss, _bookmarks, _links, batch_deletions
 from ._state import _state
@@ -230,30 +229,31 @@ def deleted_by_batch(paper: Paper, working: Parts, prev: Parts,
     which batch the round grew out of. It runs only when there is a loss
     of a kind a batch can propose, so a clean hand-back hashes nothing.
     It refuses while revisions are PENDING: an unopened proposal is not
-    an accepted one. A file it cannot read (a package mid-save, a part
-    that does not parse) leaves every loss where it was — and its views
-    are computed inside the same guard, since computing them outside it
-    crashed the read-only `ingest` on an unparseable proposal.
+    an accepted one. A proposal that does not PARSE leaves every loss
+    where it was — and its views are computed inside the same guard,
+    since computing them outside it crashed the read-only `ingest` on an
+    unparseable proposal.
 
-    **Except a batch WORD holds**, which raises :class:`DocumentLocked`
-    (review of 2026-10-14). Swallowed with the rest, the batch's own
+    **A proposal it cannot READ is not that case** (reviews of
+    2026-10-14 and 2026-10-24). Swallowed with the rest, the batch's own
     accepted deletions came out as LOSSES with ``--accept-loss`` advice,
-    and following the advice then crashed in `verdict` on the same
-    lock. "Close it and run again" is the answer that is true.
+    and following the advice then crashed in `verdict` on the same file.
+    The batch is hashed and read through a copy when Word holds it
+    (:func:`_readable_hash`, :func:`_readable_parts`), and one that
+    still cannot be read is said so — :class:`DocumentLocked`, or a
+    :class:`PackageError` naming it — rather than turned into losses.
     """
     if not any(loss.kind in BATCH_KINDS for loss in gone):
         return [], list(gone)
     if not _state(working, paper.working, False).is_truth:
         return [], list(gone)
+    batch = _proposal(paper)
+    if batch is None:
+        return [], list(gone)
+    proposal = _readable_parts(batch)
     try:
-        batch = _proposal(paper)
-        if batch is None:
-            return [], list(gone)
-        return batch_deletions(gone, working, prev,
-                               package.read_parts(batch))
-    except DocumentLocked:
-        raise
-    except (OSError, SyntaxError, ValueError, DocxKitError):
+        return batch_deletions(gone, working, prev, proposal)
+    except (SyntaxError, ValueError):
         # SyntaxError is lxml's XMLSyntaxError, named without lxml
         return [], list(gone)
 
@@ -290,7 +290,7 @@ def verdict(paper: Paper) -> Verdict:
     kept = reverted = authored = 0
     proposed = (0, 0)
     if batch is not None:
-        parts = package.read_parts(batch)
+        parts = _readable_parts(batch)
         counts = tracked.package_counts(parts)
         proposed = (counts["insertions"], counts["deletions"])
         final, original = _para_counts(parts, revisions.FINAL), \

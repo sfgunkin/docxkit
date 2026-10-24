@@ -310,17 +310,33 @@ def test_WITHDRAW_refuses_while_word_holds_the_manuscript(promoted_round,
     assert paper.working.read_bytes() == before
 
 
-def _word_holds(monkeypatch, path: Path, *, deny_read: bool) -> None:
-    """Fake Word holding `path`: locked, and — as its share mode can —
-    refusing the read too when `deny_read`."""
-    held, real = path.resolve(), guard.sha256
+def _deny(monkeypatch, path: Path) -> None:
+    """Refuse every read of `path`: its hash, and a byte copy of it."""
+    import shutil
+
+    held, real, real_copy = path.resolve(), guard.sha256, shutil.copyfile
 
     def sha256(p):
-        if deny_read and Path(p).resolve() == held:
+        if Path(p).resolve() == held:
             raise PermissionError(13, "Permission denied", str(p))
         return real(p)
 
+    def copyfile(src, dst, *args, **kwargs):
+        if Path(src).resolve() == held:
+            raise PermissionError(13, "Permission denied", str(src))
+        return real_copy(src, dst, *args, **kwargs)
+
     monkeypatch.setattr(guard, "sha256", sha256)
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+    monkeypatch.setattr(package, "_back_off", lambda *_a: None)
+
+
+def _word_holds(monkeypatch, path: Path, *, deny_read: bool) -> None:
+    """Fake Word holding `path`: locked, and — as its share mode can —
+    refusing the read too when `deny_read`, of the file and of a copy."""
+    held = path.resolve()
+    if deny_read:
+        _deny(monkeypatch, path)
     monkeypatch.setattr(revision.package, "is_locked",
                         lambda p: Path(p).resolve() == held)
 
@@ -421,20 +437,192 @@ def test_WITHDRAW_does_not_READ_a_rebuilt_batch_Word_holds(promoted_round,
 def test_a_PERMISSION_error_on_a_file_nothing_holds_is_not_called_Word(
         promoted_round, monkeypatch):
     """Only a file `is_locked` agrees is held becomes DocumentLocked; any
-    other PermissionError is something else and is not dressed up."""
+    other PermissionError is something else and is not dressed up — nor
+    let through bare, which the CLI reports as an internal error (review
+    of 2026-10-24): it is a file that cannot be read, named."""
+    from docxkit.errors import DocumentLocked, PackageError
+
+    paper = promoted_round.paper
+    _deny(monkeypatch, paper.working)
+    monkeypatch.setattr(revision.package, "is_locked", lambda _p: False)
+
+    with pytest.raises(PackageError, match="cannot read") as caught:
+        revision.withdraw(paper, why="an ACL, not Word")
+
+    assert not isinstance(caught.value, DocumentLocked)
+
+
+def test_a_denial_RIDDEN_OUT_reads_the_file(promoted_round, monkeypatch):
+    """A denial with nothing holding the file — OneDrive, a scanner — is
+    waited out on `read_parts`' schedule, not refused on the first try."""
     paper = promoted_round.paper
     held, real = paper.working.resolve(), guard.sha256
+    tries: list[object] = []
 
     def sha256(p):
-        if Path(p).resolve() == held:
+        if Path(p).resolve() == held and len(tries) < 2:
+            tries.append(p)
             raise PermissionError(13, "Permission denied", str(p))
         return real(p)
 
     monkeypatch.setattr(guard, "sha256", sha256)
-    monkeypatch.setattr(revision.package, "is_locked", lambda _p: False)
+    monkeypatch.setattr(package, "_back_off", lambda *_a: None)
 
-    with pytest.raises(PermissionError):
-        revision.withdraw(paper, why="an ACL, not Word")
+    report = revision.withdraw(paper, why="a scanner had it a moment")
+
+    assert len(tries) == 2 and report.removed_batch
+
+
+def test_WITHDRAW_restores_a_READ_ONLY_manuscript(promoted_round):
+    """Review 2026-10-24, finding 12. OneDrive leaves working.docx
+    read-only; `is_locked` says no lock, by design, and the copy raised a
+    bare PermissionError — exit 70 — after the batch's bit had been
+    flipped."""
+    import os
+    import stat
+
+    paper = promoted_round.paper
+    os.chmod(paper.working, stat.S_IREAD)
+    try:
+        report = revision.withdraw(paper, why="read-only manuscript")
+    finally:
+        os.chmod(paper.working, stat.S_IREAD | stat.S_IWRITE)
+
+    assert report.removed_batch
+    assert guard.sha256(paper.working) == guard.sha256(paper.prev)
+    assert _ledger_lines(paper)[-1]["event"] == "withdrawn"
+
+
+def test_WITHDRAW_of_a_READ_ONLY_batch_something_HOLDS_writes_nothing(
+        promoted_round, monkeypatch):
+    """Review 2026-10-24, finding 12, the other half. Read-only AND held:
+    `is_locked` sees no lock, the manuscript was restored and its stamp
+    removed, and the unlink then failed — the half-finished withdraw the
+    10-14 fix meant to rule out. The batch is moved aside first, and a
+    move something refuses refuses the withdraw, with nothing written."""
+    import os
+
+    from docxkit.errors import DocumentLocked
+
+    paper = promoted_round.paper
+    before, lines = paper.working.read_bytes(), len(_ledger_lines(paper))
+    held, real = paper.batch.resolve(), os.replace
+
+    def replace(src, dst):
+        if Path(src).resolve() == held:
+            raise PermissionError(32, "in use by another process", str(src))
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace)
+
+    with pytest.raises(DocumentLocked, match="nothing has been changed"):
+        revision.withdraw(paper, why="batch held")
+
+    assert paper.working.read_bytes() == before
+    assert guard.stamp_path(paper.working).exists()
+    assert paper.batch.exists()
+    assert len(_ledger_lines(paper)) == lines
+
+
+@pytest.mark.parametrize("lands", ["refused", "half"])
+def test_WITHDRAW_that_fails_with_a_REBUILT_batch_leaves_it_alone(
+        promoted_round, monkeypatch, lands):
+    """A batch rebuilt since is not moved aside, so a copy that fails —
+    refused, or landing half — has nothing to put back."""
+    import shutil
+
+    from docxkit.errors import DocumentLocked
+
+    paper = promoted_round.paper
+    write(paper.batch, make_parts(para(run("already rebuilt, and longer "
+                                           "than the proposal was"))))
+    rebuilt = paper.batch.read_bytes()
+    target, real = paper.working.resolve(), shutil.copyfile
+
+    def copyfile(src, dst, *args, **kwargs):
+        if Path(dst).resolve() != target:
+            return real(src, dst, *args, **kwargs)
+        if lands == "refused":
+            raise PermissionError(13, "Permission denied", str(dst))
+        Path(dst).write_bytes(b"half")
+        return dst
+
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+
+    with pytest.raises((ProtocolError, DocumentLocked)):
+        revision.withdraw(paper, why="rebuilt, then a bad disk")
+
+    assert paper.batch.read_bytes() == rebuilt
+
+
+def test_PROMOTE_onto_a_READ_ONLY_manuscript_lands(held_round):
+    """Review 2026-10-24 (pre-existing). The copy onto a read-only
+    manuscript failed after the redline had been kept, and `verdict`
+    read that redline as "this batch reached the manuscript"."""
+    import os
+    import stat
+
+    paper = held_round.paper
+    os.chmod(paper.working, stat.S_IREAD)
+    try:
+        revision.promote(paper)
+    finally:
+        os.chmod(paper.working, stat.S_IREAD | stat.S_IWRITE)
+
+    assert paper.working.read_bytes() == paper.batch.read_bytes()
+
+
+def test_PROMOTE_whose_copy_is_REFUSED_keeps_no_redline(held_round,
+                                                        monkeypatch):
+    """A copy that fails takes the kept redline back out, so nothing
+    records a promote that did not happen."""
+    import shutil
+
+    from docxkit.errors import DocumentLocked
+
+    paper = held_round.paper
+    before = paper.working.read_bytes()
+    target, real = paper.working.resolve(), shutil.copyfile
+
+    def copyfile(src, dst, *args, **kwargs):
+        if Path(dst).resolve() == target:
+            raise PermissionError(13, "Permission denied", str(dst))
+        return real(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+
+    with pytest.raises(DocumentLocked, match="as it was"):
+        revision.promote(paper)
+
+    assert paper.working.read_bytes() == before
+    assert paper.redlines() == []
+
+
+def test_WITHDRAW_whose_copy_is_REFUSED_puts_the_batch_back(promoted_round,
+                                                           monkeypatch):
+    """The manuscript cannot be written: nothing has changed, and the
+    batch moved aside for the unlink is back where it was."""
+    import shutil
+
+    from docxkit.errors import DocumentLocked
+
+    paper = promoted_round.paper
+    before, lines = paper.working.read_bytes(), len(_ledger_lines(paper))
+    target, real = paper.working.resolve(), shutil.copyfile
+
+    def copyfile(src, dst, *args, **kwargs):
+        if Path(dst).resolve() == target:
+            raise PermissionError(13, "Permission denied", str(dst))
+        return real(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+
+    with pytest.raises(DocumentLocked, match="nothing has been changed"):
+        revision.withdraw(paper, why="manuscript unwritable")
+
+    assert paper.working.read_bytes() == before
+    assert paper.batch.exists()
+    assert len(_ledger_lines(paper)) == lines
 
 
 # --- which digest sorts first, and which redline is read -----------------

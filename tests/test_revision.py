@@ -5393,6 +5393,91 @@ def test_repair_math_BACKS_UP_the_file_it_rewrites(tmp_path):
     assert kept[0].read_bytes() == before
 
 
+def test_repair_math_asks_for_the_BATCH_before_it_writes(tmp_path,
+                                                         monkeypatch):
+    """Review 2026-10-24. The repair was written, then the verdict read a
+    batch Word held and refused with "nothing has been changed". The read
+    that can refuse goes first, so a refusal is true."""
+    from docxkit.revision import _baseline
+
+    prev, work = _math_pair("−0.398", "-0.398")
+    paper = _paper_at(tmp_path, prev, work)
+    before = paper.working.read_bytes()
+
+    def held(_paper):
+        raise revision.DocumentLocked("batch.docx is open in Word. Close "
+                                      "it — nothing has been changed.")
+
+    monkeypatch.setattr(_baseline, "_proposal", held)
+
+    with pytest.raises(revision.DocumentLocked, match="nothing has been"):
+        revision.baseline(paper, repair_math=True)
+
+    assert paper.working.read_bytes() == before
+
+
+def test_a_lock_AFTER_the_repair_says_the_file_was_changed(tmp_path,
+                                                           monkeypatch):
+    """Word opening the batch between that read and the verdict's: the
+    refusal says what was written, and where the file before it is."""
+    from docxkit.revision import _baseline
+
+    prev, work = _math_pair("−0.398", "-0.398")
+    paper = _paper_at(tmp_path, prev, work)
+
+    def held(_paper):
+        raise revision.DocumentLocked("batch.docx is open in Word. Close "
+                                      "it — nothing has been changed.")
+
+    monkeypatch.setattr(_baseline, "_proposal", lambda _paper: None)
+    monkeypatch.setattr(_baseline, "verdict", held)
+
+    with pytest.raises(revision.DocumentLocked) as caught:
+        revision.baseline(paper, repair_math=True)
+
+    said = str(caught.value)
+    assert "HAS been changed" in said and "nothing has been" not in said
+    assert "pre_math_repair" in said
+
+
+def test_repair_math_with_NO_LOG_reads_no_batch(tmp_path, monkeypatch):
+    """No verdict, no batch to read: the repair is not held up by one."""
+    from docxkit.revision import _baseline
+
+    prev, work = _math_pair("−0.398", "-0.398")
+    paper = _paper_at(tmp_path, prev, work)
+
+    def held(_paper):
+        raise AssertionError("read the batch with no verdict to give")
+
+    monkeypatch.setattr(_baseline, "_proposal", held)
+    monkeypatch.setattr(_baseline, "verdict", held)
+
+    revision.baseline(paper, repair_math=True, log=False)
+
+    assert list(paper.working.parent.glob("*pre_math_repair*.docx"))
+
+
+def test_a_lock_in_the_verdict_with_NO_repair_is_said_as_it_is(tmp_path,
+                                                               monkeypatch):
+    """Nothing was written, so "nothing has been changed" is true and
+    stays."""
+    from docxkit.revision import _baseline
+
+    prev = make_parts(para(run("the same words")))
+    paper = _paper_at(tmp_path, prev, prev)
+
+    def held(_paper):
+        raise revision.DocumentLocked("batch.docx is open in Word — "
+                                      "nothing has been changed.")
+
+    monkeypatch.setattr(_baseline, "verdict", held)
+
+    with pytest.raises(revision.DocumentLocked,
+                       match="nothing has been changed"):
+        revision.baseline(paper)
+
+
 
 # --- the config writer's helpers ----------------------------------------
 

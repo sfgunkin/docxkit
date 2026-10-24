@@ -6,10 +6,12 @@ is part of :mod:`docxkit.revision`; import from there.
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
 from datetime import date, datetime
 from pathlib import Path
 
-from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES
+from .._xml import DOCUMENT, ENDNOTES, FOOTNOTES, Parts
 
 #: A `[section]` header on a line of its own, which is how every config
 #: this package writes spells one. A key written in dotted form
@@ -168,16 +170,58 @@ def _readable_hash(path: Path) -> str:
     batch-deletion excuse read the same batch, and a lock swallowed there
     turned the batch's own accepted deletions into LOSSES, with advice
     that then crashed (review of 2026-10-14).
+
+    **And a refusal only when nothing else reads it** (review of
+    2026-10-24). Refusing at once made the read-only `revision ingest`,
+    which snapshots ``working.docx`` so it can run while Word holds it,
+    die with no report whenever Word held ``batch.docx`` — though a byte
+    COPY of a file Word holds reads (see :func:`package.readable`) and
+    hashes the same. So: a denial with nothing holding the file is ridden
+    out on `read_parts`' schedule (OneDrive and a virus scanner both
+    raise one), then the copy is hashed, and only a file neither reads
+    is refused — :class:`DocumentLocked` when Word holds it, and a
+    :class:`PackageError` naming the file otherwise, never the bare
+    `PermissionError` that reached the CLI as an internal error.
     """
     from .. import guard, package
-    from ..errors import DocumentLocked
+    from ..errors import DocumentLocked, PackageError
 
-    try:
-        return guard.sha256(path)
-    except PermissionError:
-        if package.is_locked(path):
-            raise DocumentLocked(
-                f"{path.name} is open in Word, which will not let it be "
-                f"read. Close it and run this again — nothing has been "
-                f"changed.") from None
-        raise
+    retries, delay = 6, 0.2
+    denied: PermissionError | None = None
+    for attempt in range(retries):
+        try:
+            return guard.sha256(path)
+        except PermissionError as exc:
+            denied = exc
+            if package.is_locked(path):
+                break                      # Word's: no wait will end it
+            package._back_off(attempt, retries, delay)
+    with tempfile.TemporaryDirectory(prefix="docxkit_hash_") as tmp:
+        copy = Path(tmp) / path.name
+        try:
+            shutil.copyfile(path, copy)
+        except OSError:
+            pass
+        else:
+            return guard.sha256(copy)
+    if package.is_locked(path):
+        raise DocumentLocked(
+            f"{path.name} is open in Word, which will not let it be "
+            f"read. Close it and run this again — nothing has been "
+            f"changed.") from None
+    raise PackageError(
+        f"cannot read {path.name} ({denied}). Close whatever holds it "
+        f"and run this again — nothing has been changed.") from denied
+
+
+def _readable_parts(path: Path) -> Parts:
+    """`package.read_parts`, through a snapshot when Word holds `path`.
+
+    The batch is read where `_readable_hash` hashed it: a proposal that
+    hashes through a copy but cannot be read as one crashed `verdict`
+    straight after the hash had passed.
+    """
+    from .. import package
+
+    with package.readable(path) as (target, _copied):
+        return package.read_parts(target)
