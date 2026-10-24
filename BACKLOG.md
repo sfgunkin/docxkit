@@ -88,46 +88,6 @@ that). Not diagnosed. Workaround: measure floors with `tools/gates.py`
 or on the module's harness, not on the whole folder with a one-module
 `--cov`.
 
-### S3 — the `[batch] classify` loader: path dropped too early, modules shared across papers
-<!-- status: open -->
-
-Review finding 13 (V12, CONFIRMED). `_classifier` takes the classifier's
-folder off `sys.path` as soon as the module has run (`_build.py:103`) and
-never isolates `sys.modules`:
-
-- a sibling import made when `classify()` is CALLED fails only after
-  Word's 40–141 s Compare — as a `ScaffoldMissing` that blames Word after a
-  "No module named rules" warning (seeded case), or exit 70 (a carried
-  comment, no seed);
-- siblings imported at load time stay cached under bare names, so a second
-  paper built in the same process uses the first paper's `rules.py`
-  (paper B's batch carried "A3: paper A's referee point");
-- `except Exception` lets a module-level `sys.exit(3)` end the CLI with
-  exit 3 — BASELINE_PENDING's code — printing nothing.
-
-The suite's own test leaks `rules_1014` into `sys.modules`, and the
-dataclass case passes without registration on 3.15. **Fix:** keep the
-folder on the path for the classifier's lifetime under a unique package
-name, restore `sys.modules` afterwards, and catch `BaseException` from the
-load as a classifier error.
-
-### S2 — `revisions._drop_row` and cell drops leave half a bookmark
-<!-- status: open -->
-
-Review, outside the diff (V20, CONFIRMED). Dropping a row whose
-`bookmarkStart` is inside it and whose `bookmarkEnd` is outside leaves a
-dangling `bookmarkEnd` (no lift). 2 real files have the shape; 0 of 117
-kept redlines. Pre-existing helper, reached by a caller this range
-touched.
-
-### S2 — `paragraph` split/merge duplicates a `numberingChange`
-<!-- status: open -->
-
-Review, outside the diff (V21, CONFIRMED). `paragraph._refuse_revisions`
-(`paragraph.py:75`) does not list `numberingChange`, which `313ae10` began
-counting as a revision, so split/merge/drop accept a paragraph carrying
-one and write it twice (the same `w:id` twice).
-
 ### S2 — latent revision shapes the review reasoned out but found in no file
 <!-- status: open -->
 

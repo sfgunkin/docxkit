@@ -14,6 +14,55 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — `paragraph` split/merge duplicates a `numberingChange`~~ — FIXED 24.10, `17ea5eb`
+
+<!-- status: fixed -->
+
+Review, outside the diff (V21, CONFIRMED). `paragraph._refuse_revisions`
+(`paragraph.py:75`) does not list `numberingChange`, which `313ae10` began
+counting as a revision, so split/merge/drop accept a paragraph carrying
+one and write it twice (the same `w:id` twice).
+
+**Fixed 2026-10-24**, `17ea5eb`. `paragraph._REVISION_RE` is `revisions.REVISION_RE`, every kind. Test: `test_a_paragraph_with_a_NUMBERING_change_is_refused` (red on the old code); the registry's declaration for the old six-name pattern is removed.
+
+### ~~S2 — `revisions._drop_row` and cell drops leave half a bookmark~~ — FIXED 24.10, `17ea5eb`
+
+<!-- status: fixed -->
+
+Review, outside the diff (V20, CONFIRMED). Dropping a row whose
+`bookmarkStart` is inside it and whose `bookmarkEnd` is outside leaves a
+dangling `bookmarkEnd` (no lift). 2 real files have the shape; 0 of 117
+kept redlines. Pre-existing helper, reached by a caller this range
+touched.
+
+**Fixed 2026-10-24**, `17ea5eb`. `revisions._lift_half_bookmarks` moves a start or end whose partner is outside the row or cell to the row's (cell's) place in its parent, before it goes. Test: `test_a_row_or_cell_that_GOES_leaves_no_HALF_a_bookmark` (row and cell, red on the old code).
+
+### ~~S3 — the `[batch] classify` loader: path dropped too early, modules shared across papers~~ — FIXED 24.10, `17ea5eb`
+
+<!-- status: fixed -->
+
+Review finding 13 (V12, CONFIRMED). `_classifier` takes the classifier's
+folder off `sys.path` as soon as the module has run (`_build.py:103`) and
+never isolates `sys.modules`:
+
+- a sibling import made when `classify()` is CALLED fails only after
+  Word's 40–141 s Compare — as a `ScaffoldMissing` that blames Word after a
+  "No module named rules" warning (seeded case), or exit 70 (a carried
+  comment, no seed);
+- siblings imported at load time stay cached under bare names, so a second
+  paper built in the same process uses the first paper's `rules.py`
+  (paper B's batch carried "A3: paper A's referee point");
+- `except Exception` lets a module-level `sys.exit(3)` end the CLI with
+  exit 3 — BASELINE_PENDING's code — printing nothing.
+
+The suite's own test leaks `rules_1014` into `sys.modules`, and the
+dataclass case passes without registration on 3.15. **Fix:** keep the
+folder on the path for the classifier's lifetime under a unique package
+name, restore `sys.modules` afterwards, and catch `BaseException` from the
+load as a classifier error.
+
+**Fixed 2026-10-24**, `17ea5eb`. `_build._Siblings`: the folder on `sys.path` and the classifier's own siblings in `sys.modules` (anything else of those names out of the way) for the load and every call, all restored after; a module name per file (`docxkit_classify_<stem>_<sha1[:8]>`); `SystemExit` and anything the classifier raises become ProtocolError naming the file. Tests: `test_a_classifier_that_imports_its_sibling_WHEN_CALLED_finds_it`, `test_two_papers_classifiers_keep_their_OWN_rules`, `test_a_classifier_that_EXITS_on_load_is_the_paper_s_error`, `test_a_classifier_that_RAISES_when_called_is_named` (all four red on the old loader).
+
 ### ~~S1 — the two comment writers have drifted again: one writer holding every guard~~ — FIXED 24.10, `082da00`
 
 <!-- status: fixed -->
