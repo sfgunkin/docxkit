@@ -14,6 +14,131 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — the HPPA footnote-8 shape (a cut of the reference mark alone) is refused again~~ — FIXED 24.10, `8b3b8e0`
+
+<!-- status: fixed -->
+
+Review, cut from the fifteen (V15, CONFIRMED). A cut of the note
+reference alone — the real HPPA redline's footnote 8, the case the batch-
+deletion excuse was built for — was excused at `e74272c` and is refused at
+HEAD: `_accepted_here` needs words to compare, and a mark-only cut has
+none. A test pins the refusal, and the archive still records the shape as
+fixed. Decide which is meant; if the refusal stays, say so in the archive
+entry and in the refusal message.
+
+**Fixed 2026-10-24**, `8b3b8e0`. decided: the refusal is meant. A mark-only cut reads the same accepted as rejected with the note eaten by Word. The archive entry for `99a509e` now says so, and `batch_deletions`' docstring names the case; `test_a_cut_of_the_note_MARK_alone_is_not_proven_accepted` pins it.
+
+### ~~S2 — following `revision build`'s bookmark advice turns the batch's own bookmark deletions into LOST~~ — FIXED 24.10, `8b3b8e0`
+
+<!-- status: fixed -->
+
+Review finding 4 (sweep, CONFIRMED). Bookmarks the batch deleted are
+excused only while the hand-back's bookmark set equals the proposal's
+accepted view (`_losses.py:702`). `revision build` advises deleting a
+Compare-restored bookmark by hand after the promote (`_build.py:401-405`);
+doing so breaks the equality. The clean edit removes bookmark Lari2023
+(keeping its words) and cuts three citations with their `*txt` targets;
+the agent deletes Lari2023 as told and the author accepts everything:
+`baseline --accept-loss bookmark:Lari2023` exits 5 "lost 3 thing(s) …
+Barr2010txt / Cox1987txt / Holzmann2005txt … Put back anything Word ate".
+The same round without the advised deletion exits 0. Safe direction, but
+the advice and the gate contradict each other. Goes with the per-place
+rule: bookmarks one by one, never by set equality.
+
+**Fixed 2026-10-24**, `8b3b8e0`. bookmarks are checked against `prev` alone (rejected view == prev), each one shown at its place, not by set equality with the hand-back. Test: `test_a_bookmark_deleted_by_hand_as_BUILD_ADVISES_keeps_the_rest` (red on HEAD); the sweep's probe passes with all six of the batch's deletions named.
+
+### ~~S3 — `--accept-loss` naming the batch's deletion as `ingest` prints it is refused as stale~~ — FIXED 24.10, `8b3b8e0`
+
+<!-- status: fixed -->
+
+Review, cut from the fifteen (V11, CONFIRMED). `baseline` checks the
+flags with `_unmet(accept_loss, found)` (`_baseline.py:187`), but
+`_cut_named` renames an excused deletion. A flag copied from `ingest`'s
+"DELETED BY THE BATCH" line is called stale and the run exits 5. Fix as
+the verifier proposed: `_unmet(accept_loss, found + deleted)`. (`_cut_named`
+regex-parses message text — see the cleanup entry.)
+
+**Fixed 2026-10-24**, `8b3b8e0`. `_unmet(accept_loss, found + deleted)`. Test: `test_the_deletion_named_AS_INGEST_PRINTS_it_is_not_STALE` (red on HEAD); V11's probe accepts the flag.
+
+### ~~S1 — the comment-loss gate is a net count, and the protocol's own balloons hide comments Word lost~~ — FIXED 24.10, `8b3b8e0`
+
+<!-- status: fixed -->
+
+Review finding 3 (V17, CONFIRMED). `losses()` counts comments as prev
+minus working > 0 (`_losses.py:387`). Since `[batch] classify` reached
+`revision build` and `annotate_in_place` exists, the protocol adds its
+own balloons to working.docx, and they offset referee comments Word ate.
+prev.docx holds two Referee-2 comments; a classified build writes 4
+balloons and promote carries them; during the author's session one
+referee comment disappears with its anchor. Counts 2 vs 5: `losses()`
+returns [], `ingest --check` exits 0, `baseline` succeeds, and "Cite the
+source." is gone from prev.docx for good.
+
+The reverse is misleading too: next round, deleting those 4 baselined
+balloons exits 5 "Put back anything Word ate" until `--accept-loss
+comment`, and that prefix would also wave through a real comment loss.
+
+**Fix:** compare comments by identity (author, initials, text, anchor
+text — what `hygiene._dedupe_comment_keys` keys on, minus its collapse),
+not by count; balloons the batch itself added are known from the
+proposal and excused by name, the way `batch_deletions` names notes.
+
+**Fixed 2026-10-24**, `8b3b8e0`. `_lost_comments`: a comment is its author and text (`hygiene._comment_counts`), lost as the multiset difference, an empty comment still counted; a comment the proposal does not carry is the batch's deletion (`comment` joined `BATCH_KINDS`). Tests: `test_comments_ADDED_do_not_hide_one_LOST`, `test_a_comment_the_batch_CARRIED_and_the_hand_back_lost_is_LOST`, `test_a_comment_the_BATCH_does_not_carry_is_the_batch_s`; V17's probe now refuses with the referee comment named.
+
+### ~~S1 — a lost link is excused without being shown accepted at its place~~ — FIXED 24.10, `8b3b8e0`
+
+<!-- status: fixed -->
+
+Review finding 2 (V09, CONFIRMED). `batch_deletions` excuses lost LINKS on
+kind-count equality plus `not loss.words` alone (`_losses.py:708`); notes
+and bookmarks need `_accepted_here`, links do not. The batch cuts "As
+[Smith and Jones 2020 -> #Smith2020] showed…" and a Cox 1987 sentence.
+The author accepts the Cox cut, rejects the Smith cut and retypes the
+citation as "Smith & Jones (2020)", which drops the hyperlink. The link
+multisets equal the proposal's views and the old label is no longer
+verbatim (words=False): `ingest --check` exits 0, `baseline` exits 0
+printing "deleted by the batch: link Smith2020", and the truth keeps the
+sentence without its link. `_accepted_here` at that cut is False.
+
+**Fix:** links go through the same per-place proof as notes and
+bookmarks. The rule `loss.kind in equal` is pinned by no test (a mutant
+survives — see the test-gap entry); pin it when it changes.
+
+**Fixed 2026-10-24**, `8b3b8e0`. `_stream` marks `w:hyperlink` and field links (`instrText` and `delInstrText`, joined across runs, read at `separate`/`end`); every link the batch cut must be shown at its place, and the cut read from the stream must agree anchor for anchor with what the views say the accept removes (`_links_shown`). The words-survive rule is retired. Tests: `test_a_REJECTED_cut_whose_citation_was_RETYPED_is_LOST`, `test_the_cut_accepted_and_Word_STRIPPED_the_other_copy_refuses`, `test_a_cut_FIELD_link_accepted_is_the_batch_s_and_rejected_is_LOST`, `test_the_stream_marks_FIELD_links_where_they_start`; V09's five scenarios: A-D refused, E (all accepted) passes.
+
+### ~~S1 — `_accepted_here` proves a cut accepted from a one-sided or repeated context~~ — FIXED 24.10, `8b3b8e0`
+
+<!-- status: fixed -->
+
+Code review 2026-10-24, finding 1 (`REVIEW_2026-10-24.md`, verifier V08,
+CONFIRMED). The 10-14 fix (`e8d34db`) excuses a batch deletion only when
+the hand-back reads its place as the proposal ACCEPTED: the changed text
+plus `_CONTEXT` unchanged characters either side (`_losses.py:593`). Two
+shapes defeat it:
+
+- **A cut at the first or last text of a part.** One context side is
+  empty, so `accepted` is just the unchanged other side, which every
+  hand-back contains. The batch deletes the last bibliography entry with
+  bookmark `Zyl2019` inside the `w:del`; the author REJECTS the cut,
+  changes one character of the restored entry, and Word drops the
+  bookmark. `revision ingest --check` exits 0 listing "DELETED BY THE
+  BATCH … bookmark Zyl2019", `revision baseline` exits 0, and the new
+  `prev.docx` has a body citation linking to a bookmark that no longer
+  exists. The same for a note whose cut sentence starts or ends the body.
+- **A context that appears twice** (duplicated table rows): the
+  whole-part substring test matches the other copy.
+
+The same case mid-part with unique context correctly exits 5.
+Reproduced end-to-end through the CLI on scratch copies.
+
+**Fix:** fail closed. Require context on BOTH sides of the minimum
+length, and require the accepted reading to occur exactly once in the
+part (and the rejected one zero times); anything else stays a LOSS with
+`--accept-loss`. Done together with the next two entries: one per-place
+rule for every kind.
+
+**Fixed 2026-10-24**, `8b3b8e0`. a part's start and end are marked in the reading (`_START`/`_END`), so a cut at the first or last text is shown only by a hand-back that begins or ends where the proposal accepted does; the accepted reading must occur once in the hand-back and once in the proposal accepted (`_once`). Tests: `test_a_REJECTED_cut_at_the_END_of_the_part_is_LOST`, `test_a_context_the_proposal_holds_TWICE_shows_nothing` (both red on HEAD) and the accepted control; V08's six scenarios through the real CLI: every rejected shape exits 5, the accepted control 0.
+
 ### ~~S4 — eleven smaller findings of the 2026-10-14 review~~ — FIXED 14.10, `bdbccd5`
 
 <!-- status: fixed -->

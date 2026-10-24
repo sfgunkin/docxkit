@@ -48,76 +48,6 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
-### S1 — `_accepted_here` proves a cut accepted from a one-sided or repeated context
-<!-- status: open -->
-
-Code review 2026-10-24, finding 1 (`REVIEW_2026-10-24.md`, verifier V08,
-CONFIRMED). The 10-14 fix (`e8d34db`) excuses a batch deletion only when
-the hand-back reads its place as the proposal ACCEPTED: the changed text
-plus `_CONTEXT` unchanged characters either side (`_losses.py:593`). Two
-shapes defeat it:
-
-- **A cut at the first or last text of a part.** One context side is
-  empty, so `accepted` is just the unchanged other side, which every
-  hand-back contains. The batch deletes the last bibliography entry with
-  bookmark `Zyl2019` inside the `w:del`; the author REJECTS the cut,
-  changes one character of the restored entry, and Word drops the
-  bookmark. `revision ingest --check` exits 0 listing "DELETED BY THE
-  BATCH … bookmark Zyl2019", `revision baseline` exits 0, and the new
-  `prev.docx` has a body citation linking to a bookmark that no longer
-  exists. The same for a note whose cut sentence starts or ends the body.
-- **A context that appears twice** (duplicated table rows): the
-  whole-part substring test matches the other copy.
-
-The same case mid-part with unique context correctly exits 5.
-Reproduced end-to-end through the CLI on scratch copies.
-
-**Fix:** fail closed. Require context on BOTH sides of the minimum
-length, and require the accepted reading to occur exactly once in the
-part (and the rejected one zero times); anything else stays a LOSS with
-`--accept-loss`. Done together with the next two entries: one per-place
-rule for every kind.
-
-### S1 — a lost link is excused without being shown accepted at its place
-<!-- status: open -->
-
-Review finding 2 (V09, CONFIRMED). `batch_deletions` excuses lost LINKS on
-kind-count equality plus `not loss.words` alone (`_losses.py:708`); notes
-and bookmarks need `_accepted_here`, links do not. The batch cuts "As
-[Smith and Jones 2020 -> #Smith2020] showed…" and a Cox 1987 sentence.
-The author accepts the Cox cut, rejects the Smith cut and retypes the
-citation as "Smith & Jones (2020)", which drops the hyperlink. The link
-multisets equal the proposal's views and the old label is no longer
-verbatim (words=False): `ingest --check` exits 0, `baseline` exits 0
-printing "deleted by the batch: link Smith2020", and the truth keeps the
-sentence without its link. `_accepted_here` at that cut is False.
-
-**Fix:** links go through the same per-place proof as notes and
-bookmarks. The rule `loss.kind in equal` is pinned by no test (a mutant
-survives — see the test-gap entry); pin it when it changes.
-
-### S1 — the comment-loss gate is a net count, and the protocol's own balloons hide comments Word lost
-<!-- status: open -->
-
-Review finding 3 (V17, CONFIRMED). `losses()` counts comments as prev
-minus working > 0 (`_losses.py:387`). Since `[batch] classify` reached
-`revision build` and `annotate_in_place` exists, the protocol adds its
-own balloons to working.docx, and they offset referee comments Word ate.
-prev.docx holds two Referee-2 comments; a classified build writes 4
-balloons and promote carries them; during the author's session one
-referee comment disappears with its anchor. Counts 2 vs 5: `losses()`
-returns [], `ingest --check` exits 0, `baseline` succeeds, and "Cite the
-source." is gone from prev.docx for good.
-
-The reverse is misleading too: next round, deleting those 4 baselined
-balloons exits 5 "Put back anything Word ate" until `--accept-loss
-comment`, and that prefix would also wave through a real comment loss.
-
-**Fix:** compare comments by identity (author, initials, text, anchor
-text — what `hygiene._dedupe_comment_keys` keys on, minus its collapse),
-not by count; balloons the batch itself added are known from the
-proposal and excused by name, the way `batch_deletions` names notes.
-
 ### S1 — the two comment writers have drifted again: one writer holding every guard
 <!-- status: open -->
 
@@ -254,16 +184,6 @@ Review finding 11 (V06 CONFIRMED, V07 PLAUSIBLE). The 10-14 fix
 `read_parts`, and let anything still unreadable fail the command as
 "cannot read batch.docx" — never become an empty excuse.
 
-### S3 — `--accept-loss` naming the batch's deletion as `ingest` prints it is refused as stale
-<!-- status: open -->
-
-Review, cut from the fifteen (V11, CONFIRMED). `baseline` checks the
-flags with `_unmet(accept_loss, found)` (`_baseline.py:187`), but
-`_cut_named` renames an excused deletion. A flag copied from `ingest`'s
-"DELETED BY THE BATCH" line is called stale and the run exits 5. Fix as
-the verifier proposed: `_unmet(accept_loss, found + deleted)`. (`_cut_named`
-regex-parses message text — see the cleanup entry.)
-
 ### S3 — `baseline --repair-math` rewrites working.docx, then a lock says "nothing has been changed"
 <!-- status: open -->
 
@@ -319,33 +239,6 @@ dataclass case passes without registration on 3.15. **Fix:** keep the
 folder on the path for the classifier's lifetime under a unique package
 name, restore `sys.modules` afterwards, and catch `BaseException` from the
 load as a classifier error.
-
-### S2 — following `revision build`'s bookmark advice turns the batch's own bookmark deletions into LOST
-<!-- status: open -->
-
-Review finding 4 (sweep, CONFIRMED). Bookmarks the batch deleted are
-excused only while the hand-back's bookmark set equals the proposal's
-accepted view (`_losses.py:702`). `revision build` advises deleting a
-Compare-restored bookmark by hand after the promote (`_build.py:401-405`);
-doing so breaks the equality. The clean edit removes bookmark Lari2023
-(keeping its words) and cuts three citations with their `*txt` targets;
-the agent deletes Lari2023 as told and the author accepts everything:
-`baseline --accept-loss bookmark:Lari2023` exits 5 "lost 3 thing(s) …
-Barr2010txt / Cox1987txt / Holzmann2005txt … Put back anything Word ate".
-The same round without the advised deletion exits 0. Safe direction, but
-the advice and the gate contradict each other. Goes with the per-place
-rule: bookmarks one by one, never by set equality.
-
-### S4 — the HPPA footnote-8 shape (a cut of the reference mark alone) is refused again
-<!-- status: open -->
-
-Review, cut from the fifteen (V15, CONFIRMED). A cut of the note
-reference alone — the real HPPA redline's footnote 8, the case the batch-
-deletion excuse was built for — was excused at `e74272c` and is refused at
-HEAD: `_accepted_here` needs words to compare, and a mark-only cut has
-none. A test pins the refusal, and the archive still records the shape as
-fixed. Decide which is meant; if the refusal stays, say so in the archive
-entry and in the refusal message.
 
 ### S2 — `revisions._drop_row` and cell drops leave half a bookmark
 <!-- status: open -->
