@@ -1079,11 +1079,6 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
         "name reader: `run` refuses to stack a batch on pending revisions, "
         "and a paragraph mark's empty insertion is one still pending"),
     ("paragraph.py",
-     r"<w:(?:ins|del|moveFrom|moveTo|pPrChange|rPrChange)\b"): (
-        "name reader: `split`, `merge` and `drop` refuse a paragraph that "
-        "carries ANY revision, and a paragraph mark's empty `<w:ins/>` is "
-        "one; nothing is paired"),
-    ("paragraph.py",
      r"<w:(tc|footnote|endnote|comment|txbxContent|hdr|ftr)\b[^>]*>"
      r"(?:\s*<w:tcPr\b[^>]*/>|\s*<w:tcPr\b[^>]*(?<!/)>.*?</w:tcPr>)?"
      r"\s*\Z"): (

@@ -1466,6 +1466,83 @@ def test_a_classifier_LOADS_as_python_would_run_it(project, monkeypatch,
     assert str(scripts) not in sys.path, "the folder is put back"
 
 
+def _classifier_of(project, monkeypatch, source, siblings=()):
+    """The classifier `revision build` would hand `tracked.build`."""
+    scripts = project.root / "revision" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "why.py").write_text(source, encoding="utf-8")
+    for name, text in siblings:
+        (scripts / f"{name}.py").write_text(text, encoding="utf-8")
+    paper = _with_classify(project, "revision/scripts/why.py")
+    clean = write(paper.build_dir / "clean.docx",
+                  make_parts(para(run("edit"))))
+    fake = _FakeBuild()
+    monkeypatch.setattr(revision.tracked, "build", fake)
+    revision.build(paper, clean)
+    return fake.classify
+
+
+def _ctx(text: str):
+    from docxkit.comments import RevisionContext
+    return RevisionContext(text=text, para="", window="", table_index=None,
+                           start=0, end=0)
+
+
+def test_a_classifier_that_imports_its_sibling_WHEN_CALLED_finds_it(
+        project, monkeypatch):
+    """Review 2026-10-24, finding 13. The folder came off the path once
+    the file had run, so an import made inside `classify()` failed after
+    Word's Compare — as a ScaffoldMissing blaming Word."""
+    classify = _classifier_of(
+        project, monkeypatch,
+        "def classify(ctx):\n    from rules_lazy import RULES\n"
+        "    return RULES.get(ctx.text)\n",
+        [("rules_lazy", "RULES = {'cut': 'R3: lazily'}\n")])
+
+    assert classify(_ctx("cut")) == "R3: lazily"
+    assert "rules_lazy" not in sys.modules, "and none of it left behind"
+
+
+def test_two_papers_classifiers_keep_their_OWN_rules(tmp_path, monkeypatch):
+    """Finding 13. A sibling stayed in `sys.modules` under its bare name,
+    so the second paper built in one process used the first's
+    `rules.py`."""
+    got = []
+    for n, point in enumerate(("A: paper A's point", "B: paper B's point")):
+        root = tmp_path / f"paper{n}"
+        root.mkdir()
+        src = write(root / "manuscript.docx",
+                    make_parts(para(run("The paper as it stands."))))
+        project = revision.init(root, src, name=f"Paper {n}", author="Agent",
+                                attic=tmp_path / f"attic{n}")
+        got.append(_classifier_of(
+            project, monkeypatch,
+            "from rules import RULE\ndef classify(ctx):\n    return RULE\n",
+            [("rules", f"RULE = {point!r}\n")]))
+
+    assert [classify(_ctx("x")) for classify in got] == [
+        "A: paper A's point", "B: paper B's point"]
+
+
+def test_a_classifier_that_EXITS_on_load_is_the_paper_s_error(project,
+                                                              monkeypatch):
+    """Finding 13. `except Exception` let a module-level `sys.exit(3)`
+    end the CLI with exit 3 — BASELINE_PENDING's code — saying nothing."""
+    with pytest.raises(revision.ProtocolError, match="SystemExit"):
+        _classifier_of(project, monkeypatch,
+                       "import sys\nsys.exit(3)\ndef classify(ctx):\n"
+                       "    return None\n")
+
+
+def test_a_classifier_that_RAISES_when_called_is_named(project, monkeypatch):
+    classify = _classifier_of(
+        project, monkeypatch,
+        "def classify(ctx):\n    raise KeyError(ctx.text)\n")
+
+    with pytest.raises(revision.ProtocolError, match=r"why\.py raised"):
+        classify(_ctx("cut"))
+
+
 def test_a_classifier_that_RAISES_on_load_is_the_paper_s_error(project,
                                                                monkeypatch):
     scripts = project.root / "revision" / "scripts"

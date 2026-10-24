@@ -6,6 +6,7 @@ is part of :mod:`docxkit.revision`; import from there.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -78,8 +79,10 @@ def _classifier(paper: Paper) -> tracked.Classifier | None:
     if not path.is_file():
         raise ProtocolError(f"paper.toml: [batch] classify names {path}, "
                             f"which is not there")
+    # one name per FILE: two papers' `classify.py` are two modules
+    digest = hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:8]
     spec = importlib.util.spec_from_file_location(
-        f"docxkit_classify_{path.stem}", path)
+        f"docxkit_classify_{path.stem}_{digest}", path)
     if spec is None or spec.loader is None:
         raise ProtocolError(f"[batch] classify: {path} cannot be loaded "
                             f"as Python")
@@ -89,23 +92,78 @@ def _classifier(paper: Paper) -> tracked.Classifier | None:
     # sys.modules, and failed on 3.14 without it) and with its own folder
     # importable, so a sibling rules file loads. Any failure is the
     # paper's file, said as such, and not exit 70 "a bug in docxkit"
-    # (review of 2026-10-14).
+    # (review of 2026-10-14) — a `sys.exit` in it included, which ended
+    # the CLI with whatever code it named (review of 2026-10-24).
     sys.modules[spec.name] = module
-    sys.path.insert(0, str(path.parent))
+    scope = _Siblings(path.parent)
     try:
-        spec.loader.exec_module(module)
-    except Exception as exc:
+        with scope.active():
+            spec.loader.exec_module(module)
+    except (Exception, SystemExit) as exc:
         sys.modules.pop(spec.name, None)
         raise ProtocolError(f"[batch] classify: {path.name} failed to load "
                             f"— {type(exc).__name__}: {exc}") from exc
-    finally:
-        with contextlib.suppress(ValueError):
-            sys.path.remove(str(path.parent))
     found = getattr(module, name or "classify", None)
     if not callable(found):
         raise ProtocolError(f"[batch] classify: {path.name} has no function "
                             f"{name or 'classify'!r}")
-    return found  # type: ignore[no-any-return]
+    return scope.wrap(found, path.name)
+
+
+class _Siblings:
+    """A classifier's folder and the modules it imports from there,
+    in place whenever the classifier runs — and only then.
+
+    The folder came off `sys.path` the moment the file had run, so an
+    import made when `classify()` was CALLED failed after Word's 40-141 s
+    Compare, as a ScaffoldMissing blaming Word; and a sibling imported at
+    load stayed in `sys.modules` under its bare name, so a second paper
+    built in the same process used the first paper's `rules.py` (review
+    of 2026-10-24). So the folder goes on the path, and this paper's own
+    siblings into `sys.modules` — anything else by those names out of
+    the way — for the load and for every call, and all of it is put back
+    after.
+    """
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+        # the names an `import` in the classifier can reach in its folder:
+        # its modules and its packages, one level, as Python looks
+        self.names = {p.stem if p.suffix == ".py" else p.name
+                      for p in folder.iterdir()
+                      if p.suffix == ".py" or (p / "__init__.py").is_file()}
+        self.mine: dict[str, Any] = {}
+
+    def _ours(self, name: str) -> bool:
+        return name.split(".", maxsplit=1)[0] in self.names
+
+    @contextlib.contextmanager
+    def active(self) -> Any:
+        hidden = {n: sys.modules.pop(n) for n in list(sys.modules)
+                  if self._ours(n)}
+        sys.modules.update(self.mine)
+        sys.path.insert(0, str(self.folder))
+        try:
+            yield
+        finally:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(str(self.folder))
+            for n in [n for n in sys.modules if self._ours(n)]:
+                self.mine[n] = sys.modules.pop(n)
+            sys.modules.update(hidden)
+
+    def wrap(self, fn: Any, file: str) -> tracked.Classifier:
+        """`fn`, run inside :meth:`active`; what it raises is the
+        paper's, said as such."""
+        def classify(ctx: Any) -> str | None:
+            with self.active():
+                try:
+                    return fn(ctx)  # type: ignore[no-any-return]
+                except (Exception, SystemExit) as exc:
+                    raise ProtocolError(
+                        f"[batch] classify: {file} raised "
+                        f"{type(exc).__name__}: {exc}") from exc
+        return classify
 
 
 def _listed(kinds: dict[str, int]) -> str:

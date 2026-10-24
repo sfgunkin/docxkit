@@ -57,6 +57,7 @@ from ._xml import (
 )
 from .errors import AnchorError
 from .find import para_slice
+from .revisions import REVISION_RE
 
 __all__ = ["AnchorError", "drop", "merge", "split"]
 
@@ -69,10 +70,12 @@ _OPEN_RE = re.compile(r"<([A-Za-z][\w.-]*:[A-Za-z][\w.-]*)\b[^>]*?(/?)>")
 #: save, rather than a duplicate of the first half's.
 _PARA_ID_RE = re.compile(r'\s+w14:(?:paraId|textId)="[^"]*"')
 
-#: Markup that makes a paragraph not a clean-edit target: a revision's
-#: content or its property-change snapshot.
-_REVISION_RE = re.compile(
-    r"<w:(?:ins|del|moveFrom|moveTo|pPrChange|rPrChange)\b")
+#: Markup that makes a paragraph not a clean-edit target: a revision of
+#: ANY kind. `revisions`' own list, not a copy of six of its names: a
+#: `w:numberingChange` — counted as a revision since `313ae10` — passed
+#: the copy, and a split wrote it into both halves under one `w:id`
+#: (review of 2026-10-24).
+_REVISION_RE = REVISION_RE
 _COMMENT_RE = re.compile(
     r"<w:(?:commentRangeStart|commentRangeEnd|commentReference)\b")
 _NOTE_REF_RE = re.compile(r"<w:(?:footnoteReference|endnoteReference)\b")

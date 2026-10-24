@@ -374,6 +374,36 @@ def test_a_deleted_row_survives_rejection_without_its_flag():
     assert "stays" in accept(document(tbl))
 
 
+@pytest.mark.parametrize("unit", ["row", "cell"])
+def test_a_row_or_cell_that_GOES_leaves_no_HALF_a_bookmark(unit):
+    """Review 2026-10-24 (V20, two real files). A dropped row took the
+    bookmark start it held and left the end in the next row: a
+    `bookmarkEnd` with no start. The start stays, where the row was."""
+    from lxml import etree
+
+    from docxkit.revisions import accept
+
+    start = '<w:bookmarkStart w:id="7" w:name="Tbl3txt"/>'
+    end = '<w:bookmarkEnd w:id="7"/>'
+    if unit == "row":
+        doomed = _row(_cell("doomed").replace("<w:tcPr/>",
+                                              "<w:tcPr/>" + start), "del")
+    else:
+        doomed = ("<w:tr><w:tc><w:tcPr><w:cellDel w:id=\"9\" "
+                  'w:author="R" w:date="2026-10-24T00:00:00Z"/></w:tcPr>'
+                  + start + para(run("doomed")) + "</w:tc>"
+                  + _cell("kept") + "</w:tr>")
+    tbl = ("<w:tbl><w:tblPr/><w:tblGrid/>" + doomed
+           + _row(_cell("stays").replace("</w:tc>", end + "</w:tc>"))
+           + "</w:tbl>")
+
+    out = accept(document(tbl))
+
+    assert "doomed" not in out
+    assert out.count('w:name="Tbl3txt"') == 1 and out.count(end) == 1
+    etree.fromstring(out.encode())                 # and it still parses
+
+
 # --------------------------------------------- FORMATTING revisions ----
 # A property change is recorded as a snapshot of the OLD properties
 # nested in the new ones. Accepting means dropping the record; rejecting

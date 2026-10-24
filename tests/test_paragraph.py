@@ -63,6 +63,19 @@ def test_split_cuts_INSIDE_a_run_and_drops_the_space_at_the_cut():
     clean(out)
 
 
+def test_a_paragraph_with_a_NUMBERING_change_is_refused():
+    """Review 2026-10-24 (V21). The refusal knew six revision kinds, and
+    a `w:numberingChange` — counted as a revision since `313ae10` —
+    passed it: a split wrote it into both halves under one `w:id`."""
+    numbered = ('<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/>'
+                '<w:numberingChange w:id="44" w:author="R" w:date="2026-10-24'
+                'T00:00:00Z" w:original="%1."/></w:numPr></w:pPr>'
+                + run("One. Two.") + "</w:p>")
+
+    with pytest.raises(AnchorError, match="tracked changes"):
+        paragraph.split(doc(numbered), "One.", "Two.")
+
+
 def test_the_second_half_gets_NO_paraId_and_the_first_keeps_its_own():
     """Two paragraphs may not share a w14:paraId; Word mints a new one."""
     xml = doc(para(run("One. Two. Three."), pid="00ABCDEF"))

@@ -577,14 +577,40 @@ def _row_flag(row: _Element, tags: tuple[str, ...]) -> _Element | None:
                  if (el := trpr.find(W + t)) is not None), None)
 
 
+def _lift_half_bookmarks(el: _Element) -> None:
+    """Move out of `el`, to its place in its parent, every bookmark start
+    or end whose partner is not inside `el` too.
+
+    A row or a cell that goes took them with it, and left the other half
+    behind: a ``bookmarkEnd`` pointing at no start, or a target whose
+    start moved past the place it marks (review of 2026-10-24, two real
+    files). A table row and a table both admit range markup between
+    their children, so the half that stays has somewhere to stand.
+    """
+    seen: dict[str | None, list[_Element]] = {}
+    for mark in el.iter(W + "bookmarkStart", W + "bookmarkEnd"):
+        seen.setdefault(mark.get(W + "id"), []).append(mark)
+    lonely = [marks[0] for marks in seen.values() if len(marks) == 1]
+    if not lonely:
+        return
+    holder = _parent(el)
+    at = holder.index(el)
+    for mark in lonely:
+        _parent(mark).remove(mark)
+        holder.insert(at, mark)
+        at += 1
+
+
 def _drop_row(row: _Element) -> None:
     """Remove a row, and the table with it if nothing is left.
 
     Word deletes a table whose every row goes; leaving an empty ``w:tbl``
     behind would report one more table than the document has and, on the
-    reject side, would not restore the baseline.
+    reject side, would not restore the baseline. Half a bookmark the row
+    holds stays (:func:`_lift_half_bookmarks`).
     """
     table = next(row.iterancestors(W + "tbl"), None)   # before it detaches
+    _lift_half_bookmarks(row)
     holder = _parent(row)
     holder.remove(row)
     # A row in a content control: the control goes with its last row,
@@ -723,6 +749,7 @@ def _apply_cell_revisions(table: _Element, vanish: tuple[str, ...],
                            if wants(f, "cell")]
             if doomed_here:
                 gone.update(range(at, at + span))
+                _lift_half_bookmarks(cell)
                 row.remove(cell)
             else:
                 # The SURVIVING side's mark is not content, so nothing
