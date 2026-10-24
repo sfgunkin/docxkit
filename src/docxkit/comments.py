@@ -705,6 +705,13 @@ _SIDE_PARTS = (("word/commentsExtended.xml", "</w15:commentsEx>"),
 def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
            scaffold: _Scaffold, *, credit: Credit | None = None,
            ) -> list[str]:
+    return _write_checked(parts, doc, decided, scaffold, credit=credit,
+                          original=parts[DOCUMENT].decode("utf-8"))
+
+
+def _write_checked(parts: Parts, doc: str, decided: Sequence[_Decided],
+                   scaffold: _Scaffold, *, credit: Credit | None,
+                   original: str) -> list[str]:
     """THE writer: every balloon this module puts in a package is
     written here, by `annotate`, `annotate_blocks` and `add_at` alike.
     Returns the ids written, in `decided`'s order.
@@ -722,9 +729,13 @@ def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
       initials, ``w:date``, and the ``dateUtc`` beside it, which a
       restamp left as it was. Without it a clone is credited to whoever
       wrote the comment it was cloned from;
-    * ``document.xml`` minus the anchors written must be `doc` byte for
-      byte, or nothing is written: the tracked views and the revision
-      counts are then unchanged by construction.
+    * ``document.xml`` minus the anchors written must be the part as it
+      stood when `_write` was CALLED — `original`, read from `parts` by
+      :func:`_write` itself, not the `doc` it was handed — byte for byte,
+      or nothing is written: the tracked views and the revision counts
+      are then unchanged by construction. Checked against `doc`, a
+      step that changed the text before handing it over passed, and
+      only an unrelated lint finding stopped it (2026-10-24).
     """
     minted = _Minted(parts)
     com = scaffold.comments_xml
@@ -761,7 +772,7 @@ def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
         anchors.append((d.start, d.end, cid))
         written.append(str(cid))
     placed, placed_at = _placed(doc, anchors, scaffold.style)
-    if _without_anchors(placed, placed_at) != doc:
+    if _without_anchors(placed, placed_at) != original:
         raise PackageError("annotating changed document.xml beyond its "
                            "comment anchors; nothing was written")
     parts[DOCUMENT] = placed.encode("utf-8")

@@ -245,7 +245,11 @@ def test_a_change_beyond_the_anchors_is_REFUSED_and_nothing_written(
 
     monkeypatch.setattr(C, "_write", leaky)
 
-    with pytest.raises(PackageError, match=r"document\.xml"):
+    # the anchor guard's own words: after 082da00 it compared against the
+    # text it was HANDED, and only a lint finding the shifted anchors made
+    # stopped this (2026-10-24)
+    with pytest.raises(PackageError,
+                       match=r"document\.xml beyond its comment anchors"):
         tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
                                   seed=_word_like_seed([]))
 
