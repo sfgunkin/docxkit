@@ -14,6 +14,31 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — cleanups from the 2026-10-24 review~~ — FIXED 24.10, `75d9ede`
+
+<!-- status: fixed -->
+
+Not defects; each CONFIRMED by its verifier:
+
+- `_losses._cut_named` regex-parses message text (`_losses.py:733`) —
+  carry the kind and key instead;
+- re-spellings of shared readers: `_doomed_bookmarks` inlines the
+  `_content_elements` filter (`revisions.py:280`; the two must agree),
+  `_outside_math`/`MATH_ZONE_RE` re-spell `_xml.overlaps` /
+  `equations.OMATH_RE`, `_unreachable` re-writes `_xml.span_holding`;
+- dead code: `_seed_scaffold`'s and `_graft_styles`' return values
+  (`tracked.py:424`);
+- `_seed_in_word` hard-codes `deadline=900` instead of `[batch]
+  word_deadline`; a hand-written `assert_unlocked`; a `people.xml` literal;
+- `word_only_what` refusals duplicated (`_common.py:41`);
+  `deleted_by_batch` rebuilds `_state` and `verdict` redoes `_proposal`
+  (0.03–0.07 s — refused as a finding, kept as a cleanup);
+- `cli.py:1742` says "accepted it whole";
+- the bookmark pass asks the predicate about marks the content pass never
+  reaches (extra, out-of-order questions; no effect on output).
+
+**Fixed 2026-10-24**, `75d9ede`, in part. Done: `Loss.count` replaces `_cut_named`'s regex over the message; `_outside_math`/`_coalesce_zones` use `_xml.overlaps`; `annotate_in_place(deadline=)` replaces the hard-coded 900 s (test: the deadline reaches the session); the ingest line no longer says "accepted it whole". Declined, each with its reason: the `_seed_scaffold`/`_graft_styles` return values are not dead — five tests read them as the record of whether a seed happened; `_doomed_bookmarks`' inlined filter stays, since its views are held byte-identical on 1,053 kept redlines and a rewrite would need that measurement again; `_unreachable` does not use `_xml.span_holding` because that is the linear walk `2e6dea1` replaced with a bisection; `deleted_by_batch` rebuilding `_state` costs 0.03-0.07 s (the finding refused in the review); `assert_unlocked` spelled out and the `people.xml` literal are cosmetic; the bookmark pass's extra predicate questions change no output. `word_only_what`'s duplicated refusals were not touched.
+
 ### ~~S4 — tests and harness gaps the review found~~ — FIXED 24.10, `c82a1e2`
 
 <!-- status: fixed -->

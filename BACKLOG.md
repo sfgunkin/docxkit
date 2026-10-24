@@ -110,28 +110,6 @@ not re-derived:
    every paper on that drive and `init` ignores the False (not this
    machine's TEMP).
 
-### S4 — cleanups from the 2026-10-24 review
-<!-- status: open -->
-
-Not defects; each CONFIRMED by its verifier:
-
-- `_losses._cut_named` regex-parses message text (`_losses.py:733`) —
-  carry the kind and key instead;
-- re-spellings of shared readers: `_doomed_bookmarks` inlines the
-  `_content_elements` filter (`revisions.py:280`; the two must agree),
-  `_outside_math`/`MATH_ZONE_RE` re-spell `_xml.overlaps` /
-  `equations.OMATH_RE`, `_unreachable` re-writes `_xml.span_holding`;
-- dead code: `_seed_scaffold`'s and `_graft_styles`' return values
-  (`tracked.py:424`);
-- `_seed_in_word` hard-codes `deadline=900` instead of `[batch]
-  word_deadline`; a hand-written `assert_unlocked`; a `people.xml` literal;
-- `word_only_what` refusals duplicated (`_common.py:41`);
-  `deleted_by_batch` rebuilds `_state` and `verdict` redoes `_proposal`
-  (0.03–0.07 s — refused as a finding, kept as a cleanup);
-- `cli.py:1742` says "accepted it whole";
-- the bookmark pass asks the predicate about marks the content pass never
-  reaches (extra, out-of-order questions; no effect on output).
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
