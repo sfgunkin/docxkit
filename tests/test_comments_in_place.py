@@ -358,11 +358,13 @@ def test_the_default_seed_asks_WORD_for_one_comment_on_revision_1(
 
     doc = _FakeDoc()
     seed_parts: list[dict[str, bytes]] = []
+    deadlines: list[object] = []
 
     class _FakeWord:
         @staticmethod
         @contextlib.contextmanager
-        def session(**_kw):
+        def session(**kw):
+            deadlines.append(kw.get("deadline"))
             yield "word"
 
         @staticmethod
@@ -385,10 +387,12 @@ def test_the_default_seed_asks_WORD_for_one_comment_on_revision_1(
     path = write(tmp_path / "working.docx", _proposal(3))
     monkeypatch.setattr(tracked, "_word", _FakeWord)
 
-    assert tracked.annotate_in_place(path, _blocks(3), author=AUTHOR) == 2
+    assert tracked.annotate_in_place(path, _blocks(3), author=AUTHOR,
+                                     deadline=123) == 2
     assert doc.added == [("revision 1", "seed")]
     assert seed_parts[0]["word/document.xml"] == _proposal(3)[
         "word/document.xml"], "Word was handed a copy of the file"
+    assert deadlines == [123], "the paper's word_deadline, not 900"
 
 
 @pytest.mark.word

@@ -40,6 +40,7 @@ from ._xml import (
     escape_attr,
     live_properties,
     normalize_glyphs,
+    overlaps,
     own_properties,
     set_run_text,
     visible_text,
@@ -552,8 +553,8 @@ def _coalesce_zones(doc: str, planned: list[_Planned]) -> list[_Planned]:
     kept = []
     for entry in planned:
         lo, hi = _outside_math(zones, entry.start, entry.end)
-        if not any(z_lo < entry.end and entry.start < z_hi
-                   for z_lo, z_hi in zones):
+        if not any(overlaps(zone, (entry.start, entry.end))
+                   for zone in zones):
             kept.append(entry)              # touches no equation
             continue
         if (lo, hi, entry.comment) not in seen:
@@ -657,7 +658,7 @@ def _outside_math(zones: list[tuple[int, int]], start: int,
     (review of 2026-10-14). The balloon goes round the whole equation.
     """
     for lo, hi in zones:
-        if lo < end and start < hi:
+        if overlaps((lo, hi), (start, end)):
             start, end = min(start, lo), max(end, hi)
     return start, end
 

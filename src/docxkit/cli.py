@@ -1739,9 +1739,12 @@ def _say_deleted(deleted: Sequence[object]) -> None:
     print(f"\n== DELETED BY THE BATCH ({len(deleted)}) ==")
     for loss in deleted:
         print("   ", loss)
-    print("   The promoted batch proposed these and the author accepted "
-          "it whole, so\n   they are not losses: `baseline` records them "
-          "and does not refuse.")
+    # Not "accepted it whole": the rest of the batch may have been
+    # rejected, and what was shown is each of THESE accepted where it
+    # was made (review of 2026-10-24).
+    print("   The promoted batch deleted these, and the hand-back shows "
+          "each deletion\n   accepted where it was made, so they are not "
+          "losses: `baseline` records them\n   and does not refuse.")
 
 
 def cmd_revision_ingest(args: argparse.Namespace) -> int:

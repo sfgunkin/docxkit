@@ -37,6 +37,7 @@ the math tracked and lose nothing.
 """
 from __future__ import annotations
 
+import functools
 import re
 import shutil
 import tempfile
@@ -1154,8 +1155,13 @@ def annotate_in_place(path: str | Path,
                       blocks: Iterable[_comments.Block], *, author: str,
                       seed: Callable[[Path, Path], None] | None = None,
                       backup_into: str | Path | None = None,
-                      partial: bool = False) -> int:
+                      partial: bool = False,
+                      deadline: float | None = 900) -> int:
     """Comment a PENDING proposal where it is, one balloon per block.
+
+    `deadline` bounds the Word session that seeds a comment (seconds;
+    None for none) — a paper's ``[batch] word_deadline``, where it was a
+    fixed 900 s (review of 2026-10-24).
 
     HPPA_Index, 2026-10-10: with a 2,136-revision proposal on the
     manuscript, the author asked for a comment on every change saying
@@ -1206,7 +1212,8 @@ def annotate_in_place(path: str | Path,
     reuse = None
     if not _comments.has_scaffold(parts):
         _no_empty_comments(parts, path)
-        seeded = _seeded(path, seed or _seed_in_word)
+        seeded = _seeded(path, seed or functools.partial(
+            _seed_in_word, deadline=deadline))
         _graft_comment_parts(parts, seeded)
         _graft_styles(parts, seeded)
         ids = COMMENT_ID_RE.findall(
@@ -1268,13 +1275,17 @@ def _graft_comment_parts(parts: Parts, seeded: Parts) -> None:
     _hygiene.restore_parts(parts, seeded, prefixes=_COMMENT_MACHINERY)
 
 
-def _seed_in_word(src: Path, dst: Path) -> None:
+def _seed_in_word(src: Path, dst: Path, *,
+                  deadline: float | None = 900) -> None:
     """One Word-made comment on revision 1 of `src`, saved to `dst`.
 
-    Through Flat OPC, which sidesteps the save hang; `src` is a copy."""
+    Through Flat OPC, which sidesteps the save hang; `src` is a copy.
+    `deadline` is :func:`annotate_in_place`'s — a paper passes its
+    ``[batch] word_deadline`` — and 900 s when it is not given."""
     with tempfile.TemporaryDirectory(prefix="docxkit_seed_") as td:
         flat = Path(td) / "seed.xml"
-        with _word.session(deadline=900, doing="seeding a comment") as app, \
+        with _word.session(deadline=deadline,
+                           doing="seeding a comment") as app, \
                 _word.open_doc(app, src, read_only=False, local=False) as doc:
             doc.Comments.Add(doc.Revisions(1).Range, "seed")
             _word.extract_flat_opc(doc, flat)

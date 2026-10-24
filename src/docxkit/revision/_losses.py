@@ -218,6 +218,11 @@ class Loss:
     #: deleted. `None` where the question does not apply (a glyph, a
     #: comment count) and the explanation must not claim either.
     words: bool | None = None
+    #: How many things this one entry stands for: 1, except the "N more,
+    #: unnamed" entry `_lost_notes` writes when it cannot name them all.
+    #: Carried, so a reader counts losses without parsing the message
+    #: back (`_cut_named` did, with a regex; review of 2026-10-24).
+    count: int = 1
 
     @property
     def key(self) -> str:
@@ -506,7 +511,8 @@ def _lost_notes(working: Parts,
         if len(named) < gone:
             out.append(Loss(kind,
                             f"{gone - len(named)} more, unnamed — "
-                            f"{len(was)} {kind}s before, {len(now)} now"))
+                            f"{len(was)} {kind}s before, {len(now)} now",
+                            count=gone - len(named)))
     return out
 
 
@@ -915,9 +921,7 @@ def _cut_named(kind: str, cut: set[str], rejected: Parts,
     named = [Loss(kind, f.text) for f in _notes(rejected, part, kind)
              if f.id in cut]
     counted = [loss for loss in gone if loss.kind == kind]
-    lost = sum(int(m.group(1)) if (m := re.match(r"(\d+) more, unnamed",
-                                                 loss.what)) else 1
-               for loss in counted)
+    lost = sum(loss.count for loss in counted)
     return sorted(named, key=lambda x: x.what) if len(named) == lost \
         else counted
 
