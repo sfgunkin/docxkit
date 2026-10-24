@@ -48,6 +48,410 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### S1 — `_accepted_here` proves a cut accepted from a one-sided or repeated context
+<!-- status: open -->
+
+Code review 2026-10-24, finding 1 (`REVIEW_2026-10-24.md`, verifier V08,
+CONFIRMED). The 10-14 fix (`e8d34db`) excuses a batch deletion only when
+the hand-back reads its place as the proposal ACCEPTED: the changed text
+plus `_CONTEXT` unchanged characters either side (`_losses.py:593`). Two
+shapes defeat it:
+
+- **A cut at the first or last text of a part.** One context side is
+  empty, so `accepted` is just the unchanged other side, which every
+  hand-back contains. The batch deletes the last bibliography entry with
+  bookmark `Zyl2019` inside the `w:del`; the author REJECTS the cut,
+  changes one character of the restored entry, and Word drops the
+  bookmark. `revision ingest --check` exits 0 listing "DELETED BY THE
+  BATCH … bookmark Zyl2019", `revision baseline` exits 0, and the new
+  `prev.docx` has a body citation linking to a bookmark that no longer
+  exists. The same for a note whose cut sentence starts or ends the body.
+- **A context that appears twice** (duplicated table rows): the
+  whole-part substring test matches the other copy.
+
+The same case mid-part with unique context correctly exits 5.
+Reproduced end-to-end through the CLI on scratch copies.
+
+**Fix:** fail closed. Require context on BOTH sides of the minimum
+length, and require the accepted reading to occur exactly once in the
+part (and the rejected one zero times); anything else stays a LOSS with
+`--accept-loss`. Done together with the next two entries: one per-place
+rule for every kind.
+
+### S1 — a lost link is excused without being shown accepted at its place
+<!-- status: open -->
+
+Review finding 2 (V09, CONFIRMED). `batch_deletions` excuses lost LINKS on
+kind-count equality plus `not loss.words` alone (`_losses.py:708`); notes
+and bookmarks need `_accepted_here`, links do not. The batch cuts "As
+[Smith and Jones 2020 -> #Smith2020] showed…" and a Cox 1987 sentence.
+The author accepts the Cox cut, rejects the Smith cut and retypes the
+citation as "Smith & Jones (2020)", which drops the hyperlink. The link
+multisets equal the proposal's views and the old label is no longer
+verbatim (words=False): `ingest --check` exits 0, `baseline` exits 0
+printing "deleted by the batch: link Smith2020", and the truth keeps the
+sentence without its link. `_accepted_here` at that cut is False.
+
+**Fix:** links go through the same per-place proof as notes and
+bookmarks. The rule `loss.kind in equal` is pinned by no test (a mutant
+survives — see the test-gap entry); pin it when it changes.
+
+### S1 — the comment-loss gate is a net count, and the protocol's own balloons hide comments Word lost
+<!-- status: open -->
+
+Review finding 3 (V17, CONFIRMED). `losses()` counts comments as prev
+minus working > 0 (`_losses.py:387`). Since `[batch] classify` reached
+`revision build` and `annotate_in_place` exists, the protocol adds its
+own balloons to working.docx, and they offset referee comments Word ate.
+prev.docx holds two Referee-2 comments; a classified build writes 4
+balloons and promote carries them; during the author's session one
+referee comment disappears with its anchor. Counts 2 vs 5: `losses()`
+returns [], `ingest --check` exits 0, `baseline` succeeds, and "Cite the
+source." is gone from prev.docx for good.
+
+The reverse is misleading too: next round, deleting those 4 baselined
+balloons exits 5 "Put back anything Word ate" until `--accept-loss
+comment`, and that prefix would also wave through a real comment loss.
+
+**Fix:** compare comments by identity (author, initials, text, anchor
+text — what `hygiene._dedupe_comment_keys` keys on, minus its collapse),
+not by count; balloons the batch itself added are known from the
+proposal and excused by name, the way `batch_deletions` names notes.
+
+### S1 — the two comment writers have drifted again: one writer holding every guard
+<!-- status: open -->
+
+Review findings 5–10, 14 and 15, and the smaller comment findings below.
+The 10-14 review found the classified `tracked.build` path (`annotate`
+via `_comment_pass`) and `annotate_in_place` (`annotate_blocks`) each
+holding guards the other lacked; its fixes added more guards on one path
+or the other, and this review finds them apart again. Decision recorded
+2026-10-14 (user): if this review found the drift, the remedy is ONE
+writer that both paths call, holding every guard — starting with merging
+`_already_anchored` and `_commented_spans`. Each case below becomes a
+test seen red first; the refactor is done when all are green.
+
+1. **S2, finding 5 (V01).** `_place` widens a range that touches an
+   equation to the whole `m:oMath`/`m:oMathPara` when it WRITES
+   (`comments.py:386`); `_already_anchored`'s 60-char window and
+   `_commented_spans` both check the raw span. On a copy of LI7_tracked
+   (446 of 1,759 spans in equations) successive `annotate` runs add 949,
+   133, 133 balloons (4deb0f9: 949, 11, 11); `annotate_in_place` twice on
+   an all-math proposal is not refused; 20 LI7 equations carry stacks of
+   3–25 identical balloons. AFI's `r6_annotate.py` re-runs `annotate` in
+   place.
+2. **S2, finding 6 (V14).** The classified build comments only body
+   `w:ins`/`w:del` (`tracked.py:474`): moves, property-only changes and
+   footnote/endnote revisions get no balloon and never reach the
+   classifier, yet it prints "unclassified: 0" — contradicting
+   `Paper.classify`'s "a RevisionContext per revision". The coverage
+   refusal (`_unreachable`) exists only on the `annotate_blocks` path. A
+   span bracketed exactly by a carried-in comment is skipped silently by
+   `_already_anchored`.
+3. **S1, finding 7 (V02).** `reclassify` picks comments to rewrite with
+   `generic in delta_text(...)` over EVERY comment (`comments.py:798`),
+   and `_credit_new` then re-credits whatever no longer matches an input.
+   With `generic=''` every carried referee comment becomes "Point 3: …"
+   credited to "Revision", and Word's SCAFFOLD balloon ships; with the
+   default GENERIC a carried comment that quotes "Revision
+   (unclassified)" is rewritten and re-credited. `revision build`
+   (generic=None) is not affected. Rewrite only comments this pass
+   created, by id.
+4. **S2, finding 8 (V19).** The comment Word seeds on `doc.Revisions(1)`:
+   `_plan` skips that revision as already anchored, and under
+   generic=None `reclassify` builds its context from the
+   `commentRangeStart` tag — ctx.text is '' and the window ends before
+   the revision (`comments.py:814`). So revision 1 is left bare or takes
+   a neighbour's reason ("R4: add inflation" where the XML context gives
+   R1). When Word's revision 1 spans several XML spans, those spans get
+   two balloons each (HPPA's kept redline: comments_added 4, not 3).
+5. **S2, finding 9 (V29).** Clone `paraId`/`durableId` are BASE + comment
+   id (`comments.py:414`), next_id = 1 + max(w:id). Word renumbers
+   comment ids on save and keeps paraId/durableId (HPPA's Word-saved
+   copy: 45 of 46 ids changed, every paraId kept), so a later round's
+   clones can reuse the ids of balloons the author kept; `threads()`,
+   `set_done` and `remove` (the remedy `annotate_blocks`' refusal names)
+   then act on the old comment. Mint against every existing paraId and
+   durableId; lint has no comment-id uniqueness check either.
+6. **S2, finding 10 (V18).** `hygiene._dedupe_comment_keys`
+   (`hygiene.py:770`) treats every repeat of (author, collapsed text) as
+   one note wherever it is anchored. A classified round gives three
+   paragraphs "R1: hedged the claim"; the author keeps them through
+   baseline; next round's `_carry_rewrites` keeps 1 of the 3 ("de-
+   duplicated a comment present in BOTH inputs"). Pre-existing since
+   `312c301` for AFI; the classify wiring makes it routine. The key needs
+   the anchor.
+7. **S2, finding 14 (V23a, V03).** `_unreachable` takes paragraph extents
+   from the lazy `PARA_RE` (`comments.py:698`), which ends a paragraph
+   holding a text box at the box's first inner `</w:p>`: a host
+   paragraph that contains a span is reported "changed with no span" and
+   a valid block table is refused (38 of 640 local packages have a body
+   text box), and `partial=True`, the only way through, also turns off
+   the footnote check. It scans document, footnotes and endnotes only, so
+   tracked changes in headers, footers or comments.xml pass as covered,
+   against its docstring. Use `_xml.span_holding`/`in_span`.
+8. **S3, finding 15 (V04, V05).** The coverage refusal says "Comment
+   those with docxkit.comments.add_at" (`comments.py:634`), but `add_at`
+   adds no revision span, so the identical refusal returns after the
+   advice is followed; `add_at` cannot reach the footnote revisions the
+   message lists, raises KeyError `word/comments.xml` on the comment-less
+   package annotate_in_place seeds, and credits its balloon to the
+   template comment's author (a referee — pre-existing). The refusal also
+   fires AFTER the Word seed has been paid for, against the docstring's
+   "blocks checked before Word".
+9. **Smaller, same writer** (each CONFIRMED or PLAUSIBLE as marked in the
+   review's candidate ledger):
+   - `_commented_spans` counts the author's own Word comment on an
+     inserted phrase as "annotated before" (false refusal), compares
+     escaped markup (`O&apos;Brien`) not the name, and — plausible — a
+     same-named note or an entity in the author refuses wrongly or not
+     at all;
+   - a `''` reason is written as an empty balloon and counted;
+   - a text-box-only classified build seeds nothing and fails with
+     `ScaffoldMissing` pointing at WARNING lines that were never printed
+     (`Revisions.Count` is the main story only);
+   - `_stamp` with a single-quoted attribute writes it twice (direct
+     callers unparseable; annotate_in_place's lint catches it);
+     `has_scaffold` raises ValueError on `w:id="-1"`;
+   - `_plain` hard-codes the `CommentReference` style id (10 of 513
+     manuscripts with comments are localized, Russian Word `af`), drops
+     run properties, and copies the OLD `pStyle` out of a `pPrChange`
+     snapshot;
+   - credit is stamped twice, and Word's comments get a new `w:date` but
+     keep the old `dateUtc`; `w:date` is true UTC where Word writes local
+     time labelled Z;
+   - `_marked` and `reclassify`'s `still` are two matchers (substring vs
+     equality); `_coalesce_tables` keys `''` and `None` apart (two
+     generic balloons per table, unclassified 2 vs 1), and a string
+     generic hides an unclassified undercount.
+
+The refactor is a design change, not nine patches: one function that
+widens first, then asks one "already annotated?" question of the range it
+will write, covers every revision kind and story the protocol reads,
+credits, and mints ids against everything in the package.
+
+### S2 — `deleted_by_batch` gets locks wrong in both directions
+<!-- status: open -->
+
+Review finding 11 (V06 CONFIRMED, V07 PLAUSIBLE). The 10-14 fix
+(`e8a619d`) re-raises `DocumentLocked` from `_promoted`'s hash
+(`_verdict.py:254`):
+
+- **Too strict.** The read-only `revision ingest` — which snapshots
+  working.docx so it can run while Word holds files — now exits 1 "batch.docx
+  is open in Word … nothing has been changed" with no content or state
+  sections when Word holds batch.docx, or a kept redline of the same size.
+  At 4deb0f9 it printed the full report; a `package.readable` copy hashes
+  equal.
+- **Too loose.** A lock `is_locked` cannot see (a read-only file held
+  open, a byte-range lock), a transient OneDrive/AV `PermissionError`
+  (`_readable_hash` has no retry, `_common.py:176`), or `read_parts`' lock
+  raised as a plain `PackageError` in a 4–5 ms window, is swallowed by
+  the broad except. The batch's own accepted deletions come back LOST;
+  following the `--accept-loss` advice then exits 70 inside `verdict`.
+
+**Fix:** hash through `package.readable` (a snapshot), retry like
+`read_parts`, and let anything still unreadable fail the command as
+"cannot read batch.docx" — never become an empty excuse.
+
+### S3 — `--accept-loss` naming the batch's deletion as `ingest` prints it is refused as stale
+<!-- status: open -->
+
+Review, cut from the fifteen (V11, CONFIRMED). `baseline` checks the
+flags with `_unmet(accept_loss, found)` (`_baseline.py:187`), but
+`_cut_named` renames an excused deletion. A flag copied from `ingest`'s
+"DELETED BY THE BATCH" line is called stale and the run exits 5. Fix as
+the verifier proposed: `_unmet(accept_loss, found + deleted)`. (`_cut_named`
+regex-parses message text — see the cleanup entry.)
+
+### S3 — `baseline --repair-math` rewrites working.docx, then a lock says "nothing has been changed"
+<!-- status: open -->
+
+Review, cut from the fifteen (V10, CONFIRMED). `--repair-math` writes
+working.docx before `verdict()` runs (`_baseline.py:234`); `verdict` ->
+`_proposal` -> `_readable_hash` raises `DocumentLocked` when Word holds the
+batch or a redline, and its message says nothing has been changed. Either
+decide the lock before the repair, or say what was written.
+
+### S3 — `withdraw` on a read-only working.docx, or a read-only batch Word holds
+<!-- status: open -->
+
+Review finding 12 (V13 CONFIRMED, V13b PLAUSIBLE). The 10-14 fix
+(`08b6f37`) clears the read-only bit on build/batch.docx only, and before
+the `proved` refusal can still refuse (a metadata write on a refusal
+path). It does nothing for the manuscript `withdraw` overwrites, and
+`is_locked` answers False for any read-only file, so:
+
+- OneDrive leaves working.docx read-only: `shutil.copyfile(paper.prev,
+  live)` (`_promote.py:488`) raises PermissionError, exit 70, after the
+  batch's attribute has already been flipped;
+- batch.docx read-only AND open: the manuscript is restored and its stamp
+  removed, then `paper.batch.unlink()` fails WinError 32, exit 70, ledger
+  still ['promoted']; a re-run says the manuscript was "opened and saved
+  since" — the half-finished withdraw `08b6f37` meant to rule out.
+
+Pre-existing sibling (Alt-1): `promote`'s copyfile onto a read-only
+working.docx fails after the redline copy landed, so `_promoted` reads
+True and `withdraw`/`verdict` then answer wrongly.
+
+**Fix:** decide every file the command will touch — writable, not held —
+before writing any of them; clear bits only after the refusals.
+
+### S3 — the `[batch] classify` loader: path dropped too early, modules shared across papers
+<!-- status: open -->
+
+Review finding 13 (V12, CONFIRMED). `_classifier` takes the classifier's
+folder off `sys.path` as soon as the module has run (`_build.py:103`) and
+never isolates `sys.modules`:
+
+- a sibling import made when `classify()` is CALLED fails only after
+  Word's 40–141 s Compare — as a `ScaffoldMissing` that blames Word after a
+  "No module named rules" warning (seeded case), or exit 70 (a carried
+  comment, no seed);
+- siblings imported at load time stay cached under bare names, so a second
+  paper built in the same process uses the first paper's `rules.py`
+  (paper B's batch carried "A3: paper A's referee point");
+- `except Exception` lets a module-level `sys.exit(3)` end the CLI with
+  exit 3 — BASELINE_PENDING's code — printing nothing.
+
+The suite's own test leaks `rules_1014` into `sys.modules`, and the
+dataclass case passes without registration on 3.15. **Fix:** keep the
+folder on the path for the classifier's lifetime under a unique package
+name, restore `sys.modules` afterwards, and catch `BaseException` from the
+load as a classifier error.
+
+### S2 — following `revision build`'s bookmark advice turns the batch's own bookmark deletions into LOST
+<!-- status: open -->
+
+Review finding 4 (sweep, CONFIRMED). Bookmarks the batch deleted are
+excused only while the hand-back's bookmark set equals the proposal's
+accepted view (`_losses.py:702`). `revision build` advises deleting a
+Compare-restored bookmark by hand after the promote (`_build.py:401-405`);
+doing so breaks the equality. The clean edit removes bookmark Lari2023
+(keeping its words) and cuts three citations with their `*txt` targets;
+the agent deletes Lari2023 as told and the author accepts everything:
+`baseline --accept-loss bookmark:Lari2023` exits 5 "lost 3 thing(s) …
+Barr2010txt / Cox1987txt / Holzmann2005txt … Put back anything Word ate".
+The same round without the advised deletion exits 0. Safe direction, but
+the advice and the gate contradict each other. Goes with the per-place
+rule: bookmarks one by one, never by set equality.
+
+### S4 — the HPPA footnote-8 shape (a cut of the reference mark alone) is refused again
+<!-- status: open -->
+
+Review, cut from the fifteen (V15, CONFIRMED). A cut of the note
+reference alone — the real HPPA redline's footnote 8, the case the batch-
+deletion excuse was built for — was excused at `e74272c` and is refused at
+HEAD: `_accepted_here` needs words to compare, and a mark-only cut has
+none. A test pins the refusal, and the archive still records the shape as
+fixed. Decide which is meant; if the refusal stays, say so in the archive
+entry and in the refusal message.
+
+### S2 — `revisions._drop_row` and cell drops leave half a bookmark
+<!-- status: open -->
+
+Review, outside the diff (V20, CONFIRMED). Dropping a row whose
+`bookmarkStart` is inside it and whose `bookmarkEnd` is outside leaves a
+dangling `bookmarkEnd` (no lift). 2 real files have the shape; 0 of 117
+kept redlines. Pre-existing helper, reached by a caller this range
+touched.
+
+### S2 — `paragraph` split/merge duplicates a `numberingChange`
+<!-- status: open -->
+
+Review, outside the diff (V21, CONFIRMED). `paragraph._refuse_revisions`
+(`paragraph.py:75`) does not list `numberingChange`, which `313ae10` began
+counting as a revision, so split/merge/drop accept a paragraph carrying
+one and write it twice (the same `w:id` twice).
+
+### S2 — latent revision shapes the review reasoned out but found in no file
+<!-- status: open -->
+
+Review, all PLAUSIBLE, none seen in the corpus today; recorded so they are
+not re-derived:
+
+1. `revisions._FLAG_PARENTS` lacks `numPr`: a `w:ins` inside `numPr` is
+   treated as content, and reject keeps the numbering (V22b).
+2. a `moveTo` holding a nested `w:ins` drops its bookmark on reject —
+   probably Word's behaviour too; the docstring should say (V22c).
+3. `_BOOKMARKED` omits `commentReference`: a bookmark over deleted text plus
+   a comment mark is dropped on accept, lands in `accepted_losses`, and the
+   build refuses "a move is the usual cause" (V22d).
+4. `_marks_between` counts the cell end of a row `_apply_rows` later drops
+   as surviving, so a bookmark the rule says to drop is kept.
+5. `tracked._graft_styles`' `_STYLE_RE` lets a self-closing `<w:style/>`
+   swallow the next style, appending a duplicate CommentText; 0 of 37,698
+   styles in Word files are self-closing (`styles.ensure` exists).
+6. `_registry.register`'s TEMP filter with a drive-root TEMP unregisters
+   every paper on that drive and `init` ignores the False (not this
+   machine's TEMP).
+
+### S4 — the classified build and the in-place path are slow at manuscript scale
+<!-- status: open -->
+
+Review efficiency findings (V25a/b/d CONFIRMED). Measured on generated
+HPPA-sized and 10 MB packages:
+
+- the classified `revision build`'s `_plan` calls `para_text_at` from
+  offset 0 per span — quadratic, 48–65 s at HPPA scale, 112 s at 10 MB /
+  2,836 spans (old helper, new caller, `_build.py:382`);
+- `annotate_blocks`' identity check runs `doc.replace` per comment:
+  22–45 s at 10 MB / 2,836 (`comments.py:652`);
+- `_marks_between` rebuilds an order dict per candidate: views 20 s at
+  20 MB / 100 candidates, 0.27 s hoisted (`revisions.py:332`);
+- `_commented_spans` searches per comment, 7–8 s at 10 MB; `_unreachable`'s
+  linear holder 0.7–2.4 s; `batch_deletions` re-parses the parts three
+  times, 3.9–5.1 s at 10 MB, and `verdict`'s cache misses it; `_registry`
+  scan quadratic, 2 s.
+
+Fix the first three; the refactor will replace the comment ones.
+
+### S4 — tests and harness gaps the review found
+<!-- status: open -->
+
+Review findings A4 / V26 / V27 (CONFIRMED by mutation where stated):
+
+- the link `loss.kind in equal` rule, `"bookmark" in equal` and the
+  rejected == prev half of `batch_deletions` are pinned by no test (a
+  mutant survives);
+- the test removed in this range was the only pin on `DEL_RE`'s laziness,
+  which `styles.raised_prose` relies on;
+- "Word was handed a COPY" is not checked: the mutant `seed(path, out)`
+  survives `test_comments_in_place`;
+- `revision/_common._readable_hash`'s lock branch is unpinned: four
+  mutants of `except PermissionError: if package.is_locked(path):`
+  (`if True`, `except OSError`, an exception never raised, `if not`)
+  survive the suite;
+- two `_xml` mutants survive: `MATH_ZONE_RE` without its `m:oMathPara`
+  alternative, and `DEL_RE` without its `(?<!/)` self-closing guard;
+- `_build._classifier` without its `sys.modules[spec.name] = module` line
+  passes the suite;
+- `tools/harness_map.py`: `_common.py`'s entry lacks the `_readable_hash`
+  tests, `_xml.py`'s lacks the `DEL_RE` guard tests, and the
+  `REVISION_SUPERSET` list is appended to by hand.
+
+### S4 — cleanups from the 2026-10-24 review
+<!-- status: open -->
+
+Not defects; each CONFIRMED by its verifier:
+
+- `_losses._cut_named` regex-parses message text (`_losses.py:733`) —
+  carry the kind and key instead;
+- re-spellings of shared readers: `_doomed_bookmarks` inlines the
+  `_content_elements` filter (`revisions.py:280`; the two must agree),
+  `_outside_math`/`MATH_ZONE_RE` re-spell `_xml.overlaps` /
+  `equations.OMATH_RE`, `_unreachable` re-writes `_xml.span_holding`;
+- dead code: `_seed_scaffold`'s and `_graft_styles`' return values
+  (`tracked.py:424`);
+- `_seed_in_word` hard-codes `deadline=900` instead of `[batch]
+  word_deadline`; a hand-written `assert_unlocked`; a `people.xml` literal;
+- `word_only_what` refusals duplicated (`_common.py:41`);
+  `deleted_by_batch` rebuilds `_state` and `verdict` redoes `_proposal`
+  (0.03–0.07 s — refused as a finding, kept as a cleanup);
+- `cli.py:1742` says "accepted it whole";
+- the bookmark pass asks the predicate about marks the content pass never
+  reaches (extra, out-of-order questions; no effect on output).
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
