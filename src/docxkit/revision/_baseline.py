@@ -183,8 +183,11 @@ def baseline(paper: Paper, *, force: bool = False,
         found = losses(work, base)
         deleted, gone = deleted_by_batch(paper, work, base, found)
         # Against everything FOUND: a flag naming the batch's own deletion
-        # names something really gone, so it is not a stale exemption.
-        if stale := _unmet(accept_loss, found):
+        # names something really gone, so it is not a stale exemption. And
+        # against the batch's deletions AS NAMED: a cut note is named by its
+        # own definition, which is what `ingest` prints and a reader copies,
+        # and `found` may name it otherwise (review of 2026-10-24).
+        if stale := _unmet(accept_loss, found + deleted):
             raise HandbackLoss(
                 f"--accept-loss named {', '.join(stale)}, which "
                 f"{paper.working.name} has NOT lost. A declared loss that "

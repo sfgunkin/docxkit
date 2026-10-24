@@ -4279,60 +4279,81 @@ def test_a_bookmark_that_SURVIVED_is_not_reported_as_lost(project):
         ("bookmark", "Gone2019")]
 
 
-def test_the_number_of_comments_lost_is_the_DIFFERENCE(project):
-    """`before - after`, and the message carries the number. Three
-    comments against one is two gone; `^` makes it 2 as well on some
-    pairs and 4 on others, and nothing but the sentence says which."""
-    def _commented(n: int) -> dict[str, bytes]:
-        return make_parts(
-            para(run("body")),
-            comment_items=tuple(comment(i, f"note {i}",
-                                        para_id=f"AAAA{i:04d}")
-                                for i in range(1, n + 1)))
+def _commented(*texts: str) -> dict[str, bytes]:
+    return make_parts(
+        para(run("body")),
+        comment_items=tuple(comment(i, text, para_id=f"AAAA{i:04d}")
+                            for i, text in enumerate(texts, 1)))
 
-    write(project.prev, _commented(3))
-    write(project.working, _commented(1))
+
+def test_each_comment_lost_is_NAMED(project):
+    """Three comments against one is two gone, each named by its author
+    and its words — the token `--accept-loss` takes."""
+    write(project.prev, _commented("note 1", "note 2", "note 3"))
+    write(project.working, _commented("note 1"))
 
     lost = revision.losses(package.read_parts(project.working),
                            package.read_parts(project.prev))
 
     assert [(loss.kind, loss.what) for loss in lost] == [
-        ("comment", "2 comment(s) gone")]
+        ("comment", "Tester: note 2"), ("comment", "Tester: note 3")]
 
 
 def test_ONE_comment_lost_is_a_loss(project):
-    """`> 0`, not `> 1`. One is the ordinary number to lose — a comment
-    Word drops while its anchor is being edited — and a threshold of two
-    lets it through the gate that makes the baseline permanent."""
-    def _commented(n: int) -> dict[str, bytes]:
-        return make_parts(
-            para(run("body")),
-            comment_items=tuple(comment(i, f"note {i}",
-                                        para_id=f"AAAA{i:04d}")
-                                for i in range(1, n + 1)))
-
-    write(project.prev, _commented(2))
-    write(project.working, _commented(1))
+    """One is the ordinary number to lose — a comment Word drops while
+    its anchor is being edited — and the gate makes the baseline
+    permanent."""
+    write(project.prev, _commented("note 1", "note 2"))
+    write(project.working, _commented("note 1"))
 
     lost = revision.losses(package.read_parts(project.working),
                            package.read_parts(project.prev))
 
     assert [(loss.kind, loss.what) for loss in lost] == [
-        ("comment", "1 comment(s) gone")]
+        ("comment", "Tester: note 2")]
+
+
+def test_comments_ADDED_do_not_hide_one_LOST(project):
+    """Review 2026-10-24, finding 3. The gate was a net count, and since
+    `[batch] classify` the protocol adds balloons of its own: two
+    referee comments, four reasons added, one referee comment eaten —
+    five against two, nothing lost, and `baseline` made it permanent."""
+    write(project.prev, _commented("Cite the source.", "Define T."))
+    write(project.working, _commented("Define T.", "R1: a", "R2: b",
+                                      "R3: c", "R4: d"))
+
+    lost = revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev))
+
+    assert [(loss.kind, loss.what) for loss in lost] == [
+        ("comment", "Tester: Cite the source.")]
+
+
+def test_an_EMPTY_comment_lost_is_still_counted(project):
+    """A self-closing comment has no words to be named by; the count
+    still sees it go."""
+    def _with_empty(*texts: str) -> dict[str, bytes]:
+        parts = _commented(*texts)
+        xml = parts["word/comments.xml"].decode().replace(
+            "</w:comments>",
+            '<w:comment w:id="9" w:author="Tester"/></w:comments>')
+        return {**parts, "word/comments.xml": xml.encode()}
+
+    write(project.prev, _with_empty("note 1"))
+    write(project.working, _commented("note 1", "note 2"))
+
+    lost = revision.losses(package.read_parts(project.working),
+                           package.read_parts(project.prev))
+
+    assert [(loss.kind, loss.what) for loss in lost] == [
+        ("comment", "1 empty comment(s) gone")]
 
 
 def test_comments_ADDED_are_not_a_loss(project):
-    """`> 0`, not `!= 0`: an author who answers a query by adding a
-    comment would otherwise be told "-1 comment(s) gone" and refused."""
-    def _commented(n: int) -> dict[str, bytes]:
-        return make_parts(
-            para(run("body")),
-            comment_items=tuple(comment(i, f"note {i}",
-                                        para_id=f"AAAA{i:04d}")
-                                for i in range(1, n + 1)))
-
-    write(project.prev, _commented(1))
-    write(project.working, _commented(3))
+    """An author who answers a query by adding a comment has lost
+    nothing."""
+    write(project.prev, _commented("note 1"))
+    write(project.working, _commented("note 1", "note 2", "note 3"))
 
     assert revision.losses(package.read_parts(project.working),
                            package.read_parts(project.prev)) == []

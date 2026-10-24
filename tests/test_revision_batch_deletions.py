@@ -13,7 +13,7 @@ kind accepted, and every doubtful case still refuses.
 from __future__ import annotations
 
 import pytest
-from conftest import make_parts, para, run, write
+from conftest import comment, make_parts, para, run, write
 from test_cli import run_cli
 
 from docxkit import guard, package, revision
@@ -79,7 +79,7 @@ def _body(notes, deleted=frozenset(), *, links=(), cut_links=(),
     return out + extra
 
 
-def _before(notes, *, links=(), cut_links=()):
+def _before(notes, *, links=(), cut_links=(), extra=""):
     """The truth the batch was built on: the same shapes, nothing cut."""
     out = "".join(para(run(f"Claim {k}."), _ref(k)) for k in notes)
     for anchor, label in links:
@@ -89,28 +89,42 @@ def _before(notes, *, links=(), cut_links=()):
                     f'<w:bookmarkStart w:id="{80 + i}" w:name="{anchor}txt"/>'
                     + _link(anchor, label)
                     + f'<w:bookmarkEnd w:id="{80 + i}"/>')
-    return out
+    return out + extra
 
 
 def _round(tmp_path, *, deleted=frozenset({2, 4, 6}), links=(),
-           cut_links=(), promote=True, notes=None):
+           cut_links=(), promote=True, notes=None, extra="",
+           comments=(), batch_comments=None, batch_extra=None):
     """A paper whose promoted batch deletes `deleted` notes and the
-    sentences in `cut_links`, built on a truth that has all of them."""
+    sentences in `cut_links`, built on a truth that has all of them.
+    `extra` ends both bodies (the batch's is `batch_extra`, if given);
+    `comments` are the truth's comment texts and `batch_comments` the
+    batch's (the same, unless given)."""
     notes = NOTES if notes is None else notes
     root = tmp_path / "HPPA"
     root.mkdir()
     src = write(root / "HPPA.docx",
-                make_parts(_before(notes, links=links, cut_links=cut_links),
-                           footnotes=_footnotes(notes)))
+                make_parts(_before(notes, links=links, cut_links=cut_links,
+                                   extra=extra),
+                           footnotes=_footnotes(notes),
+                           comment_items=_comments(comments)))
     paper = revision.init(root, src, name="HPPA")
     paper.batch.parent.mkdir(parents=True, exist_ok=True)
     write(paper.batch, make_parts(
-        _body(notes, deleted, links=links, cut_links=cut_links),
-        footnotes=_footnotes(notes, deleted)))
+        _body(notes, deleted, links=links, cut_links=cut_links,
+              extra=extra if batch_extra is None else batch_extra),
+        footnotes=_footnotes(notes, deleted),
+        comment_items=_comments(comments if batch_comments is None
+                                else batch_comments)))
     guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
     if promote:
         revision.promote(paper)
     return paper
+
+
+def _comments(texts):
+    return tuple(comment(i, text, para_id=f"AAAA{i:04d}")
+                 for i, text in enumerate(texts, 1))
 
 
 def _accept_all(paper, source=None):
@@ -342,6 +356,62 @@ def test_naming_the_batch_s_deletion_in_accept_loss_is_not_STALE(tmp_path):
     assert len(report.deleted) == 3
 
 
+def test_the_deletion_named_AS_INGEST_PRINTS_it_is_not_STALE(tmp_path):
+    """Review 2026-10-24. The batch rewords note 1 and cuts note 2;
+    `ingest` names the cut by its own words, NOTES[2], while the loss
+    list's best effort names note 1's old text. A flag copied from the
+    "DELETED BY THE BATCH" line was refused as naming nothing lost."""
+    paper = _round(tmp_path, deleted=frozenset({2}), promote=False)
+    batch = package.read_parts(paper.batch)
+    notes = batch["word/footnotes.xml"].decode().replace(
+        run(NOTES[1]),
+        _del(f"<w:r><w:delText>{NOTES[1]}</w:delText></w:r>", 601)
+        + _ins(run("Note 1, as the batch rewords it."), 602))
+    write(paper.batch, {**batch, "word/footnotes.xml": notes.encode()})
+    guard.stamp(paper.batch, base_sha256=guard.sha256(paper.prev))
+    revision.promote(paper)
+    _accept_all(paper)
+
+    report = revision.baseline(paper, log=False,
+                               accept_loss=(f"footnote:{NOTES[2][:30]}",))
+
+    assert [loss.what for loss in report.deleted] == [NOTES[2]]
+
+
+# ------------------------------------------------------------ comments
+
+def test_a_comment_the_BATCH_does_not_carry_is_the_batch_s(tmp_path):
+    """The build took a comment out (last round's reason balloons, say):
+    the author was never offered it, and its absence is no loss."""
+    paper = _round(tmp_path, deleted=frozenset(),
+                   comments=("Referee: cite it.", "R1: hedged"),
+                   batch_comments=("Referee: cite it.",))
+    _accept_all(paper)
+
+    report = revision.baseline(paper, log=False)
+
+    assert [(x.kind, x.what) for x in report.deleted] == [
+        ("comment", "Tester: R1: hedged")]
+
+
+def test_a_comment_the_batch_CARRIED_and_the_hand_back_lost_is_LOST(
+        tmp_path):
+    """The batch kept the referee's comment and added a balloon; the
+    hand-back has the balloon and not the referee's. Counted, nothing
+    went; named, the referee's comment did."""
+    paper = _round(tmp_path, deleted=frozenset(),
+                   comments=("Referee: cite it.",),
+                   batch_comments=("Referee: cite it.", "R1: hedged"))
+    parts = _accept_all(paper)
+    write(paper.working, {**parts, "word/comments.xml": make_parts(
+        "", comment_items=_comments(("R1: hedged",)))["word/comments.xml"]})
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert "Referee: cite it." in str(caught.value)
+
+
 # ------------------------------------------------------- links, bookmarks
 
 CUT = (("Barr2010", "Barr 2010"), ("Cox1987", "Cox 1987"),
@@ -387,19 +457,147 @@ def test_BOOKMARKS_of_REJECTED_cuts_removed_by_hand_are_LOST(tmp_path):
     assert "Barr2010txt" in str(caught.value)
 
 
-def test_a_cut_link_whose_LABEL_survives_elsewhere_still_refuses(tmp_path):
-    """`Cox 1987` is cited twice and the batch cuts one. A label that is
-    still on the page is the shape Word stripping the OTHER copy leaves
-    too, so this one stays a loss."""
+def test_a_cut_link_whose_LABEL_survives_elsewhere_is_the_batch_s(tmp_path):
+    """`Cox 1987` is cited twice and the batch cuts one, accepted. Until
+    2026-10-24 a link whose label was still on the page stayed a loss,
+    because Word stripping the OTHER copy leaves that shape too. Shown at
+    its place, the cut was accepted; the stripped-other-copy case is the
+    next test, and it refuses."""
     paper = _round(tmp_path, deleted=frozenset(), cut_links=CUT,
                    links=(("Cox1987", "Cox 1987"),))
     _accept_all(paper)
+
+    report = revision.baseline(paper, log=False)
+
+    assert sorted(loss.what.split()[0] for loss in report.deleted
+                  if loss.kind == "link") == sorted(a for a, _ in CUT)
+
+
+def test_the_cut_accepted_and_Word_STRIPPED_the_other_copy_refuses(
+        tmp_path):
+    """The case the old words-survive rule stood for: the batch's cut of
+    one `Cox 1987` accepted, and Word stripped the kept copy's link. Two
+    gone where the accepted view says one: nothing of the kind is
+    excused."""
+    paper = _round(tmp_path, deleted=frozenset(), cut_links=CUT,
+                   links=(("Cox1987", "Cox 1987"),))
+    parts = _accept_all(paper)
+    doc = parts["word/document.xml"].decode().replace(
+        _link("Cox1987", "Cox 1987"), run("Cox 1987"))
+    write(paper.working, {**parts, "word/document.xml": doc.encode()})
 
     with pytest.raises(HandbackLoss) as caught:
         revision.baseline(paper, log=False)
 
     assert "Cox1987" in str(caught.value)
-    assert "Barr2010 (" not in str(caught.value)
+
+
+def test_a_REJECTED_cut_whose_citation_was_RETYPED_is_LOST(tmp_path):
+    """Review 2026-10-24, finding 2. The batch cuts the Barr and the Cox
+    sentences; the author accepts the Cox cut, rejects the Barr one and
+    retypes its citation as "Barr (2010)", which drops the link. The
+    links equal the accepted view's and the old label is no longer on
+    the page, so the link was excused on those two facts alone. At its
+    place the cut was rejected."""
+    cut = CUT[:2]
+    paper = _round(tmp_path, deleted=frozenset(), cut_links=cut)
+    parts = _accept_all(paper)
+    retyped = para(run("Kept. "),
+                   '<w:bookmarkStart w:id="80" w:name="Barr2010txt"/>'
+                   + run("Barr (2010)") + '<w:bookmarkEnd w:id="80"/>')
+    doc = parts["word/document.xml"].decode().replace(
+        para(run("Kept. ")), retyped, 1)
+    write(paper.working, {**parts, "word/document.xml": doc.encode()})
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert "Barr2010 (Barr 2010)" in str(caught.value)
+
+
+def test_a_REJECTED_cut_at_the_END_of_the_part_is_LOST(tmp_path):
+    """Review 2026-10-24, finding 1. The cut is the last text of the
+    body, so the accepted reading had no right-hand side: the words
+    before it, which every hand-back holds. The author rejects the cut,
+    changes a character of the restored citation, and Word drops its
+    bookmark — excused as the batch's deletion, and `baseline` wrote a
+    truth whose citation links to a bookmark that is gone."""
+    paper = _round(tmp_path, deleted=frozenset(), cut_links=CUT[:1])
+    doc = make_parts(_before(NOTES), footnotes=_footnotes(NOTES))
+    body = doc["word/document.xml"].decode().replace(
+        "</w:body>", para(run("Kept. "), _link("Barr2010", "Barr 2011"))
+        + "</w:body>")
+    write(paper.working, {**doc, "word/document.xml": body.encode()})
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert "Barr2010txt" in str(caught.value)
+
+
+def test_the_cut_at_the_END_of_the_part_ACCEPTED_is_the_batch_s(tmp_path):
+    """The control: the same cut accepted, and the hand-back ends where
+    the proposal accepted ends."""
+    paper = _round(tmp_path, deleted=frozenset(), cut_links=CUT[:1])
+    _accept_all(paper)
+
+    report = revision.baseline(paper, log=False)
+
+    assert sorted(loss.kind for loss in report.deleted) == [
+        "bookmark", "link"]
+
+
+def test_a_context_the_proposal_holds_TWICE_shows_nothing(tmp_path):
+    """Review 2026-10-24, finding 1, the second shape. The words around
+    the cut are also a paragraph of their own elsewhere — duplicated
+    table rows do it — so the hand-back's copy of the accepted reading
+    may be the other one. The author rejected the cut and edited it, and
+    Word dropped its bookmark: still LOST."""
+    words = "These words are repeated in two places here."
+    twin = para(run(f"{words} Kept. Then the paragraph goes on a while."))
+    truth = para(run(f"{words} Kept. "),
+                 '<w:bookmarkStart w:id="90" w:name="Zyl2019txt"/>'
+                 + run("Zyl 2019") + '<w:bookmarkEnd w:id="90"/>',
+                 run("Then the paragraph goes on a while."))
+    cut = para(run(f"{words} Kept. "),
+               _del('<w:bookmarkStart w:id="90" w:name="Zyl2019txt"/>'
+                    "<w:r><w:delText>Zyl 2019</w:delText></w:r>"
+                    '<w:bookmarkEnd w:id="90"/>', 299),
+               run("Then the paragraph goes on a while."))
+    paper = _round(tmp_path, deleted=frozenset(), extra=twin + truth,
+                   batch_extra=twin + cut)
+    hand = make_parts(_before(NOTES) + twin + para(
+        run(f"{words} Kept. Zyl 2020Then the paragraph goes on a while.")),
+        footnotes=_footnotes(NOTES))
+    write(paper.working, hand)
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert "Zyl2019txt" in str(caught.value)
+
+
+def test_a_bookmark_deleted_by_hand_as_BUILD_ADVISES_keeps_the_rest(
+        tmp_path):
+    """Review 2026-10-24, finding 4. `revision build` asks for a bookmark
+    Compare restored to be deleted by hand after the promote. Done, the
+    hand-back's bookmarks no longer equal the accepted view's, and every
+    bookmark the batch cut was refused with them. That one is flagged;
+    the batch's are the batch's."""
+    lari = ('<w:bookmarkStart w:id="70" w:name="Lari2023"/>'
+            + run("Lari") + '<w:bookmarkEnd w:id="70"/>')
+    paper = _round(tmp_path, deleted=frozenset(), cut_links=CUT,
+                   extra=para(lari))
+    parts = _accept_all(paper)
+    doc = parts["word/document.xml"].decode().replace(lari, run("Lari"))
+    write(paper.working, {**parts, "word/document.xml": doc.encode()})
+
+    report = revision.baseline(paper, log=False,
+                               accept_loss=("bookmark:Lari2023",))
+
+    assert sorted(loss.what for loss in report.deleted
+                  if loss.kind == "bookmark") == sorted(
+        f"{a}txt" for a, _ in CUT)
 
 
 def test_a_link_Word_STRIPPED_beside_the_cuts_refuses_them_all(tmp_path):
@@ -440,9 +638,89 @@ def test_the_stream_skips_comments_snapshots_and_field_codes():
         ("footnote", "3", _DEL, 2)]
 
 
+def _field(instr, label, *, deleted=False, separate=True):
+    """A field-form link, Compare's way: the code split over two runs,
+    and `deleted` puts the whole field in a `w:del` with `delInstrText`."""
+    code, text = ("delInstrText", "delText") if deleted else ("instrText",
+                                                               "t")
+    half = len(instr) // 2
+    runs = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f"<w:r><w:{code}>{instr[:half]}</w:{code}></w:r>"
+            f"<w:r><w:{code}>{instr[half:]}</w:{code}></w:r>"
+            + ('<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+               if separate else "")
+            + f"<w:r><w:{text}>{label}</w:{text}></w:r>"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    return _del(runs, 777) if deleted else runs
+
+
+def test_the_stream_marks_FIELD_links_where_they_start():
+    """A link Compare deletes is almost always a field whose code is
+    deleted with it, so the code is read from `delInstrText` too, joined
+    across runs. HYPERLINK and REF \\h are links; PAGEREF is not; a field
+    with no `separate` is marked at its end; a field nested in another is
+    a link of its own."""
+    from lxml import etree
+
+    from docxkit.revision._losses import _DEL, _SAME, _stream
+
+    nested = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+              "<w:r><w:instrText>REF Outer \\h</w:instrText></w:r>"
+              '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+              + _field('HYPERLINK \\l "Inner"', "in")
+              + '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+    xml = (f'<w:body {_NS_W}><w:p>'
+           + _field('HYPERLINK \\l "Cut2020"', "Cut 2020", deleted=True)
+           + _field("REF Table1 \\h", "Table 1")
+           + _field("PAGEREF Table1 \\h", "3")
+           + _field('HYPERLINK \\l "Late"', "late", separate=False)
+           + nested + "</w:p></w:body>")
+    _texts, marks = _stream(etree.fromstring(xml))
+
+    assert [(m.kind, m.key, m.state, m.at) for m in marks] == [
+        ("link", "Cut2020", _DEL, 0), ("link", "Table1", _SAME, 1),
+        ("link", "Late", _SAME, 4), ("link", "Outer", _SAME, 4),
+        ("link", "Inner", _SAME, 4)]
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_a_cut_FIELD_link_accepted_is_the_batch_s_and_rejected_is_LOST(
+        tmp_path, accepted):
+    """The batch cuts a citation written as a field, the shape Compare
+    writes; accepted it is the batch's, rejected and retyped without its
+    link it is LOST."""
+    kept = para(run("Kept. "), _field('HYPERLINK \\l "Cut2020"', "Cut 2020"),
+                run(" and the sentence goes on."))
+    cut = para(run("Kept. "),
+               _field('HYPERLINK \\l "Cut2020"', "Cut 2020", deleted=True),
+               run(" and the sentence goes on."))
+    paper = _round(tmp_path, deleted=frozenset(), extra=kept,
+                   batch_extra=cut)
+    if accepted:
+        _accept_all(paper)
+        report = revision.baseline(paper, log=False)
+        assert [x.kind for x in report.deleted] == ["link"]
+        return
+    write(paper.working, make_parts(_before(NOTES) + para(
+        run("Kept. Cut (2020) and the sentence goes on.")),
+        footnotes=_footnotes(NOTES)))
+    with pytest.raises(HandbackLoss, match="Cut2020"):
+        revision.baseline(paper, log=False)
+
+
+def test_a_GLYPH_alone_is_handed_back_untouched():
+    from docxkit.revision._losses import Loss, batch_deletions
+
+    gone = [Loss("glyph", "− -> -")]
+    parts = make_parts(para(run("x")))
+
+    assert batch_deletions(gone, parts, parts, parts) == ([], gone)
+
+
 def test_a_loss_no_batch_proposes_is_never_excused():
-    """A glyph Word flattened or a comment count is not a kind a batch
-    deletes, so `batch_deletions` hands the list back untouched."""
+    """A glyph Word flattened is not a kind a batch deletes, and a
+    comment no proposal lacks is not the batch's, so `batch_deletions`
+    hands the list back untouched."""
     from docxkit.revision._losses import Loss, batch_deletions
 
     gone = [Loss("glyph", "− -> -"), Loss("comment", "1 comment(s)")]

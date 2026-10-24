@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, NamedTuple
@@ -25,15 +25,17 @@ from .._xml import (
     BOOKMARK_NAME_RE,
     ENDNOTES,
     FOOTNOTES,
+    INSTR_ANCHOR_RE,
     NOTE_DEF_RE,
     WORD_ANCHOR,
     Parts,
     internal_links,
+    ref_anchor,
     text_parts,
     visible_text,
     word_minted,
 )
-from ..hygiene import _MATH_T_RE, _downgraded
+from ..hygiene import _MATH_T_RE, _comment_counts, _downgraded
 from ._common import TEXT_PARTS, WP, M, W
 
 # Word's Range.Text and the raw XML spell the same document differently,
@@ -384,10 +386,37 @@ def losses(working: Parts,
     out += _downgraded_math(working, prev)
     out += [Loss("bookmark", name)
             for name in sorted(_bookmarks(prev) - _bookmarks(working))]
-    lost_comments = (tracked.package_counts(prev)["comments"]
-                     - tracked.package_counts(working)["comments"])
-    if lost_comments > 0:
-        out.append(Loss("comment", f"{lost_comments} comment(s) gone"))
+    out += _lost_comments(working, prev)
+    return out
+
+
+def _comment_what(key: tuple[str, str]) -> str:
+    """How a lost comment is NAMED: its author and its whole text."""
+    return f"{key[0]}: {key[1]}"
+
+
+def _lost_comments(working: Parts, prev: Parts) -> list[Loss]:
+    """Comments `prev` holds that the hand-back does not — by WHICH
+    comment, never by how many.
+
+    Counted, a comment Word ate was offset by every comment the round
+    ADDED, and since `[batch] classify` the protocol adds its own: two
+    referee comments in `prev`, five comments in the hand-back after a
+    classified batch put four balloons in, one referee comment gone with
+    its anchor, and `baseline` made the loss permanent with nothing said
+    (review of 2026-10-24). So a comment is its author and its text, the
+    key `hygiene` already reads two copies of one note by, and the lost
+    are the multiset difference.
+
+    An EMPTY comment has no text to be known by, and is still counted.
+    """
+    was, now = _comment_counts(prev), _comment_counts(working)
+    out = [Loss("comment", _comment_what(key))
+           for key in sorted((was - now).elements())]
+    empty = ((tracked.package_counts(prev)["comments"] - was.total())
+             - (tracked.package_counts(working)["comments"] - now.total()))
+    if empty > 0:
+        out.append(Loss("comment", f"{empty} empty comment(s) gone"))
     return out
 
 
@@ -482,9 +511,11 @@ def _lost_notes(working: Parts,
 
 
 #: The kinds a batch can propose deleting, so the only ones
-#: :func:`batch_deletions` may excuse. A glyph Word flattened or a
-#: comment count is never a batch's proposal.
-BATCH_KINDS = ("footnote", "endnote", "bookmark", "link")
+#: :func:`batch_deletions` may excuse. A glyph Word flattened is never a
+#: batch's proposal. A comment is, since 2026-10-24: a batch that does
+#: not carry a comment of the truth took it out, and the author was
+#: never offered it.
+BATCH_KINDS = ("footnote", "endnote", "bookmark", "link", "comment")
 
 
 def _structure(parts: Parts, kind: str) -> Counter[str | tuple[str, str]]:
@@ -511,25 +542,56 @@ _STATE_OF = {W + "ins": _INS, W + "moveTo": _INS,
 _CONTEXT = 20
 
 
-class _Mark(NamedTuple):
-    """A note reference or a bookmark start, where it sits in a stream."""
+#: Where a part's text begins and ends, in a reading. A cut at the first
+#: or last text of a part has nothing unchanged on that side, and read
+#: without these its accepted reading was the other side alone — words
+#: every hand-back holds, accepted or not (review of 2026-10-24). With
+#: them, a cut at the end of the part is shown accepted only by a
+#: hand-back that ENDS where the proposal accepted ends. Control
+#: characters, so `_norm` never produces either.
+_START, _END = "\x00", "\x01"
 
-    kind: str        # footnote | endnote | bookmark
-    key: str         # the note's id, the bookmark's name
+
+class _Mark(NamedTuple):
+    """A note reference, a bookmark start or a link, where it sits in a
+    stream."""
+
+    kind: str        # footnote | endnote | bookmark | link
+    key: str         # the note's id, the bookmark's name, the anchor
     state: int
     at: int          # index into the stream's text pieces it precedes
+
+
+def _link_state(el: _Element, state: int) -> int:
+    """A `w:hyperlink`'s state: its own, or DELETED when every word it
+    shows is — Compare deletes a link's label inside the element as
+    readily as it deletes the element."""
+    if state != _SAME:
+        return state
+    shown = [t.tag for t in el.iter(W + "t", W + "delText")]
+    return _DEL if shown and all(t == W + "delText" for t in shown) \
+        else state
 
 
 def _stream(root: _Element | None,
             ) -> tuple[list[tuple[str, int]], list[_Mark]]:
     """A part's text in document order, each piece with its state, and
-    the note references and bookmark starts between the pieces."""
+    the note references, bookmark starts and internal links between the
+    pieces.
+
+    A link is marked where it starts: a ``w:hyperlink`` by its anchor, a
+    field by the anchor its instruction names — read from ``instrText``
+    and ``delInstrText`` both, since Compare writes almost every link it
+    deletes as a field whose code is deleted with it — once the field's
+    ``separate`` (or its ``end``) says the instruction is complete.
+    """
     texts: list[tuple[str, int]] = []
     marks: list[_Mark] = []
     if root is None:
         return texts, marks
     note_kind = {W + "footnoteReference": "footnote",
                  W + "endnoteReference": "endnote"}
+    fields: list[tuple[list[str], int] | None] = []    # instr, its state
     stack: list[tuple[_Element, int]] = [(root, _SAME)]
     while stack:
         el, state = stack.pop()
@@ -547,24 +609,72 @@ def _stream(root: _Element | None,
             marks.append(_Mark("bookmark", el.get(W + "name") or "",
                                state, len(texts)))
             continue
-        if tag in (W + "rPrChange", W + "pPrChange", W + "instrText",
-                   W + "delInstrText"):
+        if tag == W + "fldChar":
+            kind = el.get(W + "fldCharType")
+            if kind == "begin":
+                fields.append(([], state))
+            elif kind in ("separate", "end") and fields:
+                _field_mark(fields, marks, len(texts))
+                if kind == "end":
+                    fields.pop()
+            continue
+        if tag in (W + "instrText", W + "delInstrText"):
+            if fields and fields[-1] is not None:
+                instr, _ = fields[-1]
+                if not instr:
+                    fields[-1] = (instr, state)
+                instr.append(el.text or "")
+            continue                       # code, not text a reader sees
+        if tag in (W + "rPrChange", W + "pPrChange"):
             continue                       # no text a reader sees
+        if tag == W + "hyperlink" and el.get(W + "anchor"):
+            marks.append(_Mark("link", el.get(W + "anchor") or "",
+                               _link_state(el, state), len(texts)))
         inner = _STATE_OF.get(tag, state) if len(el) else state
         stack.extend((kid, inner) for kid in reversed(list(el)))
     return texts, marks
 
 
+def _field_mark(fields: list[tuple[list[str], int] | None],
+                marks: list[_Mark], at: int) -> None:
+    """Mark the innermost open field as a link, once, if it is one."""
+    top = fields[-1]
+    if top is None:
+        return                             # already marked, or not a link
+    instr, state = top
+    code = "".join(instr)
+    hm = INSTR_ANCHOR_RE.search(code)
+    anchor = hm.group(1) if hm else ref_anchor(code)
+    if anchor is not None:
+        marks.append(_Mark("link", anchor, state, at))
+    fields[-1] = None
+
+
+def _once(needle: str, hay: str) -> bool:
+    """Does `needle` occur in `hay` exactly once, overlaps counted?"""
+    at = hay.find(needle)
+    return at >= 0 and hay.find(needle, at + 1) < 0
+
+
+def _reading(texts: Sequence[tuple[str, int]], drop: int) -> str:
+    """A whole stream as one reading, its ends marked."""
+    return _START + _norm("".join(t for t, s in texts if s != drop)) + _END
+
+
 def _accepted_here(texts: Sequence[tuple[str, int]], at: int,
-                   handback: str) -> bool:
+                   handback: str, proposed: str) -> bool:
     """Does the hand-back read the proposal ACCEPTED at `at`, and not
     rejected?
 
     The changed text around `at` and `_CONTEXT` unchanged characters
-    either side, read both ways. Accepted, the hand-back holds the first
-    reading and not the second; anything else — the cut rejected, the
-    place copyedited, a cut with no words, so that both readings are one
-    — is not evidence, and the caller keeps the loss.
+    either side — or the part's own end, where it comes first — read
+    both ways. Accepted, the hand-back holds the first reading and not
+    the second. Anything else is not evidence, and the caller keeps the
+    loss: the cut rejected, the place copyedited, a cut with no words
+    (both readings are one), and a reading that is not ONE place — found
+    twice in the hand-back, or twice in the proposal accepted
+    (`proposed`), as a context repeated by duplicated table rows is
+    (review of 2026-10-24).
     """
     def changed(i: int) -> bool:
         text, state = texts[i]
@@ -587,49 +697,41 @@ def _accepted_here(texts: Sequence[tuple[str, int]], at: int,
                 lo -= 1
             else:
                 hi += 1
+    head = _START if lo == 0 else ""
+    tail = _END if hi == len(texts) else ""
     window = texts[lo:hi]
-    accepted = _norm("".join(t for t, s in window if s != _DEL))
-    rejected = _norm("".join(t for t, s in window if s != _INS))
-    return (accepted != rejected and len(accepted) >= _CONTEXT
-            and accepted in handback and rejected not in handback)
+    accepted = head + _norm("".join(t for t, s in window if s != _DEL)) + tail
+    rejected = head + _norm("".join(t for t, s in window if s != _INS)) + tail
+    return (accepted != rejected and _once(accepted, handback)
+            and _once(accepted, proposed) and rejected not in handback)
 
 
-def _proven(kind: str, proposal: Parts, working: Parts,
-            removed: set[str]) -> set[str]:
-    """Of the `removed` notes (by id) or bookmarks (by name) the batch's
-    accept takes away, those the hand-back shows ACCEPTED, each at its
-    own place in the proposal (:func:`_accepted_here`).
+def _places(proposal: Parts, working: Parts,
+            wanted: Callable[[_Mark], bool]) -> list[tuple[_Mark, bool]]:
+    """Every `wanted` mark in the proposal's text parts, each with
+    whether the hand-back shows its place ACCEPTED (:func:`_accepted_here`).
 
-    A note counts as removed when its reference sits in a deletion; a
-    bookmark by the accept's own reading, since a bookmark whose content
-    was all deleted goes with it (2026-10-12). A key seen at two places
-    is no identity, and is not proven.
+    A key the proposal holds twice in one part — a note id, a bookmark
+    name — is no identity, and is never shown. A link's anchor is not
+    one either (a citation repeated), and need not be: a link is shown
+    by its place alone.
     """
     from ..tracked import _root
 
-    proven: set[str] = set()
+    out: list[tuple[_Mark, bool]] = []
     for name in TEXT_PARTS:
         texts, marks = _stream(_root(proposal, name))
-        if not marks:
+        chosen = [m for m in marks if wanted(m)]
+        if not chosen:
             continue
         here, _ = _stream(_root(working, name))
-        handback = _norm("".join(t for t, s in here if s != _DEL))
-        seen = Counter(m.key for m in marks if m.kind == kind)
-        for mark in marks:
-            if mark.kind == kind and mark.key in removed \
-                    and seen[mark.key] == 1 \
-                    and _accepted_here(texts, mark.at, handback):
-                proven.add(mark.key)
-    return proven
-
-
-def _cut_notes(proposal: Parts, kind: str) -> set[str]:
-    """Ids of the `kind` notes whose reference the proposal deletes."""
-    from ..tracked import _root
-
-    return {m.key for name in TEXT_PARTS
-            for m in _stream(_root(proposal, name))[1]
-            if m.kind == kind and m.state == _DEL}
+        handback, proposed = _reading(here, _DEL), _reading(texts, _DEL)
+        seen = Counter((m.kind, m.key) for m in marks)
+        for mark in chosen:
+            unique = mark.kind == "link" or seen[(mark.kind, mark.key)] == 1
+            out.append((mark, unique and _accepted_here(
+                texts, mark.at, handback, proposed)))
+    return out
 
 
 def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
@@ -666,16 +768,33 @@ def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
     ACCEPTED at its own place: the words around it read as the proposal
     accepted and not as it rejected (:func:`_accepted_here`).
     A note is excused only when EVERY note of its kind the batch cut is
-    shown so, because the loss list cannot say which note is which;
-    a bookmark, whose name is its identity, one by one. A cut with no
-    words in it — the reference mark alone — reads the same either way
-    and is never shown: it stays a loss, and ``--accept-loss`` is the
-    way past it.
+    shown so, because the loss list cannot say which note is which; a
+    LINK the same way, every link the batch cut, since an anchor is no
+    identity either (a citation repeated). A bookmark, whose name is its
+    identity, one by one — and against `prev` alone, not the accepted
+    view: `revision build` asks for a bookmark Compare restored to be
+    deleted by hand after the promote, and doing so made the bookmarks
+    unequal and every bookmark the batch cut LOST (review of
+    2026-10-24). A cut with no words in it — the reference mark alone,
+    HPPA's footnote 8 — reads the same accepted, or rejected with its
+    note eaten by Word, and is never shown: it stays a loss, and
+    ``--accept-loss`` is the way past it.
 
-    A LINK is excused only when its words are gone too: Word strips a
-    link and keeps its label, so a link whose label survives is the one
-    shape a rejected deletion and a stripped copy of the same citation
-    share.
+    A link was excused on the equality and "its words are gone" alone
+    until 2026-10-24, the one kind the place was never asked of: the
+    author rejected a cut and RETYPED the citation in it, the link went
+    with the retyping, the label no longer read verbatim, and the round
+    baselined with the link recorded as the batch's deletion. Shown at
+    its place, a rejected cut is not, and a citation whose label is
+    still on the page elsewhere needs no special rule: Word stripping
+    that other copy breaks the equality, and a rejected cut is no
+    accepted one.
+
+    A COMMENT has no tracked change, so no place to show: one the truth
+    holds and the proposal does not, the batch took out, and the author
+    was never offered it. As many of each as the proposal lacks, and no
+    more — a comment the proposal still carried and the hand-back does
+    not is Word's or the author's doing, and stays a loss.
 
     The views have to read the structure the way Word does, and that was
     measured (2026-10-12) with Word's Accept All and Reject All on 116
@@ -690,28 +809,80 @@ def batch_deletions(gone: Sequence[Loss], working: Parts, prev: Parts,
     if not kinds:
         return [], list(gone)
     accepted, rejected = accepted_view(proposal), rejected_view(proposal)
-    equal = {kind for kind in kinds
-             if _structure(rejected, kind) == _structure(prev, kind)
-             and _structure(accepted, kind) == _structure(working, kind)}
+    built_on = {kind for kind in kinds - {"comment"}
+                if _structure(rejected, kind) == _structure(prev, kind)}
+    equal = {kind for kind in built_on
+             if _structure(accepted, kind) == _structure(working, kind)}
     shown: dict[str, list[Loss]] = {}
     for kind in sorted(equal & {"footnote", "endnote"}):
-        cut = _cut_notes(proposal, kind)
-        if cut and _proven(kind, proposal, working, cut) == cut:
-            shown[kind] = _cut_named(kind, cut, rejected, gone)
+        cut = _places(proposal, working, _cut_of(kind))
+        if cut and all(ok for _m, ok in cut):
+            shown[kind] = _cut_named(kind, {m.key for m, _ok in cut},
+                                     rejected, gone)
+    links = "link" in equal and _links_shown(proposal, working, accepted,
+                                             rejected)
     marks: set[str] = set()
-    if "bookmark" in equal:
-        marks = _proven("bookmark", proposal, working,
-                        _bookmarks(rejected) - _bookmarks(accepted))
+    if "bookmark" in built_on:
+        removed = _bookmarks(rejected) - _bookmarks(accepted)
+        marks = {m.key for m, ok in _places(
+            proposal, working,
+            lambda m: m.kind == "bookmark" and m.key in removed) if ok}
+    comments = _comments_cut(prev, proposal) if "comment" in kinds \
+        else Counter()
     excused = [loss for loss in gone
                if (loss.kind in shown)
                or (loss.kind == "bookmark" and loss.what in marks)
-               or (loss.kind == "link" and loss.kind in equal
-                   and not loss.words)]
+               or (loss.kind == "link" and links)
+               or (loss.kind == "comment" and _take(comments, loss.what))]
     still = [loss for loss in gone if not any(loss is d for d in excused)]
     deleted = [loss for loss in excused if loss.kind not in shown]
     for named in shown.values():
         deleted += named
     return deleted, still
+
+
+def _cut_of(kind: str) -> Callable[[_Mark], bool]:
+    """Is a mark a `kind` note reference the proposal deletes?"""
+    return lambda m: m.kind == kind and m.state == _DEL
+
+
+def _links_shown(proposal: Parts, working: Parts, accepted: Parts,
+                 rejected: Parts) -> bool:
+    """Is every link the batch cut shown ACCEPTED at its own place?
+
+    And are the links this reads as cut the ones the views say the
+    accept removes, anchor for anchor? A link this stream cannot see
+    would otherwise be excused without being asked about: a disagreement
+    refuses.
+    """
+    def anchors(links: Counter[tuple[str, str]]) -> Counter[str]:
+        return Counter(a for a, _label in links.elements())
+
+    def named(mark: _Mark) -> str:
+        return WORD_ANCHOR if word_minted(mark.key) else mark.key
+
+    removed = anchors(_links(rejected)) - anchors(_links(accepted))
+    placed = _places(proposal, working, lambda m: m.kind == "link"
+                     and m.state != _SAME)
+    cut = Counter(named(m) for m, _ok in placed if m.state == _DEL)
+    put = Counter(named(m) for m, _ok in placed if m.state == _INS)
+    return (bool(removed) and cut - put == removed
+            and all(ok for m, ok in placed
+                    if m.state == _DEL and named(m) in removed))
+
+
+def _comments_cut(prev: Parts, proposal: Parts) -> Counter[str]:
+    """The comments of the truth the proposal does not carry, by name."""
+    return Counter(_comment_what(key) for key in (
+        _comment_counts(prev) - _comment_counts(proposal)).elements())
+
+
+def _take(budget: Counter[str], what: str) -> bool:
+    """Spend one of `what` from `budget`, if there is one to spend."""
+    if budget[what] <= 0:
+        return False
+    budget[what] -= 1
+    return True
 
 
 def _cut_named(kind: str, cut: set[str], rejected: Parts,

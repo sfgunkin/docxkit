@@ -470,6 +470,17 @@ among them. Every loss kept is a link whose words survive (moved or
 repeated citations), a comment, or HPPA 2026-10-10's links, where the
 doubled nested field makes the kind unequal.
 
+**Superseded in part — recorded 2026-10-24.** The HPPA footnote-8 shape
+this entry was opened for is REFUSED again, and deliberately, since
+`e8d34db` (2026-10-14): that batch cut the note's REFERENCE alone, with
+no words round it, and such a cut reads the same accepted as it does
+rejected with the note eaten by Word, so nothing on the page shows which
+(review of 2026-10-24, V15). `--accept-loss` is the way past it. The
+whole-kind equality above stands for notes and links; the "words are
+gone" rule for links was replaced on 2026-10-24 by each cut link shown
+at its own place, and bookmarks are now checked against `prev` alone
+(see the 2026-10-24 entries).
+
 ### ~~S2 — the accepted and rejected views keep a bookmark Word drops with the content it spans~~ — FIXED 12.10, `e461519`
 
 <!-- status: fixed -->
