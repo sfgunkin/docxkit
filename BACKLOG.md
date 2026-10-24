@@ -83,10 +83,23 @@ ONE-module `--cov`: serially, collecting the whole suite and running the
 probe, identity holds, and with `--cov=docxkit` (the gates) it holds
 too. Suspect: pytest-cov starting coverage in each worker with a module
 `source`, whose spec lookup imports `docxkit` and `docxkit.revision`
-before the worker has its `pythonpath` — not proved. Next: the same
-probe with `--cov=docxkit.revision._baseline -n 1`, then
-`-p no:randomly`, then coverage's `source_pkgs`. (The leaky-write test
-it also broke led to the `_write` regression entry, fixed.)
+before the worker has its `pythonpath` — not proved. (The leaky-write
+test it also broke led to the `_write` regression entry, fixed.)
+
+Then, the same day: it reproduces with `-n 1` as well, and with
+`--collect-only`; pytest-randomly is not installed (the plugins are
+benchmark, cov, timeout, xdist). In the worker, at `pytest_sessionstart`
+nothing of docxkit is loaded; by `pytest_collection_finish` `tracked`
+holds a `comments` that is not `sys.modules["docxkit.comments"]`, and a
+`pytest_collectreport` watcher puts the break at the FIRST module whose
+collection loads `docxkit.tracked` (`tests/test_api_surface.py`). A
+bare `importlib.util.find_spec("docxkit.revision._baseline")` imports
+the whole package, which coverage does for a module `source`. Nothing in
+`tests/` removes a docxkit module from `sys.modules` (every use was
+read). So `docxkit.comments` is executed twice during collection under
+these flags, and the next step is to log every `docxkit.comments`
+module CREATION (an import hook) in that worker and read who triggered
+the second.
 
 ### Latent revision shapes the 2026-10-24 review reasoned out but found in no file
 <!-- status: note -->
