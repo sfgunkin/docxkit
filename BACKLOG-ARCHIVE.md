@@ -14,6 +14,33 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — tests and harness gaps the review found~~ — FIXED 24.10, `c82a1e2`
+
+<!-- status: fixed -->
+
+Review findings A4 / V26 / V27 (CONFIRMED by mutation where stated):
+
+- the link `loss.kind in equal` rule, `"bookmark" in equal` and the
+  rejected == prev half of `batch_deletions` are pinned by no test (a
+  mutant survives);
+- the test removed in this range was the only pin on `DEL_RE`'s laziness,
+  which `styles.raised_prose` relies on;
+- "Word was handed a COPY" is not checked: the mutant `seed(path, out)`
+  survives `test_comments_in_place`;
+- `revision/_common._readable_hash`'s lock branch is unpinned: four
+  mutants of `except PermissionError: if package.is_locked(path):`
+  (`if True`, `except OSError`, an exception never raised, `if not`)
+  survive the suite;
+- two `_xml` mutants survive: `MATH_ZONE_RE` without its `m:oMathPara`
+  alternative, and `DEL_RE` without its `(?<!/)` self-closing guard;
+- `_build._classifier` without its `sys.modules[spec.name] = module` line
+  passes the suite;
+- `tools/harness_map.py`: `_common.py`'s entry lacks the `_readable_hash`
+  tests, `_xml.py`'s lacks the `DEL_RE` guard tests, and the
+  `REVISION_SUPERSET` list is appended to by hand.
+
+**Fixed 2026-10-24**, `c82a1e2`. Pinned, each seen to KILL its mutant in a scratch checkout: the rejected == prev check (`test_a_link_the_proposal_was_never_built_with_is_not_EXCUSED`); `DEL_RE` lazy and guarded (`test_DEL_RE_takes_each_deletion_ALONE_and_never_a_mark_s`, two mutants); `MATH_ZONE_RE`'s display alternative (`test_MATH_ZONE_RE_takes_a_DISPLAY_equation_whole`); the seed handed a copy (`test_Word_is_handed_a_COPY_never_the_author_s_file`); the classifier's `sys.modules` entry (`test_a_classifier_is_REGISTERED_while_it_runs`). The four `_readable_hash` mutants are against code `e3b9f78` rewrote; its retry/copy/lock branches are pinned by the step-3 tests (`test_a_denial_RIDDEN_OUT_reads_the_file` counts the retries), now in `revision/_common.py`'s harness. The link `kind in equal` rule became `_links_shown`, pinned by the retyped-citation and stripped-copy tests. Not changed: `REVISION_SUPERSET` is still a hand-kept list (tooling, low).
+
 ### ~~S4 — the classified build and the in-place path are slow at manuscript scale~~ — FIXED 24.10, `2e6dea1`
 
 <!-- status: fixed -->

@@ -110,30 +110,6 @@ not re-derived:
    every paper on that drive and `init` ignores the False (not this
    machine's TEMP).
 
-### S4 — tests and harness gaps the review found
-<!-- status: open -->
-
-Review findings A4 / V26 / V27 (CONFIRMED by mutation where stated):
-
-- the link `loss.kind in equal` rule, `"bookmark" in equal` and the
-  rejected == prev half of `batch_deletions` are pinned by no test (a
-  mutant survives);
-- the test removed in this range was the only pin on `DEL_RE`'s laziness,
-  which `styles.raised_prose` relies on;
-- "Word was handed a COPY" is not checked: the mutant `seed(path, out)`
-  survives `test_comments_in_place`;
-- `revision/_common._readable_hash`'s lock branch is unpinned: four
-  mutants of `except PermissionError: if package.is_locked(path):`
-  (`if True`, `except OSError`, an exception never raised, `if not`)
-  survive the suite;
-- two `_xml` mutants survive: `MATH_ZONE_RE` without its `m:oMathPara`
-  alternative, and `DEL_RE` without its `(?<!/)` self-closing guard;
-- `_build._classifier` without its `sys.modules[spec.name] = module` line
-  passes the suite;
-- `tools/harness_map.py`: `_common.py`'s entry lacks the `_readable_hash`
-  tests, `_xml.py`'s lacks the `DEL_RE` guard tests, and the
-  `REVISION_SUPERSET` list is appended to by hand.
-
 ### S4 — cleanups from the 2026-10-24 review
 <!-- status: open -->
 
