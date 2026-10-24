@@ -14,6 +14,121 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — the two comment writers have drifted again: one writer holding every guard~~ — FIXED 24.10, `082da00`
+
+<!-- status: fixed -->
+
+Review findings 5–10, 14 and 15, and the smaller comment findings below.
+The 10-14 review found the classified `tracked.build` path (`annotate`
+via `_comment_pass`) and `annotate_in_place` (`annotate_blocks`) each
+holding guards the other lacked; its fixes added more guards on one path
+or the other, and this review finds them apart again. Decision recorded
+2026-10-14 (user): if this review found the drift, the remedy is ONE
+writer that both paths call, holding every guard — starting with merging
+`_already_anchored` and `_commented_spans`. Each case below becomes a
+test seen red first; the refactor is done when all are green.
+
+1. **S2, finding 5 (V01).** `_place` widens a range that touches an
+   equation to the whole `m:oMath`/`m:oMathPara` when it WRITES
+   (`comments.py:386`); `_already_anchored`'s 60-char window and
+   `_commented_spans` both check the raw span. On a copy of LI7_tracked
+   (446 of 1,759 spans in equations) successive `annotate` runs add 949,
+   133, 133 balloons (4deb0f9: 949, 11, 11); `annotate_in_place` twice on
+   an all-math proposal is not refused; 20 LI7 equations carry stacks of
+   3–25 identical balloons. AFI's `r6_annotate.py` re-runs `annotate` in
+   place.
+2. **S2, finding 6 (V14).** The classified build comments only body
+   `w:ins`/`w:del` (`tracked.py:474`): moves, property-only changes and
+   footnote/endnote revisions get no balloon and never reach the
+   classifier, yet it prints "unclassified: 0" — contradicting
+   `Paper.classify`'s "a RevisionContext per revision". The coverage
+   refusal (`_unreachable`) exists only on the `annotate_blocks` path. A
+   span bracketed exactly by a carried-in comment is skipped silently by
+   `_already_anchored`.
+3. **S1, finding 7 (V02).** `reclassify` picks comments to rewrite with
+   `generic in delta_text(...)` over EVERY comment (`comments.py:798`),
+   and `_credit_new` then re-credits whatever no longer matches an input.
+   With `generic=''` every carried referee comment becomes "Point 3: …"
+   credited to "Revision", and Word's SCAFFOLD balloon ships; with the
+   default GENERIC a carried comment that quotes "Revision
+   (unclassified)" is rewritten and re-credited. `revision build`
+   (generic=None) is not affected. Rewrite only comments this pass
+   created, by id.
+4. **S2, finding 8 (V19).** The comment Word seeds on `doc.Revisions(1)`:
+   `_plan` skips that revision as already anchored, and under
+   generic=None `reclassify` builds its context from the
+   `commentRangeStart` tag — ctx.text is '' and the window ends before
+   the revision (`comments.py:814`). So revision 1 is left bare or takes
+   a neighbour's reason ("R4: add inflation" where the XML context gives
+   R1). When Word's revision 1 spans several XML spans, those spans get
+   two balloons each (HPPA's kept redline: comments_added 4, not 3).
+5. **S2, finding 9 (V29).** Clone `paraId`/`durableId` are BASE + comment
+   id (`comments.py:414`), next_id = 1 + max(w:id). Word renumbers
+   comment ids on save and keeps paraId/durableId (HPPA's Word-saved
+   copy: 45 of 46 ids changed, every paraId kept), so a later round's
+   clones can reuse the ids of balloons the author kept; `threads()`,
+   `set_done` and `remove` (the remedy `annotate_blocks`' refusal names)
+   then act on the old comment. Mint against every existing paraId and
+   durableId; lint has no comment-id uniqueness check either.
+6. **S2, finding 10 (V18).** `hygiene._dedupe_comment_keys`
+   (`hygiene.py:770`) treats every repeat of (author, collapsed text) as
+   one note wherever it is anchored. A classified round gives three
+   paragraphs "R1: hedged the claim"; the author keeps them through
+   baseline; next round's `_carry_rewrites` keeps 1 of the 3 ("de-
+   duplicated a comment present in BOTH inputs"). Pre-existing since
+   `312c301` for AFI; the classify wiring makes it routine. The key needs
+   the anchor.
+7. **S2, finding 14 (V23a, V03).** `_unreachable` takes paragraph extents
+   from the lazy `PARA_RE` (`comments.py:698`), which ends a paragraph
+   holding a text box at the box's first inner `</w:p>`: a host
+   paragraph that contains a span is reported "changed with no span" and
+   a valid block table is refused (38 of 640 local packages have a body
+   text box), and `partial=True`, the only way through, also turns off
+   the footnote check. It scans document, footnotes and endnotes only, so
+   tracked changes in headers, footers or comments.xml pass as covered,
+   against its docstring. Use `_xml.span_holding`/`in_span`.
+8. **S3, finding 15 (V04, V05).** The coverage refusal says "Comment
+   those with docxkit.comments.add_at" (`comments.py:634`), but `add_at`
+   adds no revision span, so the identical refusal returns after the
+   advice is followed; `add_at` cannot reach the footnote revisions the
+   message lists, raises KeyError `word/comments.xml` on the comment-less
+   package annotate_in_place seeds, and credits its balloon to the
+   template comment's author (a referee — pre-existing). The refusal also
+   fires AFTER the Word seed has been paid for, against the docstring's
+   "blocks checked before Word".
+9. **Smaller, same writer** (each CONFIRMED or PLAUSIBLE as marked in the
+   review's candidate ledger):
+   - `_commented_spans` counts the author's own Word comment on an
+     inserted phrase as "annotated before" (false refusal), compares
+     escaped markup (`O&apos;Brien`) not the name, and — plausible — a
+     same-named note or an entity in the author refuses wrongly or not
+     at all;
+   - a `''` reason is written as an empty balloon and counted;
+   - a text-box-only classified build seeds nothing and fails with
+     `ScaffoldMissing` pointing at WARNING lines that were never printed
+     (`Revisions.Count` is the main story only);
+   - `_stamp` with a single-quoted attribute writes it twice (direct
+     callers unparseable; annotate_in_place's lint catches it);
+     `has_scaffold` raises ValueError on `w:id="-1"`;
+   - `_plain` hard-codes the `CommentReference` style id (10 of 513
+     manuscripts with comments are localized, Russian Word `af`), drops
+     run properties, and copies the OLD `pStyle` out of a `pPrChange`
+     snapshot;
+   - credit is stamped twice, and Word's comments get a new `w:date` but
+     keep the old `dateUtc`; `w:date` is true UTC where Word writes local
+     time labelled Z;
+   - `_marked` and `reclassify`'s `still` are two matchers (substring vs
+     equality); `_coalesce_tables` keys `''` and `None` apart (two
+     generic balloons per table, unclassified 2 vs 1), and a string
+     generic hides an unclassified undercount.
+
+The refactor is a design change, not nine patches: one function that
+widens first, then asks one "already annotated?" question of the range it
+will write, covers every revision kind and story the protocol reads,
+credits, and mints ids against everything in the package.
+
+**Fixed 2026-10-24**, `082da00`: the refactor. `comments._write` is the one writer (`annotate`, `annotate_blocks`, `add_at`) and holds every guard once — widened ranges and `_about` on them, `_Minted` ids in the range `_ours` reads, credit with `dateUtc`, the byte-identical body check. Case by case: 1 `_about` + `_coalesce_zones` + `_table_balloons` (LI7 copy re-runs 847, 0, 0; no stacks); 2 only docxkit's balloons and the markers count as done, and `BuildReport.uncommented` says what no balloon reaches; 3 `reclassify` matches the whole text, `''` nothing, and the build no longer calls it; 4 `_reanchor_word_comments` re-decides Word's own comments with the XML context on their first span; 5 `_Minted` (two rounds: 0 duplicated paraIds or durableIds, 10 of 10 resolved balloons still read done); 6 `_comment_paragraphs` — one note per paragraph; 7 `_unreachable` reads every story, paragraphs depth-counted; 8 the advice names partial=True, `add_at` takes credit and raises ScaffoldMissing, refusals run in `_check_blocks` before any seed; 9 all but one of the smaller ones (the author's-own-comment refusal, entity authors, empty reasons, the text-box-only message, quotes, negative ids, the localized reference style, the live pStyle and run properties, dateUtc on restamp, '' vs None in tables). Not changed: the `w:date` convention, which is a claim about Word nobody measured — split out as its own S4. Tests: `tests/test_comment_writer.py`, 31, 28 of the 30 written before the fix red on `ae4fbef` (the two controls pass); three slack tests re-pinned on one of docxkit's balloons, and one de-dup fixture on an unanchored first copy.
+
 ### ~~S3 — `withdraw` on a read-only working.docx, or a read-only batch Word holds~~ — FIXED 24.10, `e3b9f78`
 
 <!-- status: fixed -->
