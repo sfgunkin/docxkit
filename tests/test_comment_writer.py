@@ -517,6 +517,23 @@ def test_w_date_is_LOCAL_time_as_Word_writes_it_and_dateUtc_is_UTC():
     assert abs((shift - offset).total_seconds()) < 120
 
 
+def test_an_EMPTY_style_does_not_swallow_the_next_one_in_the_graft():
+    """Latent shape 5 (review of 2026-10-24): a self-closing `w:style`
+    opened a match that ran to the next style's close, so the graft
+    appended that style under the empty one's id as well."""
+    ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    have = {"word/styles.xml": f"<w:styles {ns}></w:styles>".encode()}
+    seeded = {"word/styles.xml": (
+        f'<w:styles {ns}><w:style w:type="paragraph" w:styleId="Empty"/>'
+        '<w:style w:type="paragraph" w:styleId="CommentText">'
+        '<w:name w:val="annotation text"/></w:style></w:styles>').encode()}
+
+    added = tracked._graft_styles(have, seeded)
+
+    assert added == ["CommentText"]
+    assert have["word/styles.xml"].decode().count("CommentText") == 1
+
+
 def test_EMPTY_and_NONE_answers_in_one_table_are_one_balloon():
     """Case 9. '' and None coalesced as different texts."""
     cells = "".join(f"<w:tc>{para(ins(f'c{i}', rid=80 + i))}</w:tc>"

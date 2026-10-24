@@ -1302,8 +1302,12 @@ def _seeded(path: Path, seed: Callable[[Path, Path], None]) -> Parts:
         return read_parts(out)
 
 
+# `(?<!/)>`: an empty `<w:style …/>` (0 of 37,698 in Word's files, and
+# legal) opened a match that ran on to the NEXT style's close, which then
+# read as one new style and was appended twice (review of 2026-10-24).
 _STYLE_RE = re.compile(
-    r'(<w:style [^>]*w:styleId="([^"]+)"[^>]*>.*?</w:style>)', re.DOTALL)
+    r'(<w:style [^>]*w:styleId="([^"]+)"[^>]*(?<!/)>.*?</w:style>)',
+    re.DOTALL)
 
 
 def _graft_styles(parts: Parts, source: Parts) -> list[str]:
