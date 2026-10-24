@@ -156,6 +156,28 @@ def test_a_proposal_is_commented_IN_PLACE_one_balloon_per_block(tmp_path,
             view(before["word/document.xml"].decode()))
 
 
+def test_Word_is_handed_a_COPY_never_the_author_s_file(tmp_path):
+    """Review 2026-10-24 (unpinned): a mutant that seeded `path` itself
+    survived every test here. Word's save of what it is handed is the
+    one that drops parts, so it must never be the author's file."""
+    from pathlib import Path
+
+    path = Path(write(tmp_path / "working.docx", _proposal(3)))
+    before, handed = path.read_bytes(), []
+    real = _word_like_seed([])
+
+    def seed(src, dst):
+        handed.append(src)
+        real(src, dst)
+
+    tracked.annotate_in_place(path, _blocks(3), author=AUTHOR, seed=seed)
+
+    (src,) = handed
+    assert Path(src).resolve() != path.resolve()
+    assert Path(src).parent.resolve() != path.parent.resolve()
+    assert path.read_bytes() != before          # written, from OUR parts
+
+
 def test_the_SEED_comment_becomes_the_first_balloon_not_an_orphan(tmp_path):
     """Its anchor was in Word's copy, which is thrown away. Left as it
     was, it is a comment in comments.xml that nothing in the text holds."""

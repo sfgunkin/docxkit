@@ -1524,6 +1524,20 @@ def test_two_papers_classifiers_keep_their_OWN_rules(tmp_path, monkeypatch):
         "A: paper A's point", "B: paper B's point"]
 
 
+def test_a_classifier_is_REGISTERED_while_it_runs(project, monkeypatch):
+    """Review 2026-10-24 (unpinned: the dataclass case passes on 3.15
+    without the registration). A module that looks itself up — as
+    `pickle`, `typing.get_type_hints` and the dataclass machinery do —
+    finds itself in `sys.modules`, as under `python why.py`."""
+    classify = _classifier_of(
+        project, monkeypatch,
+        "import sys\nSELF = sys.modules[__name__]\n"
+        "def classify(ctx):\n"
+        "    return 'R1: ' + SELF.__name__.split('_')[1]\n")
+
+    assert classify(_ctx("x")) == "R1: classify"
+
+
 def test_a_classifier_that_EXITS_on_load_is_the_paper_s_error(project,
                                                               monkeypatch):
     """Finding 13. `except Exception` let a module-level `sys.exit(3)`

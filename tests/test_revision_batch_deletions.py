@@ -473,6 +473,23 @@ def test_a_cut_link_whose_LABEL_survives_elsewhere_is_the_batch_s(tmp_path):
                   if loss.kind == "link") == sorted(a for a, _ in CUT)
 
 
+def test_a_link_the_proposal_was_never_built_with_is_not_EXCUSED(tmp_path):
+    """The rejected view must hold what `prev` holds before anything of a
+    kind is excused (review of 2026-10-24: unpinned). The truth has an
+    `Old2000` link the batch never had; accepting the batch drops it with
+    the batch's own cuts, and the links of the hand-back equal the
+    accepted view's — so only that check refuses it."""
+    old = para(run("As "), _link("Old2000", "Old 2000"), run(" said."))
+    paper = _round(tmp_path, deleted=frozenset(), cut_links=CUT, extra=old,
+                   batch_extra="")
+    _accept_all(paper)
+
+    with pytest.raises(HandbackLoss) as caught:
+        revision.baseline(paper, log=False)
+
+    assert "Old2000" in str(caught.value)
+
+
 def test_the_cut_accepted_and_Word_STRIPPED_the_other_copy_refuses(
         tmp_path):
     """The case the old words-survive rule stood for: the batch's cut of

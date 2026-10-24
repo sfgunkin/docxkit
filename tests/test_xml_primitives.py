@@ -1732,3 +1732,43 @@ def test_an_empty_element_REMOVES_it_and_a_self_closing_section_expands():
     assert set_sect_property("<w:sectPr/>", "titlePg", "<w:titlePg/>") == \
         "<w:sectPr><w:titlePg/></w:sectPr>"
     assert set_sect_property("<w:sectPr/>", "titlePg", "") == "<w:sectPr/>"
+
+
+# --- DEL_RE and MATH_ZONE_RE, pinned (review of 2026-10-24) ------------
+
+
+def test_DEL_RE_takes_each_deletion_ALONE_and_never_a_mark_s():
+    """Lazy, and guarded against the self-closing form: `styles.
+    raised_prose` reads deleted text through it, and the one test that
+    pinned the laziness went with the code it was beside. Greedy, two
+    deletions read as one with the kept text between; unguarded, a
+    paragraph mark's `<w:del .../>` opened a match."""
+    from docxkit._xml import DEL_RE
+
+    xml = ('<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="A"/></w:rPr>'
+           '</w:pPr><w:del w:id="2" w:author="A"><w:r><w:delText>one'
+           '</w:delText></w:r></w:del><w:r><w:t>kept</w:t></w:r>'
+           '<w:del w:id="3" w:author="A"><w:r><w:delText>two</w:delText>'
+           "</w:r></w:del></w:p>")
+
+    found = [m.group(0) for m in DEL_RE.finditer(xml)]
+
+    assert len(found) == 2
+    assert all("kept" not in f and "/>" not in f.split(">")[0] + ">"
+               for f in found)
+
+
+def test_MATH_ZONE_RE_takes_a_DISPLAY_equation_whole():
+    """An `m:oMath` inside an `m:oMathPara` is not a zone of its own: a
+    range marker may sit in neither, so the balloon goes round the
+    whole display."""
+    from docxkit._xml import MATH_ZONE_RE
+
+    m_ns = ('xmlns:m="http://schemas.openxmlformats.org/officeDocument/'
+            '2006/math"')
+    display = (f"<m:oMathPara {m_ns}><m:oMath><m:r><m:t>x</m:t></m:r>"
+               "</m:oMath></m:oMathPara>")
+
+    (zone,) = MATH_ZONE_RE.findall(f"<w:p>{display}</w:p>")
+
+    assert zone == display

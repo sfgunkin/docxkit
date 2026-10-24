@@ -161,7 +161,11 @@ HARNESS: dict[str, list[str]] = {
     # ONE line `m.group(1) == kind`. Code that moves house leaves its
     # tests behind, and this map is the only place that shows.
     "revision/_common.py": ["tests/test_revision.py",
-                            "tests/test_rescue_pruning.py"],
+                            "tests/test_rescue_pruning.py",
+                            # `_readable_hash` and `_readable_parts`: the
+                            # lock, retry and copy tests (2026-10-24)
+                            "tests/test_workflow_states.py",
+                            "tests/test_revision_batch_deletions.py"],
     # 39 lines+branches, all of them in test_revision.py; the other ten
     # files reach at most 37 and add none. 133 session-KILLED replayed:
     # 92 killed, 41 were session TIMEOUTS. value_types: `Paper` is frozen.
