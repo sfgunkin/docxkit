@@ -110,26 +110,6 @@ not re-derived:
    every paper on that drive and `init` ignores the False (not this
    machine's TEMP).
 
-### S4 — the classified build and the in-place path are slow at manuscript scale
-<!-- status: open -->
-
-Review efficiency findings (V25a/b/d CONFIRMED). Measured on generated
-HPPA-sized and 10 MB packages:
-
-- the classified `revision build`'s `_plan` calls `para_text_at` from
-  offset 0 per span — quadratic, 48–65 s at HPPA scale, 112 s at 10 MB /
-  2,836 spans (old helper, new caller, `_build.py:382`);
-- `annotate_blocks`' identity check runs `doc.replace` per comment:
-  22–45 s at 10 MB / 2,836 (`comments.py:652`);
-- `_marks_between` rebuilds an order dict per candidate: views 20 s at
-  20 MB / 100 candidates, 0.27 s hoisted (`revisions.py:332`);
-- `_commented_spans` searches per comment, 7–8 s at 10 MB; `_unreachable`'s
-  linear holder 0.7–2.4 s; `batch_deletions` re-parses the parts three
-  times, 3.9–5.1 s at 10 MB, and `verdict`'s cache misses it; `_registry`
-  scan quadratic, 2 s.
-
-Fix the first three; the refactor will replace the comment ones.
-
 ### S4 — tests and harness gaps the review found
 <!-- status: open -->
 

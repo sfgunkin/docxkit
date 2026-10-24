@@ -14,6 +14,29 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — the classified build and the in-place path are slow at manuscript scale~~ — FIXED 24.10, `2e6dea1`
+
+<!-- status: fixed -->
+
+Review efficiency findings (V25a/b/d CONFIRMED). Measured on generated
+HPPA-sized and 10 MB packages:
+
+- the classified `revision build`'s `_plan` calls `para_text_at` from
+  offset 0 per span — quadratic, 48–65 s at HPPA scale, 112 s at 10 MB /
+  2,836 spans (old helper, new caller, `_build.py:382`);
+- `annotate_blocks`' identity check runs `doc.replace` per comment:
+  22–45 s at 10 MB / 2,836 (`comments.py:652`);
+- `_marks_between` rebuilds an order dict per candidate: views 20 s at
+  20 MB / 100 candidates, 0.27 s hoisted (`revisions.py:332`);
+- `_commented_spans` searches per comment, 7–8 s at 10 MB; `_unreachable`'s
+  linear holder 0.7–2.4 s; `batch_deletions` re-parses the parts three
+  times, 3.9–5.1 s at 10 MB, and `verdict`'s cache misses it; `_registry`
+  scan quadratic, 2 s.
+
+Fix the first three; the refactor will replace the comment ones.
+
+**Fixed 2026-10-24**, `2e6dea1`. The classified `_comment_pass` on the review's HPPA-sized redline (6.5 MB, 2,142 spans) 57 s -> 0.8 s: `comments._Paragraphs` (para_text_at once per part, 47 s of it), `_Anchored` (bisection for `_about`), `_placed` + one-pass anchor strip (7.7 s of it), `_unreachable` by bisection. `revisions._Order` hoisted (a 20 MB view's accept ~1.2 s, `_marks_between` 0.03 s over 413 candidates). `batch_deletions` parses each part once (`_places`' `read`). Not changed: `_registry` scan (2 s, low; nine papers registered).
+
 ### ~~S2 — `paragraph` split/merge duplicates a `numberingChange`~~ — FIXED 24.10, `17ea5eb`
 
 <!-- status: fixed -->
