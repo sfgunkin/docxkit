@@ -90,6 +90,7 @@ from ._xml import (
     DOCUMENT,
     Parts,
     append_before_close,
+    element_spans,
     visible_text,
 )
 from .authors import initials_for
@@ -458,6 +459,26 @@ def _comment_pass(parts: Parts, classify: Classifier, *,
       whatever still reads it is removed.
     * The template itself is cut down to one paragraph
       (`comments._plain`).
+
+    And three the review of 2026-10-24 found, each the two comment paths
+    drifting apart again:
+
+    * **Word's own comments on a span are re-decided here.** The comment
+      Word seeds on its revision 1 — and any its maths pass left on a
+      revision it could not accept — was a span `annotate` skipped as
+      anchored. Under `generic=None` its one second chance was
+      `reclassify`, which showed the classifier the marker tag: no text,
+      a window ending before the revision, so revision 1 went bare or
+      took a neighbour's reason; and where Word's revision 1 was several
+      XML spans, each sat inside two balloons. Its anchors come out, and
+      it becomes the balloon of the first span it covered, with the
+      reason THIS pass decides, or goes when there is none.
+    * **What no balloon reaches is said**, not counted as classified:
+      moves, property-only changes and every revision in a note were
+      never shown to the classifier while the build printed
+      "unclassified: 0" (:attr:`BuildReport.uncommented`).
+    * Comments this pass wrote are credited once, here; `_credit_new`
+      takes the rest, ``dateUtc`` with them.
     """
     doc = parts[DOCUMENT].decode("utf-8")
     if not _comments.has_scaffold(parts):
@@ -468,22 +489,92 @@ def _comment_pass(parts: Parts, classify: Classifier, *,
             return
         raise ScaffoldMissing(
             "the redline has revisions to comment and no comment to clone: "
-            "Word did not seed one (see the WARNING lines above)")
+            "Word did not seed one. "
+            + ("Every revision of the body is inside a text box, which "
+               "Word's Revisions collection does not list, so it had none "
+               "to seed on; comment those by hand"
+               if _all_in_text_boxes(doc) else
+               "See the WARNING lines above for what Word said"))
     credit = _comments.Credit(author, initials_for(author),
                               _comments._now())
-    added, unclassified = _comments.annotate(parts, classify,
-                                             generic=generic, tables=tables,
-                                             credit=credit)
-    marker = _comments.SCAFFOLD if generic is None else generic
-    _comments.reclassify(parts, classify, generic=marker)
-    if generic is None:
-        bare = _marked(parts, _comments.SCAFFOLD)
+    uncommented = _comments._unreachable(parts)
+    reuse = _reanchor_word_comments(parts, inputs)
+    added, unclassified = _comments._annotate(
+        parts, classify, generic=generic, tables=tables, credit=credit,
+        reuse=reuse)
+    if not generic:
+        bare = [cid for cid in _marked(parts, _comments.SCAFFOLD)
+                if cid in _unexplained(parts, inputs)]
         _comments.remove(parts, bare)
         unclassified += len(bare)
     _credit_new(parts, inputs, credit)
     report.comments_added, report.unclassified = added, unclassified
+    report.uncommented = uncommented
     report.mark(f"annotated {added} revisions in XML")
     say(f"comments: {added} added, unclassified: {unclassified}")
+    for what in uncommented:
+        say(f"  no balloon can reach {what}: the classifier was not asked "
+            f"about it")
+
+
+def _all_in_text_boxes(doc: str) -> bool:
+    """Is every revision span of `doc` inside a text box?"""
+    boxes = element_spans(doc, "txbxContent")
+    spans = _revisions.spans(doc)
+    return bool(spans) and all(any(lo <= s < hi for lo, hi in boxes)
+                               for s, _e in spans)
+
+
+def _unexplained(parts: Parts, inputs: tuple[Parts, ...]) -> set[str]:
+    """Ids of the comments no input explains — the ones this build's Word
+    session or its XML pass wrote.
+
+    Counted the way the de-duplication counts (`_hygiene._comment_key`):
+    each input copy of a note explains one copy here, and only what is
+    left over was written by this build."""
+    held = sum((_hygiene._comment_counts(p) for p in inputs), Counter())
+    com = parts.get(COMMENTS, b"").decode("utf-8")
+    out: set[str] = set()
+    for m in _comments._COMMENT_RE.finditer(com):
+        key = _hygiene._comment_key(m.group(0))
+        if held[key] > 0:
+            held[key] -= 1
+        elif key[1]:                # nothing here writes a comment of no text
+            out.add(m.group(2))
+    return out
+
+
+def _reanchor_word_comments(parts: Parts,
+                            inputs: tuple[Parts, ...]) -> dict[int, str]:
+    """The comments Word made in this build that sit on a revision span,
+    anchors taken out: span index -> comment id, for `_annotate` to
+    re-decide (see :func:`_comment_pass`).
+
+    Each goes to the FIRST span its range opened on; a span two of them
+    claim keeps the first, and the second is left where Word put it."""
+    doc = parts[DOCUMENT].decode("utf-8")
+    com = parts.get(COMMENTS, b"").decode("utf-8")
+    word = _unexplained(parts, inputs) - _comments._ours_by(com, None)
+    if not word:
+        return {}
+    starts = [s for s, _e in _revisions.spans(doc)]
+    reuse: dict[int, str] = {}
+    for r in _comments._ranges(doc):
+        if r.cid not in word:
+            continue
+        first = next((i for i, s in enumerate(starts)
+                      if r.start - _comments._ANCHOR_SLACK <= s < r.end),
+                     None)
+        if first is not None and first not in reuse:
+            reuse[first] = r.cid
+    for cid in reuse.values():
+        doc = _comments._anchor_re("commentRangeStart", cid).sub("", doc)
+        doc = _comments._anchor_re("commentRangeEnd", cid).sub("", doc)
+        doc = _comments._drop_reference_run(doc, cid)
+    parts[DOCUMENT] = doc.encode("utf-8")
+    # the spans are counted again on the doc without those anchors, and an
+    # anchor is no span, so the indices still hold
+    return reuse
 
 
 def _marked(parts: Parts, text: str) -> list[str]:
@@ -495,24 +586,22 @@ def _marked(parts: Parts, text: str) -> list[str]:
 
 def _credit_new(parts: Parts, inputs: tuple[Parts, ...],
                 credit: _comments.Credit) -> int:
-    """`credit` on every comment no input explains; returns how many.
+    """`credit` on every comment no input explains that this pass did not
+    already credit — Word's — returns how many.
 
-    Counted the way the de-duplication counts (`_hygiene._comment_key`):
-    each input copy of a note explains one copy here, and only what is
-    left over was written by this build — Word's comments as well as the
-    clones."""
-    held = sum((_hygiene._comment_counts(p) for p in inputs), Counter())
+    Its ``dateUtc`` moves with its ``w:date``: restamped alone, a Word
+    comment read two times an hour apart (review of 2026-10-24)."""
     com = parts.get(COMMENTS, b"").decode("utf-8")
-    mine: set[str] = set()
-    for m in _comments._COMMENT_RE.finditer(com):
-        key = _hygiene._comment_key(m.group(0))
-        if held[key] > 0:
-            held[key] -= 1
-        elif key[1]:                # nothing here writes a comment of no text
-            mine.add(m.group(2))
+    mine = _unexplained(parts, inputs) - _comments._ours_by(com, None)
     if mine:
-        parts[COMMENTS] = _comments._restamp(com, mine, credit).encode(
-            "utf-8")
+        com = _comments._restamp(com, mine, credit)
+        side = {name: parts[name].decode("utf-8")
+                for name, _close in _comments._SIDE_PARTS if name in parts}
+        for cid in mine:
+            _comments._set_date_utc(com, side, cid, credit.date)
+        parts[COMMENTS] = com.encode("utf-8")
+        for name, xml in side.items():
+            parts[name] = xml.encode("utf-8")
     return len(mine)
 
 
@@ -1110,10 +1199,10 @@ def annotate_in_place(path: str | Path,
     read_hash = _guard.sha256(path)
     before = read_parts(path)
     parts = dict(before)
-    # the coverage first: a block table that misses a change is refused
-    # before a Word session is paid for
-    _comments._cover(blocks, len(_revisions.spans(
-        parts[DOCUMENT].decode("utf-8"))))
+    # every refusal first — the cover, a re-run, a change no block can
+    # name — before a Word session is paid for; only the coverage one
+    # used to come first (review of 2026-10-24)
+    _comments._check_blocks(parts, blocks, author=author, partial=partial)
     reuse = None
     if not _comments.has_scaffold(parts):
         _no_empty_comments(parts, path)

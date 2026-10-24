@@ -314,6 +314,19 @@ BOOKMARK_END_ID_RE = re.compile(r'<w:bookmarkEnd\b[^>]*w:id="(\d+)"')
 #: guards, and only one of them defended against a missing end tag.
 BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:name="([^"]+)"')
 COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')
+#: A comment's range markers and its reference mark, any spelling; group
+#: 1 is the comment's id. `comments` pairs the range, `hygiene` asks
+#: which paragraph a comment is anchored in.
+COMMENT_RANGE_START_RE = re.compile(
+    r'<w:commentRangeStart\b[^>]*\bw:id="(\d+)"[^>]*/>')
+COMMENT_RANGE_END_RE = re.compile(
+    r'<w:commentRangeEnd\b[^>]*\bw:id="(\d+)"[^>]*/>')
+COMMENT_REFERENCE_RE = re.compile(
+    r'<w:commentReference\b[^>]*\bw:id="(\d+)"[^>]*/>')
+#: A paragraph's opening tag, the slash CAPTURED, or its close: an empty
+#: `<w:p/>` is a close. For a depth-counted walk, since paragraphs nest
+#: (a text box's are inside its anchor's).
+P_TAG_RE = re.compile(r"<w:p\b[^>]*?(/?)>|</w:p>")
 #: An equation where a range marker may NOT go inside it: a display
 #: ``m:oMathPara`` whole, else an inline ``m:oMath``. Neither nests in
 #: itself, so a lazy pairing closes on its own end tag; the display

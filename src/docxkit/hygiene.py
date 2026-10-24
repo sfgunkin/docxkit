@@ -19,6 +19,7 @@ class of diffs stops existing.
 """
 from __future__ import annotations
 
+import bisect
 import html
 import posixpath
 import re
@@ -26,8 +27,11 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from ._xml import (
+    COMMENT_RANGE_START_RE,
+    COMMENT_REFERENCE_RE,
     COMMENTS,
     DOCUMENT,
+    P_TAG_RE,
     PARA_RE,
     T_PARTS_RE,
     Parts,
@@ -712,9 +716,14 @@ def dedupe_comments(parts: Parts) -> list[str]:
     confirms `Comments.Count = 2`). Neither input is wrong, which is why
     this belongs to the build.
 
-    Matched on **author plus whitespace-collapsed text**. Never on id,
-    which Compare renumbers; never on anchor, since the two copies land
-    on different runs of one paragraph.
+    Matched on **author plus whitespace-collapsed text, in one
+    paragraph**. Never on id, which Compare renumbers; never on the
+    exact anchor, since the two copies land on different runs of one
+    paragraph — but on the PARAGRAPH, since a classified build gives
+    many paragraphs the same reason under one author, and kept through a
+    baseline those were cut to one per reason, anchors and all, by the
+    next round (review of 2026-10-24). A copy with no anchor is the same
+    note as any other.
 
     **The dropped copy's ANCHORS go with it**, from every text-bearing
     part: `commentRangeStart`, `commentRangeEnd`, and the whole run
@@ -751,7 +760,9 @@ def _dedupe_comment_keys(parts: Parts) -> list[tuple[str, str]]:
         return []
     dropped: list[tuple[str, str]] = []
     gone: list[str] = []
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str], set[int | None]] = {}
+    where = _comment_paragraphs(parts.get(DOCUMENT, b"").decode(
+        "utf-8", "replace"))
     out, at = [], 0
     # `(?<!/)>` — the guard PARA_RE and RUN_RE both carry, for the same
     # reason. CT_Comment's block content is optional, so an EMPTY
@@ -767,20 +778,41 @@ def _dedupe_comment_keys(parts: Parts) -> list[tuple[str, str]]:
     # through a different door.
     for m in _COMMENT_RE.finditer(xml):
         key = _comment_key(m.group(0))
-        if key in seen and key[1]:
+        cid = re.search(r'w:id="(\d+)"', m.group(0))
+        here = where.get(cid.group(1)) if cid else None
+        places = seen.get(key)
+        if places is not None and key[1] and (
+                here is None or None in places or here in places):
             dropped.append(key)
-            if cid := re.search(r'w:id="(\d+)"', m.group(0)):
+            if cid:
                 gone.append(cid.group(1))
             out.append(xml[at:m.start()])
             at = m.end()
             continue
-        seen.add(key)
+        seen.setdefault(key, set()).add(here)
     if not dropped:
         return []
     out.append(xml[at:])
     parts[COMMENTS] = "".join(out).encode("utf-8")
     _drop_comment_anchors(parts, gone)
     return dropped
+
+
+def _comment_paragraphs(doc: str) -> dict[str, int]:
+    """Comment id -> the offset of the paragraph its anchor opens in:
+    the last ``w:p`` to open before its range start, else its reference
+    mark."""
+    opens = [m.start() for m in P_TAG_RE.finditer(doc)
+             if m.group(0) != "</w:p>" and not m.group(1)]
+    marks = sorted([*COMMENT_RANGE_START_RE.finditer(doc),
+                    *COMMENT_REFERENCE_RE.finditer(doc)],
+                   key=lambda m: (m.re is COMMENT_REFERENCE_RE, m.start()))
+    out: dict[str, int] = {}
+    for m in marks:
+        if m.group(1) not in out:
+            i = bisect.bisect_right(opens, m.start()) - 1
+            out[m.group(1)] = opens[i] if i >= 0 else -1
+    return out
 
 
 # `(?<!/)>` — the guard PARA_RE and RUN_RE both carry; see the note in

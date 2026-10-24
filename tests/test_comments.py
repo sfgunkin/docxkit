@@ -45,6 +45,11 @@ def _n_comments(parts):
     return len(re.findall(r"<w:comment w:id=", _com(parts)))
 
 
+#: A paraId in the range this package mints its balloons in, so a fixture
+#: comment carrying it reads as one docxkit wrote (`comments._ours`).
+OURS = "5A000001"
+
+
 def always(text):
     return lambda ctx: text
 
@@ -692,13 +697,13 @@ def test_two_revisions_get_two_DIFFERENT_comment_ids():
 
 
 def test_a_revision_whose_range_is_only_half_present_is_still_commented():
-    """`_already_anchored` needs BOTH ends. As `or`, a stray
-    commentRangeStart near the revision — Word leaves them behind when
-    an author deletes a comment — makes the pass walk past a revision
-    that has no comment at all."""
+    """`_about` needs BOTH ends. As `or`, a stray commentRangeStart near
+    the revision — Word leaves them behind when an author deletes a
+    comment — makes the pass walk past a revision that has no comment
+    at all."""
     body = para(run("keep "), '<w:commentRangeStart w:id="1"/>',
                 ins("added"))
-    parts = make_parts(body, comment_items=(comment(1, "seed"),))
+    parts = make_parts(body, comment_items=(comment(1, "seed", OURS),))
     added, _ = annotate(parts, always("R1: reason"))
     assert added == 1, "the revision was treated as already anchored"
 
@@ -883,7 +888,8 @@ def test_a_comment_range_FAR_from_the_revision_does_not_anchor_it():
                     '<w:commentRangeEnd w:id="1"/>')
 
     def parts(**gaps: str) -> dict[str, bytes]:
-        return make_parts(body(**gaps), comment_items=(comment(1, "seed"),))
+        return make_parts(body(**gaps),
+                          comment_items=(comment(1, "seed", OURS),))
 
     # a range that wraps the revision, both ends within the slack
     assert annotate(parts(), always("R1"))[0] == 0, "already anchored"
@@ -982,19 +988,21 @@ def _slack_body(pad: int) -> str:
 
 
 def test_the_anchor_slack_is_SIXTY_characters_of_markup():
-    """A comment range whose name ends exactly sixty characters before
-    the revision still anchors it; one character further out does not.
+    """A balloon whose range START MARKER ends exactly sixty characters
+    of markup before the revision still anchors it; one character
+    further out does not.
 
     Sixty is about one run, and the failure it guards is a revision
     given a SECOND comment because the one already wrapping it was one
     character too far to see."""
     probe = _slack_body(0)
-    here = probe.index("commentRangeStart")
+    here = probe.index("/>", probe.index("commentRangeStart")) + 2
     exact = 60 - (probe.index("<w:ins ") - here)
 
     def added(pad: int) -> int:
         return annotate(
-            make_parts(_slack_body(pad), comment_items=(comment(1, "seed"),)),
+            make_parts(_slack_body(pad),
+                       comment_items=(comment(1, "seed", OURS),)),
             always("R1: reason"))[0]
 
     assert added(exact) == 0, "at exactly sixty it is already anchored"
@@ -1069,7 +1077,9 @@ def test_the_window_of_a_revision_NEAR_THE_TOP_reaches_the_start():
 # equivalent, each checked with `kill_check`:
 #
 # * `_already_anchored`'s `max(0, start - _ANCHOR_SLACK)` written
-#   `max(-1, ...)`. Its twin in `_context` IS killable — a revision in
+#   `max(-1, ...)` (that function is gone since 2026-10-24: `_about`
+#   compares offsets as numbers, with no slice). Its twin in `_context`
+#   IS killable — a revision in
 #   the second paragraph has nothing 3,000 characters behind it — but
 #   60 characters is shorter than `<w:document ...>` with its namespace
 #   declarations, so `start - 60` is never negative and the clamp never
@@ -1106,16 +1116,17 @@ def test_the_window_of_a_revision_NEAR_THE_TOP_reaches_the_start():
 
 
 def test_an_anchor_NEAR_THE_START_of_the_part_is_still_seen():
-    """`max(0, start - _ANCHOR_SLACK)`, and the 0 is the whole of it: a
-    negative slice start counts from the END of the string, so the
-    window becomes empty and an existing range reads as absent. The
-    second annotate pass then wraps the same revision again — two
-    commentRangeStarts around one span, which Word repairs by dropping
-    one of the comments.
+    """The slack reaches back past the start of the part: the window was
+    a slice, `max(0, start - _ANCHOR_SLACK)`, whose 0 was the whole of
+    it — a negative slice start counts from the END of the string, so an
+    existing range read as absent and a second pass wrapped the same
+    revision again, which Word repairs by dropping one of the comments.
+    Offsets compared as numbers have no such edge, and this holds them
+    to it.
 
     A revision 60 characters into the part is the first one in it.
     """
-    from docxkit.comments import _already_anchored
+    from docxkit.comments import _about, _ranges
 
     doc = ('<w:p><w:commentRangeStart w:id="1"/><w:ins><w:r><w:t>x</w:t>'
            '</w:r></w:ins><w:commentRangeEnd w:id="1"/></w:p>')
@@ -1123,7 +1134,7 @@ def test_an_anchor_NEAR_THE_START_of_the_part_is_still_seen():
     end = doc.index("<w:commentRangeEnd")
 
     assert start < 60, "the fixture must sit inside the slack window"
-    assert _already_anchored(doc, start, end)
+    assert _about(_ranges(doc), [], start, end, {"1"}) == ["1"]
 
 
 # --- the whole sweep of 2026-09-15 ------------------------------------

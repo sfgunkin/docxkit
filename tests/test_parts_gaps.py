@@ -1956,18 +1956,22 @@ def test_an_EMPTY_run_before_the_reference_run_is_not_its_start():
     """`<w:r w:rsidR="…"/>` is an empty run (266 with attributes in 18
     corpus packages). Read as the reference run's open tag, the cut ran
     from it across everything up to the reference — here a paragraph
-    boundary, and two paragraphs became one."""
+    boundary, and two paragraphs became one.
+
+    The first copy has no anchor, so the second is the same note
+    wherever it sits: copies in two DIFFERENT paragraphs are two notes
+    since 2026-10-24 (`_comment_paragraphs`)."""
     from docxkit.hygiene import dedupe_comments
 
-    body = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            f'<w:document xmlns:w="http://schemas.openxmlformats.org/'
-            f'wordprocessingml/2006/main"><w:body>'
-            f"<w:p>{_anchored(1, 'a')}</w:p>"
-            f'<w:p><w:r><w:t>First paragraph.</w:t></w:r>'
-            f'<w:r w:rsidR="00A1B2C3"/></w:p>'
-            f'<w:p><w:r><w:commentReference w:id="2"/></w:r>'
-            f"<w:r><w:t>Second paragraph.</w:t></w:r></w:p>"
-            f"</w:body></w:document>")
+    body = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+            'wordprocessingml/2006/main"><w:body>'
+            "<w:p><w:r><w:t>a</w:t></w:r></w:p>"
+            '<w:p><w:r><w:t>First paragraph.</w:t></w:r>'
+            '<w:r w:rsidR="00A1B2C3"/></w:p>'
+            '<w:p><w:r><w:commentReference w:id="2"/></w:r>'
+            "<w:r><w:t>Second paragraph.</w:t></w:r></w:p>"
+            "</w:body></w:document>")
     parts = {
         "word/comments.xml": _comments_part(
             _comment(1, "R", "One note."), _comment(2, "R", "One note.")),

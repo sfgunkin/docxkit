@@ -167,13 +167,14 @@ BLOCKING: tuple[tuple[str, str], ...] = (
 ADVISORY: tuple[str, ...] = (
     "suppressed", "dropped", "carried", "carried_from_baseline",
     "carried_properties", "restored_glyphs", "returned_spaces",
-    "deduped_comments", "phases",
+    "deduped_comments", "uncommented", "phases",
 )
 
 #: The advisory lists that want a person's LOOK — a Word call that
-#: failed and was skipped, a thing Compare dropped — rather than a note
-#: of a repair made. `phases` is timing, not a finding, and is left out.
-_WARNINGS = frozenset({"suppressed", "dropped"})
+#: failed and was skipped, a thing Compare dropped, a change no balloon
+#: explains — rather than a note of a repair made. `phases` is timing,
+#: not a finding, and is left out.
+_WARNINGS = frozenset({"suppressed", "dropped", "uncommented"})
 
 
 class BuildReport:
@@ -196,6 +197,12 @@ class BuildReport:
         self.math_kept = 0
         self.comments_added = 0
         self.unclassified = 0
+        #: What a classified build's balloons cannot reach — moves,
+        #: property-only changes, revisions in notes or headers — said in
+        #: words (`comments._unreachable`). The classifier was never
+        #: asked about these, and "unclassified: 0" read as though it had
+        #: been (review of 2026-10-24).
+        self.uncommented: list[str] = []
         self.comments_total = 0
         self.verified_comments: int | None = None
         self.verified_revisions: int | None = None

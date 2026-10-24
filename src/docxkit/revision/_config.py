@@ -103,8 +103,11 @@ class Paper:
     ``"path.py"`` or ``"path.py:function"`` (default ``classify``),
     relative to the project root. `revision build` passes it to
     :func:`docxkit.tracked.build`, which calls it with a
-    :class:`docxkit.comments.RevisionContext` per revision and puts the
-    text it returns in a balloon; None leaves that revision bare.
+    :class:`docxkit.comments.RevisionContext` per revision SPAN of the
+    body and puts the text it returns in a balloon; None leaves that
+    revision bare. Moves, property-only changes and revisions in notes
+    have no span a balloon can anchor on: the classifier is not asked
+    about them, and the build lists them (`BuildReport.uncommented`).
 
     Empty, the default, is a redline with no comments, which is what
     every batch was until 2026-10-12: `build` passed ``None`` and a

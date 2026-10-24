@@ -15,6 +15,7 @@ get :class:`RevisionContext` for each revision.
 """
 from __future__ import annotations
 
+import html
 import re
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterable, Sequence
@@ -25,18 +26,22 @@ from typing import NamedTuple
 from . import revisions as _revisions
 from ._xml import (
     COMMENT_ID_RE,
+    COMMENT_RANGE_END_RE,
+    COMMENT_RANGE_START_RE,
     COMMENTS,
     DOCUMENT,
     MATH_ZONE_RE,
+    P_TAG_RE,
     PARA_RE,
+    RUN_RE,
     Parts,
     delta_text,
     element_spans,
     escape_attr,
+    live_properties,
     normalize_glyphs,
     own_properties,
     set_run_text,
-    text_parts,
     visible_text,
 )
 from ._xml import (
@@ -128,12 +133,27 @@ class RevisionContext:
 
 
 class _Planned(NamedTuple):
-    """One revision, the comment decided for it, and the table it sits in."""
+    """One revision, the comment decided for it, and the table it sits in.
+
+    `cid` is an existing comment the revision's balloon IS — Word's own,
+    re-decided here (:func:`_annotate`'s `reuse`) — and None for a new
+    one."""
 
     start: int
     end: int
     comment: str | None
     table: int | None
+    cid: str | None = None
+
+
+class _Decided(NamedTuple):
+    """A balloon to write: its span, its text, and the comment it is if
+    one is already defined."""
+
+    start: int
+    end: int
+    text: str
+    cid: str | None = None
 
 
 def match(rules: Iterable[tuple[str, str]],
@@ -185,9 +205,126 @@ def _context(doc: str, start: int, end: int,
         start=start, end=end)
 
 
-def _already_anchored(doc: str, start: int, end: int) -> bool:
-    return ("commentRangeStart" in doc[max(0, start - _ANCHOR_SLACK):start]
-            and "commentRangeEnd" in doc[end:end + _ANCHOR_SLACK])
+#: Every comment this package writes carries a paraId in
+#: ``[_PARA_ID_BASE, _PARA_ID_TOP)`` and keeps it: Word renumbers comment
+#: IDS on save and leaves paraIds alone (HPPA's Word-saved copy,
+#: 2026-10-10: 45 of 46 ids changed, every paraId kept). It is the one
+#: mark that tells a balloon docxkit wrote from one a person wrote — the
+#: author's name cannot, since an author annotating their own file
+#: shares it with every query they typed themselves.
+_PARA_ID_TOP = 0x5B000000
+
+
+def _ours(para_id: str) -> bool:
+    """Is `para_id` one this package mints?"""
+    try:
+        value = int(para_id, 16)
+    except ValueError:
+        return False
+    return _PARA_ID_BASE <= value < _PARA_ID_TOP
+
+
+class _Range(NamedTuple):
+    """A comment's anchored range in ``document.xml``."""
+
+    start: int       # just past its start marker
+    end: int         # where its end marker begins
+    cid: str
+
+
+_RANGE_OPEN_RE = COMMENT_RANGE_START_RE
+_RANGE_SHUT_RE = COMMENT_RANGE_END_RE
+
+
+def _ranges(doc: str) -> list[_Range]:
+    """Every anchored comment range, in any spelling of its markers."""
+    shut: dict[str, list[int]] = {}
+    for m in _RANGE_SHUT_RE.finditer(doc):
+        shut.setdefault(m.group(1), []).append(m.start())
+    out = []
+    for m in _RANGE_OPEN_RE.finditer(doc):
+        if later := [at for at in shut.get(m.group(1), ()) if at >= m.end()]:
+            out.append(_Range(m.end(), later[0], m.group(1)))
+    return out
+
+
+def _about(ranges: Sequence[_Range], zones: list[tuple[int, int]],
+           start: int, end: int, ids: set[str]) -> list[str]:
+    """Which of the comments `ids` are anchored on the span `start`..`end`?
+
+    Asked of the range the span's balloon is WRITTEN on — widened round
+    the equation it touches, `_outside_math` — because that is where an
+    earlier run put it. Asked of the raw span, a balloon round an
+    equation was never found again: re-running `annotate` on a copy of
+    LI7 added 949, then 133, then 133 balloons, and a second
+    `annotate_blocks` on an all-maths proposal was not refused (review
+    of 2026-10-24). `_ANCHOR_SLACK` either side is for the markers a
+    range sits beside: a revision's own, another comment's.
+    """
+    lo, hi = _outside_math(zones, start, end)
+    return [r.cid for r in ranges if r.cid in ids
+            and lo - _ANCHOR_SLACK <= r.start <= lo
+            and hi <= r.end <= hi + _ANCHOR_SLACK]
+
+
+def _ours_by(com: str, author: str | None) -> set[str]:
+    """Ids of the comments this package wrote — by `author`, if given."""
+    return {r["cid"] for r in _comment_records(com)
+            if _ours(r["para_id"])
+            and (author is None or html.unescape(r["author"]) == author)}
+
+
+class _Minted:
+    """paraIds and durableIds no part of the package already uses.
+
+    They were ``BASE + comment id``, and the comment id is ``1 + max``
+    of the ids Word left — which Word renumbers on save while keeping
+    the paraIds. A later round's balloons took the paraIds and
+    durableIds of earlier ones the author kept, and `threads`,
+    `set_done` and `remove` — the remedy `annotate_blocks`' refusal
+    names — then read or changed the OLD comment (review of 2026-10-24).
+    """
+
+    def __init__(self, parts: Parts) -> None:
+        blob = "".join(b.decode("utf-8", "replace")
+                       for name, b in parts.items() if name.endswith(".xml"))
+        self.paras = {int(x, 16) for x in _PARA_ATTR_RE.findall(blob)}
+        self.durables = {int(x, 16) for x in _DURABLE_ATTR_RE.findall(blob)}
+
+    def take(self, cid: int) -> tuple[str, str]:
+        """``(paraId, durableId)`` for comment `cid`, both fresh."""
+        para, durable = _PARA_ID_BASE + cid, _DURABLE_ID_BASE + cid
+        while para in self.paras:
+            para += 1
+        while durable in self.durables:
+            durable += 1
+        self.paras.add(para)
+        self.durables.add(durable)
+        return f"{para:08X}", f"{durable:08X}"
+
+
+_PARA_ATTR_RE = re.compile(r'paraId="([0-9A-Fa-f]{1,8})"')
+_DURABLE_ATTR_RE = re.compile(r'durableId="([0-9A-Fa-f]{1,8})"')
+_STYLE_BLOCK_RE = re.compile(
+    r'<w:style\b[^>]*?\bw:styleId="([^"]+)"[^>]*(?<!/)>(.*?)</w:style>',
+    re.DOTALL)
+_REFERENCE_NAME_RE = re.compile(
+    r'<w:name\b[^>]*\bw:val="annotation reference"[^>]*/>', re.IGNORECASE)
+
+
+def _reference_style(parts: Parts) -> str:
+    """The style id of Word's "annotation reference" character style.
+
+    Found by its NAME, which Word never localizes, and not assumed to be
+    ``CommentReference``, which it does: 10 of 513 manuscripts with
+    comments on this machine define it under another id (Russian Word's
+    is ``af``), and a mark styled with an id the package does not define
+    renders in the body's font, full size (review of 2026-10-24)."""
+    styles = parts.get("word/styles.xml", b"").decode("utf-8", "replace")
+    for m in _STYLE_BLOCK_RE.finditer(styles):
+        if _REFERENCE_NAME_RE.search(m.group(2)):
+            return m.group(1)
+    return "CommentReference"
 
 
 def _clone_comment(template: str, cid: int, para_id: str, text: str) -> str:
@@ -204,12 +341,16 @@ def _clone_comment(template: str, cid: int, para_id: str, text: str) -> str:
     return set_run_text(x, text)
 
 
-#: The run Word opens every comment paragraph with: the balloon's mark.
-_ANNOTATION_REF = ('<w:r><w:rPr><w:rStyle w:val="CommentReference"/>'
-                   "</w:rPr><w:annotationRef/></w:r>")
+def _annotation_ref(style: str) -> str:
+    """The run Word opens every comment paragraph with: the balloon's
+    mark."""
+    return (f'<w:r><w:rPr><w:rStyle w:val="{style}"/></w:rPr>'
+            "<w:annotationRef/></w:r>")
 
 
-def _plain(comment: str) -> str:
+
+
+def _plain(comment: str, style: str = "CommentReference") -> str:
     """`comment` cut down to what a clone may carry from it.
 
     The comment cloned is whichever the package holds first, and that
@@ -223,46 +364,104 @@ def _plain(comment: str) -> str:
     manuscripts with a comment open on a multi-paragraph one.
 
     So: the element's own open tag, its FIRST paragraph's open tag and
-    paragraph style, the annotation mark and one empty text run.
+    paragraph style, the annotation mark and one empty text run. The
+    mark is the template's own run where it has one, and otherwise
+    written in `style`; the style is the LIVE one, not the old one a
+    ``w:pPrChange`` snapshot holds; and the text run keeps the live run
+    properties of the template's first text — its language, its
+    direction (review of 2026-10-24).
     """
     head = re.match(r"<w:comment\b[^>]*(?<!/)>", comment)
     para = PARA_RE.search(comment)
     assert head is not None              # _Scaffold.read matched one
     if para is None:
-        return (f"{head.group(0)}<w:p>{_ANNOTATION_REF}<w:r><w:t></w:t>"
-                "</w:r></w:p></w:comment>")
+        return (f"{head.group(0)}<w:p>{_annotation_ref(style)}<w:r><w:t>"
+                "</w:t></w:r></w:p></w:comment>")
     body = para.group(0)
     p_open = re.match(r"<w:p\b[^>]*(?<!/)>", body)
     assert p_open is not None            # PARA_RE opens on one
-    style = ""
+    p_style = ""
     if (own := own_properties(body, "pPr")) is not None:
-        found = re.search(r'<w:pStyle\b[^>]*w:val="([^"]*)"', own[2])
+        found = re.search(r'<w:pStyle\b[^>]*w:val="([^"]*)"',
+                          live_properties(own[2]))
         if found:
-            style = (f'<w:pPr><w:pStyle w:val="{found.group(1)}"/>'
-                     "</w:pPr>")
-    return (f"{head.group(0)}{p_open.group(0)}{style}{_ANNOTATION_REF}"
-            "<w:r><w:t></w:t></w:r></w:p></w:comment>")
+            p_style = (f'<w:pPr><w:pStyle w:val="{found.group(1)}"/>'
+                       "</w:pPr>")
+    mark, text_props = _annotation_ref(style), ""
+    for run in RUN_RE.finditer(body):
+        xml = run.group(0)
+        if "<w:annotationRef" in xml:
+            if not re.search(r"<w:t\b", xml):
+                mark = xml
+        elif re.search(r"<w:t\b", xml):
+            if (props := own_properties(xml, "rPr")) is not None:
+                text_props = f"<w:rPr>{live_properties(props[2])}</w:rPr>"
+            break
+    return (f"{head.group(0)}{p_open.group(0)}{p_style}{mark}"
+            f"<w:r>{text_props}<w:t></w:t></w:r></w:p></w:comment>")
 
 
-def _anchor(cid: int) -> tuple[str, str]:
+def _anchor(cid: int, style: str = "CommentReference") -> tuple[str, str]:
     """(range start, range end + reference run) for comment `cid`."""
     start = f'<w:commentRangeStart w:id="{cid}"/>'
     end = (f'<w:commentRangeEnd w:id="{cid}"/>'
-           '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+           f'<w:r><w:rPr><w:rStyle w:val="{style}"/></w:rPr>'
            f'<w:commentReference w:id="{cid}"/></w:r>')
     return start, end
 
 
 def _plan(doc: str, classify: Callable[[RevisionContext], str | None],
-          spans: list[tuple[int, int]]) -> list[_Planned]:
-    """Every revision that still needs a comment, with its verdict."""
-    return [_Planned(s, e, classify(_context(doc, s, e, spans)),
-                     table_index_at(spans, s))
-            for s, e in _revisions.spans(doc)
-            if not _already_anchored(doc, s, e)]
+          spans: list[tuple[int, int]], *, done: set[str],
+          reuse: dict[int, str]) -> list[_Planned]:
+    """Every revision that still needs a comment, with its verdict.
+
+    A revision one of the comments `done` is anchored on (:func:`_about`)
+    has its balloon already. Any other comment there is a person's —
+    a referee's query that happens to bracket the change — and the
+    change still gets a reason of its own; skipping it on any nearby
+    range left it bare while the build counted it (review of
+    2026-10-24). `reuse` maps a span's index to the comment its balloon
+    already is.
+
+    ``''`` from the classifier is no answer, the same as None: kept
+    apart, the two coalesced as different texts and a table read as two
+    unclassified balloons.
+    """
+    zones, ranges = _math_zones(doc), _ranges(doc)
+    out = []
+    for i, (s, e) in enumerate(_revisions.spans(doc)):
+        if i not in reuse and _about(ranges, zones, s, e, done):
+            continue
+        out.append(_Planned(s, e, classify(_context(doc, s, e, spans))
+                            or None, table_index_at(spans, s), reuse.get(i)))
+    return out
 
 
-def _coalesce_tables(planned: list[_Planned]) -> list[_Planned]:
+def _table_balloons(com: str, doc: str, tspans: list[tuple[int, int]],
+                    done: set[str], generic: str | None,
+                    ) -> set[tuple[int, str | None]]:
+    """``(table, reason)`` of every balloon in `done` anchored in a table,
+    the reason None where it is the generic one — the key
+    :func:`_coalesce_tables` coalesces on.
+
+    A re-run skips the one cell of each table that carries the table's
+    balloon, so without these the NEXT cell was the first of its kind
+    and got one: `annotate` twice on LI7 added 10 balloons, then 4 more,
+    one table at a time (2026-10-24)."""
+    texts = {m.group(2): " ".join(visible_text(m.group(3)).split())
+             for m in _COMMENT_RE.finditer(com) if m.group(2) in done}
+    out: set[tuple[int, str | None]] = set()
+    for r in _ranges(doc):
+        table = table_index_at(tspans, r.start)
+        if r.cid in texts and table is not None:
+            text = texts[r.cid]
+            out.add((table, None if text in (generic, GENERIC) else text))
+    return out
+
+
+def _coalesce_tables(planned: list[_Planned],
+                     seen: set[tuple[int, str | None]] | None = None,
+                     ) -> list[_Planned]:
     """Keep one comment per distinct text per table; leave prose alone.
 
     Word emits a separate revision for every changed CELL, so a
@@ -279,8 +478,11 @@ def _coalesce_tables(planned: list[_Planned]) -> list[_Planned]:
 
     Prose is never coalesced. Two paragraphs answering the same referee
     point are two places the reader has to be shown.
+
+    `seen` holds the ``(table, reason)`` balloons already written
+    (:func:`_table_balloons`).
     """
-    seen: set[tuple[int, str | None]] = set()
+    seen = set(seen or ())
     kept = []
     for entry in planned:
         if entry.table is None:
@@ -289,6 +491,29 @@ def _coalesce_tables(planned: list[_Planned]) -> list[_Planned]:
         key = (entry.table, entry.comment)
         if key not in seen:
             seen.add(key)
+            kept.append(entry)
+    return kept
+
+
+def _coalesce_zones(doc: str, planned: list[_Planned]) -> list[_Planned]:
+    """One balloon per equation per reason.
+
+    Every span touching an equation is anchored round the WHOLE equation
+    (`_outside_math`), so the spans of one equation shared one range and
+    each wrote a balloon on it: 20 of LI7's equations carried stacks of
+    3 to 25 identical balloons (review of 2026-10-24). Spans with
+    different reasons keep one each — they say different things."""
+    zones = _math_zones(doc)
+    seen: set[tuple[int, int, str | None]] = set()
+    kept = []
+    for entry in planned:
+        lo, hi = _outside_math(zones, entry.start, entry.end)
+        if not any(z_lo < entry.end and entry.start < z_hi
+                   for z_lo, z_hi in zones):
+            kept.append(entry)              # touches no equation
+            continue
+        if (lo, hi, entry.comment) not in seen:
+            seen.add((lo, hi, entry.comment))
             kept.append(entry)
     return kept
 
@@ -305,10 +530,19 @@ class _Scaffold(NamedTuple):
     template: str
     next_id: int
     date_utc: str | None
+    #: the "annotation reference" style's id (:func:`_reference_style`)
+    style: str = "CommentReference"
 
     @classmethod
     def read(cls, parts: Parts) -> _Scaffold:
-        com = parts[COMMENTS].decode("utf-8")
+        blob = parts.get(COMMENTS)
+        if blob is None:
+            # named, not a KeyError: `add_at`, and the advice that points
+            # at it, met a comment-less package that way (2026-10-24)
+            raise ScaffoldMissing(
+                "the package has no comments part - Word must create at "
+                "least one comment before the XML pass can clone it")
+        com = blob.decode("utf-8")
         # A comment WITH content: an empty one has no paragraph to carry
         # the new text, and read as an open tag it cloned as two.
         tm = re.search(r"<w:comment [^>]*(?<!/)>.*?</w:comment>", com,
@@ -320,26 +554,38 @@ class _Scaffold(NamedTuple):
         extensible = parts.get("word/commentsExtensible.xml", b"")
         utc = re.search(r'w16cex:dateUtc="([^"]+)"',
                         extensible.decode("utf-8") or "")
+        style = _reference_style(parts)
+        # `default`: `\d+` reads no id from a comment `w:id="-1"`, and
+        # `max` of nothing raised ValueError out of `has_scaffold`, which
+        # promises a bool (review of 2026-10-24)
+        ids = [int(i) for i in COMMENT_ID_RE.findall(com)]
         return cls(
             comments_xml=com,
-            template=_plain(tm.group(0)),
-            next_id=1 + max(int(i) for i in COMMENT_ID_RE.findall(com)),
-            date_utc=utc.group(1) if utc else None)
+            template=_plain(tm.group(0), style),
+            next_id=1 + max(ids, default=-1),
+            date_utc=utc.group(1) if utc else None,
+            style=style)
 
 
-def _decide(planned: list[_Planned],
-            generic: str | None) -> list[tuple[int, int, str]]:
-    """Settle each revision's final text, dropping what stays bare.
+def _decide(planned: Sequence[_Planned], generic: str | None,
+            ) -> tuple[list[_Decided], set[str]]:
+    """Settle each revision's final text: ``(balloons, comments to drop)``.
 
     Resolving the fallback once here rather than at each insertion is what
     lets `generic=None` mean "leave it uncommented" without the write step
-    having to know about it. An EMPTY answer is no answer: `''` became
-    "Revision (unclassified)" under `generic=None`, the one outcome the
-    flag exists to prevent, while the build counted it classified.
+    having to know about it. An EMPTY answer is no answer, and an empty
+    `generic` is None: `''` became "Revision (unclassified)" under
+    `generic=None`, the one outcome the flag exists to prevent, while
+    the build counted it classified. A revision left bare whose balloon
+    was an existing comment drops that comment.
     """
-    return [(p.start, p.end, p.comment or generic or GENERIC)
-            for p in planned
-            if p.comment or generic is not None]
+    keep, drop = [], set()
+    for p in planned:
+        if text := p.comment or generic:
+            keep.append(_Decided(p.start, p.end, text, p.cid))
+        elif p.cid is not None:
+            drop.add(p.cid)
+    return keep, drop
 
 
 class Credit(NamedTuple):
@@ -372,7 +618,8 @@ def _outside_math(zones: list[tuple[int, int]], start: int,
     return start, end
 
 
-def _place(doc: str, anchors: Sequence[tuple[int, int, int]]) -> str:
+def _place(doc: str, anchors: Sequence[tuple[int, int, int]],
+           style: str = "CommentReference") -> str:
     """`doc` with each ``(start, end, cid)`` comment range written in.
 
     In ONE ascending pass over every insertion point rather than back
@@ -384,7 +631,7 @@ def _place(doc: str, anchors: Sequence[tuple[int, int, int]]) -> str:
     events: list[tuple[int, int, int, str]] = []
     for n, (at_start, at_end, cid) in enumerate(anchors):
         start, end = _outside_math(zones, at_start, at_end)
-        open_tag, close_tag = _anchor(cid)
+        open_tag, close_tag = _anchor(cid, style)
         # at one offset: a range that ENDS there closes before one opens
         events += [(start, 1, n, open_tag), (end, 0, -n, close_tag)]
     out, at = [], 0
@@ -394,59 +641,146 @@ def _place(doc: str, anchors: Sequence[tuple[int, int, int]]) -> str:
     return "".join(out) + doc[at:]
 
 
-def _write(parts: Parts, doc: str,
-           decided: list[tuple[int, int, str]],
+_SIDE_PARTS = (("word/commentsExtended.xml", "</w15:commentsEx>"),
+               ("word/commentsIds.xml", "</w16cid:commentsIds>"),
+               ("word/commentsExtensible.xml",
+                "</w16cex:commentsExtensible>"))
+
+
+def _write(parts: Parts, doc: str, decided: Sequence[_Decided],
            scaffold: _Scaffold, *, credit: Credit | None = None,
-           extra: Sequence[tuple[int, int, int]] = ()) -> list[str]:
-    """Anchor each comment in the body and add its four part entries;
-    returns the new comment ids.
+           ) -> list[str]:
+    """THE writer: every balloon this module puts in a package is
+    written here, by `annotate`, `annotate_blocks` and `add_at` alike.
+    Returns the ids written, in `decided`'s order.
 
-    `credit` restamps every new comment's author, initials and date.
-    Without it a clone is credited to whoever wrote the comment it was
-    cloned from — Word's user for a seed, a referee when theirs came
-    first. `extra` anchors ``(start, end, id)`` for comments that are
-    already defined, in the same pass."""
-    elements, exts, ids, exls = [], [], [], []
-    anchors = list(extra)
+    The two comment paths each held guards the other lacked, and their
+    fixes kept adding guards to one path or the other (reviews of
+    2026-10-14 and 2026-10-24). So every guard is here, once:
+
+    * the range goes round the equation a span touches (`_place`), and
+      the re-run questions are asked of that range (:func:`_about`);
+    * paraIds and durableIds are fresh, and in the range `_ours` reads
+      (:class:`_Minted`) — an existing comment that becomes a balloon
+      is given one too, so it is found again as one;
+    * `credit` is on every new comment and every reused one — author,
+      initials, ``w:date``, and the ``dateUtc`` beside it, which a
+      restamp left as it was. Without it a clone is credited to whoever
+      wrote the comment it was cloned from;
+    * ``document.xml`` minus the anchors written must be `doc` byte for
+      byte, or nothing is written: the tracked views and the revision
+      counts are then unchanged by construction.
+    """
+    minted = _Minted(parts)
+    com = scaffold.comments_xml
+    side = {name: parts[name].decode("utf-8")
+            for name, _close in _SIDE_PARTS if name in parts}
+    adds: dict[str, list[str]] = {name: [] for name, _close in _SIDE_PARTS}
+    elements, anchors, written = [], [], []
     date_utc = credit.date if credit else scaffold.date_utc
-    for i, (start, end, comment) in enumerate(decided):
-        cid = scaffold.next_id + i
-        para_id = f"{_PARA_ID_BASE + cid:08X}"
-        durable = f"{_DURABLE_ID_BASE + cid:08X}"
-        anchors.append((start, end, cid))
-        element = _clone_comment(scaffold.template, cid, para_id, comment)
-        if credit:
-            element = _stamp(element, credit)
-        elements.append(element)
-        exts.append(f'<w15:commentEx w15:paraId="{para_id}" w15:done="0"/>')
-        ids.append(f'<w16cid:commentId w16cid:paraId="{para_id}" '
-                   f'w16cid:durableId="{durable}"/>')
-        if date_utc:
-            exls.append('<w16cex:commentExtensible w16cex:durableId='
-                        f'"{durable}" w16cex:dateUtc="{date_utc}"/>')
-    doc = _place(doc, anchors)
-
-    parts[DOCUMENT] = doc.encode("utf-8")
+    next_id = scaffold.next_id
+    for d in decided:
+        if d.cid is not None:
+            cid = int(d.cid)
+            com = _set_comment_text(com, d.cid, d.text)
+            com = _remint(com, side, d.cid, minted)
+            if credit:
+                com = _restamp(com, {d.cid}, credit)
+                _set_date_utc(com, side, d.cid, credit.date)
+        else:
+            cid, next_id = next_id, next_id + 1
+            para_id, durable = minted.take(cid)
+            element = _clone_comment(scaffold.template, cid, para_id, d.text)
+            if credit:
+                element = _stamp(element, credit)
+            elements.append(element)
+            adds["word/commentsExtended.xml"].append(
+                f'<w15:commentEx w15:paraId="{para_id}" w15:done="0"/>')
+            adds["word/commentsIds.xml"].append(
+                f'<w16cid:commentId w16cid:paraId="{para_id}" '
+                f'w16cid:durableId="{durable}"/>')
+            if date_utc:
+                adds["word/commentsExtensible.xml"].append(
+                    '<w16cex:commentExtensible w16cex:durableId='
+                    f'"{durable}" w16cex:dateUtc="{date_utc}"/>')
+        anchors.append((d.start, d.end, cid))
+        written.append(str(cid))
+    placed = _place(doc, anchors, scaffold.style)
+    bare = placed
+    for _start, _end, cid in anchors:
+        open_tag, close_tag = _anchor(cid, scaffold.style)
+        bare = bare.replace(open_tag, "", 1).replace(close_tag, "", 1)
+    if bare != doc:
+        raise PackageError("annotating changed document.xml beyond its "
+                           "comment anchors; nothing was written")
+    parts[DOCUMENT] = placed.encode("utf-8")
     parts[COMMENTS] = _append_before_close(
-        scaffold.comments_xml, "</w:comments>",
-        "".join(elements)).encode("utf-8")
+        com, "</w:comments>", "".join(elements)).encode("utf-8")
     # The three side parts must stay in step with comments.xml or Word
     # reports unreadable content.
-    for name, close, add in (
-            ("word/commentsExtended.xml", "</w15:commentsEx>", exts),
-            ("word/commentsIds.xml", "</w16cid:commentsIds>", ids),
-            ("word/commentsExtensible.xml", "</w16cex:commentsExtensible>",
-             exls)):
-        if name in parts and add:
+    for name, close in _SIDE_PARTS:
+        if name in side:
             parts[name] = _append_before_close(
-                parts[name].decode("utf-8"), close, "".join(add)
-            ).encode("utf-8")
-    return [str(scaffold.next_id + i) for i in range(len(decided))]
+                side[name], close, "".join(adds[name])).encode("utf-8")
+    return written
+
+
+def _remint(com: str, side: dict[str, str], cid: str,
+            minted: _Minted) -> str:
+    """Comment `cid` given one of this package's paraIds, everywhere it
+    is keyed by its old one; `side` is changed in place."""
+    m = re.search(rf'<w:comment\b[^>]*\bw:id="{cid}"[^>]*(?<!/)>.*?'
+                  r"</w:comment>", com, re.DOTALL)
+    if m is None or not (old := _PARA_ID_RE.findall(m.group(0))):
+        return com
+    if all(_ours(pid) for pid in old):
+        return com
+    new, _durable = minted.take(int(cid))
+    # the LAST paragraph's: the one the side parts key the comment by
+    last = old[-1]
+    element = m.group(0).replace(f'paraId="{last}"', f'paraId="{new}"')
+    for name in ("word/commentsExtended.xml", "word/commentsIds.xml"):
+        if name in side:
+            side[name] = side[name].replace(f'paraId="{last}"',
+                                            f'paraId="{new}"')
+    return com[:m.start()] + element + com[m.end():]
+
+
+def _set_date_utc(com: str, side: dict[str, str], cid: str,
+                  date: str) -> None:
+    """Comment `cid`'s ``dateUtc`` set to `date`, beside its ``w:date``."""
+    m = re.search(rf'<w:comment\b[^>]*\bw:id="{cid}"[^>]*(?<!/)>.*?'
+                  r"</w:comment>", com, re.DOTALL)
+    pids = _PARA_ID_RE.findall(m.group(0)) if m else []
+    ids = side.get("word/commentsIds.xml", "")
+    if not pids or "word/commentsExtensible.xml" not in side:
+        return
+    dm = re.search(rf'<w16cid:commentId\b(?=[^>]*\bw16cid:paraId='
+                   rf'"{pids[-1]}")[^>]*\bw16cid:durableId="([0-9A-Fa-f]+)"',
+                   ids)
+    if dm is None:
+        return
+    durable = f'w16cex:durableId="{dm.group(1)}"'
+
+    def dated(tag: re.Match[str]) -> str:
+        if durable not in tag.group(0):
+            return tag.group(0)
+        return _DATE_UTC_RE.sub(_constant(f'w16cex:dateUtc="{date}"'),
+                                tag.group(0))
+
+    side["word/commentsExtensible.xml"] = _EXTENSIBLE_RE.sub(
+        dated, side["word/commentsExtensible.xml"])
+
+
+_EXTENSIBLE_RE = re.compile(r"<w16cex:commentExtensible\b[^>]*/>")
+_DATE_UTC_RE = re.compile(r'\bw16cex:dateUtc="[^"]*"')
 
 
 def _stamp(element: str, credit: Credit) -> str:
     """A comment element's open tag credited to `credit`, whatever it
-    carried; an attribute it lacks is added."""
+    carried; an attribute it lacks is added. Either quote: an attribute
+    another producer wrote in single quotes was not found and written a
+    second time, which no parser accepts (review of 2026-10-24)."""
     head = re.match(r"<w:comment\b[^>]*?(/?)>", element)
     assert head is not None
     tag = head.group(0)
@@ -455,7 +789,8 @@ def _stamp(element: str, credit: Credit) -> str:
                         ("w:date", credit.date)):
         attr = f'{name}="{escape_attr(value)}"'
         # a function, not a template: a backslash in a name is not a group
-        tag, found = re.subn(rf'\b{name}="[^"]*"', _constant(attr), tag)
+        tag, found = re.subn(rf'\b{name}=(?:"[^"]*"|\'[^\']*\')',
+                             _constant(attr), tag)
         if not found:
             cut = len(tag) - len(head.group(1)) - 1
             tag = f"{tag[:cut]} {attr}{tag[cut:]}"
@@ -500,26 +835,56 @@ def annotate(parts: Parts,
     ``credit`` restamps the new comments' author, initials and date (see
     :func:`_write`).
 
-    Idempotent: revisions that already carry an anchor are skipped.
+    Idempotent: a revision already carrying a balloon this package wrote
+    — by `credit`'s author, when given — or one of the markers
+    (`GENERIC`, `SCAFFOLD`, `generic`) is skipped, asked of the range the
+    balloon is written on (:func:`_about`). A comment a PERSON wrote
+    near a revision does not count: the revision still gets its reason.
     """
+    return _annotate(parts, classify, generic=generic, tables=tables,
+                     credit=credit, reuse={})
+
+
+def _annotate(parts: Parts,
+              classify: Callable[[RevisionContext], str | None], *,
+              generic: str | None, tables: str, credit: Credit | None,
+              reuse: dict[int, str]) -> tuple[int, int]:
+    """:func:`annotate`, with `reuse`: span index -> an existing comment
+    whose anchors are already gone, which becomes that span's balloon
+    with the text decided here — or is removed, when nothing is (the
+    classified build's Word-made comments, `tracked._comment_pass`)."""
     if tables not in (COALESCE, ALL):
         raise ValueError(f"tables must be {COALESCE!r} or {ALL!r}, "
                          f"not {tables!r}")
+    generic = generic or None
     doc = parts[DOCUMENT].decode("utf-8")
     scaffold = _Scaffold.read(parts)
+    com = scaffold.comments_xml
+    markers = {SCAFFOLD, GENERIC, *([generic] if generic else [])}
+    done = _ours_by(com, credit.author if credit else None) | {
+        m.group(2) for m in _COMMENT_RE.finditer(com)
+        if " ".join(visible_text(m.group(3)).split()) in markers}
 
-    planned = _plan(doc, classify, table_spans(doc))
+    tspans = table_spans(doc)
+    planned = _plan(doc, classify, tspans, done=done, reuse=reuse)
+    kept = _coalesce_zones(doc, planned)
     if tables == COALESCE:
-        planned = _coalesce_tables(planned)
+        kept = _coalesce_tables(kept, _table_balloons(com, doc, tspans,
+                                                      done, generic))
+    dropped = {p.cid for p in planned if p not in kept and p.cid}
+    planned = kept
     unclassified = sum(1 for p in planned if not p.comment)
-    decided = _decide(planned, generic)
+    decided, bare = _decide(planned, generic)
 
     _write(parts, doc, decided, scaffold, credit=credit)
-    return len(decided), unclassified
+    if gone := (bare | dropped) - {d.cid for d in decided}:
+        remove(parts, {cid for cid in gone if cid is not None})
+    # ADDED: a comment Word made and this pass re-decided was there before
+    return sum(1 for d in decided if d.cid is None), unclassified
 
 
 def add_at(parts: Parts, anchor: str, comment: str, *,
-           normalize: bool = True) -> int:
+           normalize: bool = True, credit: Credit | None = None) -> int:
     """Comment the paragraph containing `anchor`. Returns its comment id.
 
     :func:`annotate` can only reach text that a revision touched, so a
@@ -535,6 +900,10 @@ def add_at(parts: Parts, anchor: str, comment: str, *,
 
     Like the rest of this module it needs Word's own comment scaffold
     already in the package (see :class:`_Scaffold`).
+
+    ``credit`` is who the balloon is from (see :func:`_write`). Without
+    it the balloon is credited to whoever wrote the comment it is cloned
+    from — a referee's, when theirs comes first in the package.
     """
     doc = parts[DOCUMENT].decode("utf-8")
     fold = normalize_glyphs if normalize else (lambda s: s)
@@ -564,8 +933,9 @@ def add_at(parts: Parts, anchor: str, comment: str, *,
     end = para.end() - len("</w:p>")
 
     scaffold = _Scaffold.read(parts)
-    _write(parts, doc, [(start, end, comment)], scaffold)
-    return scaffold.next_id
+    (cid,) = _write(parts, doc, [_Decided(start, end, comment)], scaffold,
+                    credit=credit)
+    return int(cid)
 
 
 Block = tuple[Sequence[int], str]
@@ -586,8 +956,9 @@ def annotate_blocks(parts: Parts, blocks: Iterable[Block], *, author: str,
     cannot silently miss a change: Word splits one edit into many
     fragments (a merged paragraph is a dozen ins/del pairs, a rebuilt
     table hundreds), and the caller groups them. Anchored by span INDEX
-    rather than by searching near the text, because `_already_anchored`
-    misses a comment Word made, whose range spans a whole group.
+    rather than by searching near the text, because a comment Word made
+    has a range spanning a whole group, which no nearness test reads as
+    one span's.
 
     `reuse` names a comment already in ``comments.xml`` with no anchor,
     the one Word made on a seeded copy; it becomes the first block's
@@ -601,60 +972,60 @@ def annotate_blocks(parts: Parts, blocks: Iterable[Block], *, author: str,
 
     Refuses as well, before anything is anchored (review of 2026-10-14):
 
-    * when a span already carries a balloon credited to `author` — a
-      second run would put the stale and the corrected reason side by
-      side on every change and report a clean count;
-    * when the package holds revisions NO block can name: property-only
-      changes, moves and paragraph marks in a paragraph (or a table row)
-      with no span, and every revision outside ``document.xml``.
-      HPPA's own script covered such a change with :func:`add_at`, and
-      this function had promised full coverage over 58 ``rPrChange``
-      and 91 ``pPrChange`` it could not see. ``partial=True`` accepts
-      that the balloons explain the spans only.
+    * when a span already carries a balloon this package wrote for
+      `author` — a second run would put the stale and the corrected
+      reason side by side on every change and report a clean count;
+    * when the package holds revisions NO block can name
+      (:func:`_unreachable`): property-only changes, moves and paragraph
+      marks in a paragraph (or a table row) with no span, and every
+      revision outside ``document.xml``. HPPA's own script covered such
+      a change with :func:`add_at`, and this function had promised full
+      coverage over 58 ``rPrChange`` and 91 ``pPrChange`` it could not
+      see. ``partial=True`` accepts that the balloons explain the spans
+      only.
 
     `date` is the new comments' ``w:date`` (UTC, ISO 8601), now when
     omitted.
     """
+    doc = parts[DOCUMENT].decode("utf-8")
+    spans = _revisions.spans(doc)
+    ordered = _check_blocks(parts, blocks, author=author, partial=partial)
+    credit = Credit(author, initials, date or _now())
+    decided = [_Decided(*spans[i], text,
+                        reuse if reuse is not None and n == 0 else None)
+               for n, (i, text) in enumerate(ordered)]
+    return _write(parts, doc, decided, _Scaffold.read(parts), credit=credit)
+
+
+def _check_blocks(parts: Parts, blocks: Iterable[Block], *, author: str,
+                  partial: bool = False) -> list[tuple[int, str]]:
+    """Every refusal :func:`annotate_blocks` makes, without writing:
+    ``(first span, comment)`` per block, in document order.
+
+    Apart, so a caller can ask BEFORE it pays for anything — the Word
+    seed `tracked.annotate_in_place` starts for a package with no
+    comment to clone was paid for, and then the coverage refusal came
+    (review of 2026-10-24)."""
     blocks = [(list(indices), text) for indices, text in blocks]
-    work = dict(parts)
-    before = work[DOCUMENT]
-    doc = before.decode("utf-8")
+    doc = parts[DOCUMENT].decode("utf-8")
     spans = _revisions.spans(doc)
     ordered = _cover(blocks, len(spans))
-    if commented := _commented_spans(work, doc, spans, author):
+    if commented := _commented_spans(parts, doc, spans, author):
         raise AnchorError(
             f"{len(commented)} span(s) already carry a comment by "
             f"{author!r} (comment(s) {', '.join(commented[:8])}): this was "
             f"annotated before. Remove those comments first "
             f"(docxkit.comments.remove) to replace them; nothing was "
             f"written")
-    if not partial and (unreachable := _unreachable(work, doc, spans)):
+    if not partial and (unreached := _unreachable(parts)):
         raise AnchorError(
-            "no block can name " + "; ".join(unreachable) + ". Comment "
-            "those with docxkit.comments.add_at, or pass partial=True to "
-            "explain the spans only; nothing was written")
-    credit = Credit(author, initials, date or _now())
-    pre: list[tuple[int, int, int]] = []
-    added: list[str] = []
-    if reuse is not None:
-        first, text = ordered.pop(0)
-        com = _set_comment_text(work[COMMENTS].decode("utf-8"), reuse, text)
-        work[COMMENTS] = _restamp(com, {reuse}, credit).encode("utf-8")
-        pre.append((*spans[first], int(reuse)))
-        added.append(reuse)
-    scaffold = _Scaffold.read(work)
-    added += _write(work, doc, [(*spans[i], text) for i, text in ordered],
-                    scaffold, credit=credit, extra=pre)
-
-    doc = work[DOCUMENT].decode("utf-8")
-    for cid in added:
-        open_tag, close_tag = _anchor(int(cid))
-        doc = doc.replace(open_tag, "", 1).replace(close_tag, "", 1)
-    if doc.encode("utf-8") != before:
-        raise PackageError("annotating changed document.xml beyond its "
-                           "comment anchors; nothing was written")
-    parts.update(work)
-    return added
+            "no block can name " + "; ".join(unreached) + ". No balloon "
+            "anchored on a revision span can explain those; pass "
+            "partial=True to explain the spans only (and, if a change "
+            "needs a reason of its own, add it afterwards with "
+            "docxkit.comments.add_at, which anchors on text); nothing was "
+            "written")
+    return ordered
 
 
 def _now() -> str:
@@ -664,42 +1035,70 @@ def _now() -> str:
 
 def _commented_spans(parts: Parts, doc: str, spans: list[tuple[int, int]],
                      author: str) -> list[str]:
-    """Ids of the comments by `author` whose range opens on a span."""
-    starts = {start for start, _end in spans}
-    mine = {m.group(2) for m in _COMMENT_HEAD_RE.finditer(
-        parts.get(COMMENTS, b"").decode("utf-8"))
-        if (who := re.search(r'\bw:author="([^"]*)"', m.group(0)))
-        and who.group(1) == escape_attr(author)}
-    found = []
-    for cid in sorted(mine, key=int):
-        if m := _anchor_re("commentRangeStart", cid).search(doc):
-            # past this and any other range opening at the same place;
-            # a pattern of `*` always matches
-            more = _RANGE_STARTS_RE.match(doc, m.end())
-            if m.end() + (len(more.group(0)) if more else 0) in starts:
-                found.append(cid)
-    return found
+    """Ids of the balloons this package wrote for `author` that are
+    anchored on a span (:func:`_about`).
+
+    The author's NAME alone was the test, and an author annotating their
+    own file has typed comments under it: one on an inserted phrase was
+    "annotated before" and refused (review of 2026-10-24). Compared
+    unescaped, so ``O&apos;Brien`` is O'Brien however it is spelled."""
+    mine = _ours_by(parts.get(COMMENTS, b"").decode("utf-8"), author)
+    if not mine:
+        return []
+    zones, ranges = _math_zones(doc), _ranges(doc)
+    found: set[str] = set()
+    for start, end in spans:
+        found.update(_about(ranges, zones, start, end, mine))
+    return sorted(found, key=int)
 
 
 # a comment's open tag, empty or not; group 2 is its id
 _COMMENT_HEAD_RE = re.compile(
     r'<w:comment\b([^>]*?)\bw:id="(\d+)"[^>]*?(/?)>')
-_RANGE_STARTS_RE = re.compile(r"(?:<w:commentRangeStart\b[^>]*/>)*")
+_P_TAG_RE = P_TAG_RE
+#: The parts a revision can sit in that no span of ``document.xml``
+#: reaches: the notes `text_parts` names, and headers, footers and the
+#: comments themselves, which it does not.
+_OTHER_STORY_RE = re.compile(
+    r"word/(?:footnotes|endnotes|comments|header\d*|footer\d*)\.xml")
 
 
-def _unreachable(parts: Parts, doc: str,
-                 spans: list[tuple[int, int]]) -> list[str]:
-    """What carries a revision no block can name, said in words."""
+def _paragraph_spans(doc: str) -> list[tuple[int, int]]:
+    """Every ``w:p``'s ``(start, end)``, nested ones included, depth-
+    counted: a lazy pairing ends a paragraph holding a text box at the
+    box's first inner ``</w:p>``."""
+    out: list[tuple[int, int]] = []
+    stack: list[int] = []
+    for m in _P_TAG_RE.finditer(doc):
+        if m.group(0) == "</w:p>":
+            if stack:
+                out.append((stack.pop(), m.end()))
+        elif m.group(1) != "/":
+            stack.append(m.start())
+    return out
+
+
+def _unreachable(parts: Parts) -> list[str]:
+    """What carries a revision no span of ``document.xml`` reaches, in
+    words: other stories, and paragraphs or rows changed with no span.
+
+    Every story is read, as the docstring had promised and the code had
+    not — a tracked change in a header passed as covered — and a
+    paragraph is measured whole: one holding a text box was cut at the
+    box's first paragraph, so a span after the box was "no span" and a
+    valid block table was refused (review of 2026-10-24)."""
+    doc = parts[DOCUMENT].decode("utf-8")
+    spans = _revisions.spans(doc)
     found = [f"{sum(kinds.values())} revision(s) in {name} "
              f"({', '.join(sorted(kinds))})"
-             for name, xml in text_parts(parts) if name != DOCUMENT
-             if (kinds := _revisions.revision_kinds(xml))]
+             for name in sorted(parts) if _OTHER_STORY_RE.fullmatch(name)
+             if (kinds := _revisions.revision_kinds(
+                 parts[name].decode("utf-8", "replace")))]
     starts = [start for start, _end in spans]
-    holders = sorted([m.span() for m in PARA_RE.finditer(doc)]
-                     + element_spans(doc, "tr"),
+    holders = sorted(_paragraph_spans(doc) + element_spans(doc, "tr"),
                      key=lambda span: span[1] - span[0])
 
-    def in_span(at: int) -> bool:
+    def in_a_span(at: int) -> bool:
         i = bisect_right(starts, at) - 1
         return i >= 0 and at < spans[i][1]
 
@@ -709,7 +1108,7 @@ def _unreachable(parts: Parts, doc: str,
 
     bare: dict[tuple[int, int], set[str]] = {}
     for m in _revisions.REVISION_RE.finditer(doc):
-        if in_span(m.start()):
+        if in_a_span(m.start()):
             continue
         # the innermost paragraph, else row, that holds it
         box = next(((lo, hi) for lo, hi in holders
@@ -726,13 +1125,17 @@ def _unreachable(parts: Parts, doc: str,
 
 def _cover(blocks: Sequence[Block], n: int) -> list[tuple[int, str]]:
     """``(first span, comment)`` per block, in document order — once
-    every span 0..n-1 is in exactly one block."""
+    every span 0..n-1 is in exactly one block, and every block says
+    something: a reason of no words was written as an empty balloon
+    and counted (review of 2026-10-24)."""
     if n == 0:
         raise AnchorError("the document carries no revision to comment")
     owner: dict[int, int] = {}
-    for b, (indices, _text) in enumerate(blocks):
+    for b, (indices, text) in enumerate(blocks):
         if not indices:
             raise AnchorError(f"block {b} names no span")
+        if not text.strip():
+            raise AnchorError(f"block {b} gives no reason")
         for i in indices:
             if not 0 <= i < n:
                 raise AnchorError(f"block {b} names span {i}; the document "
@@ -750,7 +1153,7 @@ def has_scaffold(parts: Parts) -> bool:
     """Does `parts` carry a Word-made comment this module can clone?"""
     try:
         _Scaffold.read(parts)
-    except (KeyError, ScaffoldMissing):
+    except ScaffoldMissing:
         return False
     return True
 
@@ -788,30 +1191,42 @@ def reclassify(parts: Parts,
 
     With ``generic=None`` there is no marker to look for — unmatched revisions
     were left uncommented rather than given a placeholder — so there is nothing
-    to repair.
+    to repair; nor with ``''``.
+
+    A comment is the marker when its WHOLE text is — never when the
+    marker appears in it: as a substring, ``''`` matched every comment
+    in the package and a referee's query that quoted "Revision
+    (unclassified)" was rewritten with the rest (review of 2026-10-24).
+    The classifier is shown the comment's RANGE — what it explains —
+    and not the empty marker tag, which gave it no text and a window
+    ending before the revision.
     """
-    if generic is None:
+    if not generic:
         return 0, []
     doc = parts[DOCUMENT].decode("utf-8")
     com = parts[COMMENTS].decode("utf-8")
+    marker = " ".join(generic.split())
     stale = [m.group(2) for m in _COMMENT_RE.finditer(com)
-             if generic in delta_text(m.group(3))]
+             if " ".join(visible_text(m.group(3)).split()) == marker]
     if not stale:
         return 0, []
 
     spans = table_spans(doc)
+    ranges = {r.cid: r for r in _ranges(doc)}
     done, still = 0, []
     for cid in stale:
-        # anchor on the range START, not the reference run: for a revision
-        # spanning a table row Word puts the reference past the table,
-        # which would classify it by the following paragraph. Either
-        # anchor in any spelling (`_anchor_re`).
-        m = (_anchor_re("commentRangeStart", cid).search(doc)
-             or _anchor_re("commentReference", cid).search(doc))
-        if not m:
+        # the range, not the reference run: for a revision spanning a
+        # table row Word puts the reference past the table, which would
+        # classify it by the following paragraph. Either anchor in any
+        # spelling (`_anchor_re`).
+        if (r := ranges.get(cid)) is not None:
+            start, end = r.start, r.end
+        elif m := _anchor_re("commentReference", cid).search(doc):
+            start, end = m.start(), m.end()
+        else:
             still.append(cid)
             continue
-        new = classify(_context(doc, m.start(), m.end(), spans))
+        new = classify(_context(doc, start, end, spans))
         if not new:                     # '' is no answer either
             still.append(cid)
         else:
