@@ -20,6 +20,7 @@ from docxkit.tables import (
     by_caption,
     clone_row,
     find,
+    keep_together,
     parse_number,
     read_all,
     reorder_rows,
@@ -1357,6 +1358,64 @@ def test_clone_row_copies_the_row_BELOW_itself_with_its_formatting():
 
     assert out.count('w:fill="D9D9D9"') == 2
     assert [r[0] for r in read_all(out)[0].rows] == ["UZB", "UZB"]
+
+
+def test_clone_row_gives_the_copy_NO_ids_or_anchors_of_the_original():
+    """A verbatim copy defined the row's bookmark twice and pointed a
+    second marker at one comment and one footnote; its paragraphs
+    repeated the original's `w14:paraId` (BiH elderly poverty, Table 2,
+    2026-10-27, stripped by hand). The original keeps every one."""
+    cell = ('<w:p w14:paraId="1A2B3C4D" w14:textId="77777777">'
+            '<w:bookmarkStart w:id="5" w:name="RowUZB"/>'
+            '<w:commentRangeStart w:id="2"/>'
+            + run("UZB")
+            + '<w:commentRangeEnd w:id="2"/>'
+            '<w:r><w:commentReference w:id="2"/></w:r>'
+            '<w:r><w:footnoteReference w:id="3"/></w:r>'
+            '<w:bookmarkEnd w:id="5"/></w:p>')
+    xml = document(para(run("Table 1. By country"))
+                   + f"<w:tbl><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl>")
+
+    out = clone_row(xml, read_all(xml)[0], 0, count=2)
+
+    assert [r[0] for r in read_all(out)[0].rows] == ["UZB"] * 3
+    for once in ('w14:paraId="1A2B3C4D"', 'w14:textId="77777777"',
+                 'w:name="RowUZB"', '<w:bookmarkEnd w:id="5"/>',
+                 '<w:commentRangeStart w:id="2"/>',
+                 '<w:commentRangeEnd w:id="2"/>',
+                 '<w:commentReference w:id="2"/>',
+                 '<w:footnoteReference w:id="3"/>'):
+        assert out.count(once) == 1, once
+
+
+def test_keep_together_ties_every_row_but_the_LAST_to_the_next():
+    """A row added at the foot of a table that just fitted landed alone
+    on the next page, without its header (BiH elderly poverty, Table 2,
+    2026-10-27). Flagging the LAST row too would tie the table to the
+    paragraph after it."""
+    xml = _countries()
+    t = read_all(xml)[0]
+
+    out, n = keep_together(xml, t, caption="Table 1. By country")
+
+    rows = [r.group(0) for r in _table_core.rows_of(
+        out[read_all(out)[0].start:read_all(out)[0].end])]
+    assert ["<w:keepNext/>" in r for r in rows] == [True] * 4 + [False]
+    assert n == 2 * 4 + 1          # two cells a row, and the caption
+    assert out.index("<w:keepNext/>") < out.index("<w:tbl>")
+    again, m = keep_together(out, read_all(out)[0],
+                             caption="Table 1. By country")
+    assert (again, m) == (out, 0)
+
+
+def test_keep_together_refuses_a_tracked_table():
+    xml = document(para(run("Table 1. By country"))
+                   + table(row("Country", "Score"),
+                           "<w:tr><w:tc>" + para(ins("UZB")) + "</w:tc>"
+                           "<w:tc>" + para(run("1.0")) + "</w:tc></w:tr>"))
+
+    with pytest.raises(AnchorError, match="tracked"):
+        keep_together(xml, read_all(xml)[0])
 
 
 def test_clone_row_makes_a_BLOCK_when_asked_for_several():

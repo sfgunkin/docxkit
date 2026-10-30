@@ -361,6 +361,17 @@ def test_bottom_border_survives_every_table_shape(table_doc):
     assert visible_text(out) == visible_text(table_doc)
 
 
+def test_keep_together_survives_every_table_shape(table_doc):
+    t = tables.read_all(table_doc)[0]
+    try:
+        out, _ = tables.keep_together(table_doc, t)
+    except Exception as exc:
+        assert "tracked" in str(exc), exc
+        return
+    parses(out)
+    assert visible_text(out) == visible_text(table_doc)
+
+
 def test_superscript_stars_survives_every_table_shape(table_doc):
     t = tables.read_all(table_doc)[0]
     try:

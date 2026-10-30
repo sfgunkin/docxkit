@@ -166,6 +166,7 @@ def test_the_table_mutators_hold_their_invariants(xml):
     t = read[0]
     for fn in (lambda d, tb: tables.fit_columns(d, tb)[0],
                lambda d, tb: tables.bottom_border(d, tb)[0],
+               lambda d, tb: tables.keep_together(d, tb)[0],
                lambda d, tb: tables.superscript_stars(d, tb)[0]):
         try:
             out = fn(xml, t)

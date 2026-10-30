@@ -22,6 +22,7 @@ from typing import Any, Literal, NamedTuple, overload
 
 from ._report import no_truth
 from ._xml import (
+    _MARKER_TAG_RE,
     PARA_RE,
     RUN_RE,
     _own_children,
@@ -1387,6 +1388,29 @@ def reorder_rows(xml: str, table: Table, key: Callable[[list[str]], Any], *,
     return out
 
 
+#: What a COPY of a row must not repeat: the range markers
+#: (`_xml._MARKER_TAG_RE`) and the runs holding a reference. Each anchor
+#: names something that exists once — a bookmark, a comment's range, a
+#: note — so a verbatim copy defines the name twice, or points a second
+#: marker at one comment or note: cloning a paragraph six times on DSI took
+#: 11 comment ranges to 17 against 11 comments, and Word reported
+#: unreadable content.
+_COPY_REF_RE = re.compile(
+    r"<w:(?:commentReference|footnoteReference|endnoteReference)\b")
+#: The paragraph ids, which Word does tolerate twice — 26 of 1,863 corpus
+#: manuscripts carry a duplicate, several saved by Word itself (measured
+#: 2026-10-31) — so they are dropped from the copy, for Word to mint on
+#: save, rather than linted.
+_COPY_ID_RE = re.compile(r'\s+w14:(?:paraId|textId)="[^"]*"')
+
+
+def _as_copy(tr: str) -> str:
+    """Row markup `tr` as a NEW row: no ids or anchors of the original's."""
+    tr = _MARKER_TAG_RE.sub("", _COPY_ID_RE.sub("", tr))
+    return RUN_RE.sub(
+        lambda m: "" if _COPY_REF_RE.search(m.group(0)) else m.group(0), tr)
+
+
 def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
     """Copy row `index` `count` times, immediately after it.
 
@@ -1399,6 +1423,13 @@ def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
     The copy carries the source row's TEXT too. Fill it with
     :func:`set_row`, which is why that takes a whole row of values: a
     cloned row half-filled is the old numbers under a new label.
+
+    It does NOT carry what names the original: the copy's paragraphs lose
+    their ``w14:paraId``/``w14:textId`` (Word mints new ones on save), and
+    its bookmarks, comment ranges, comment marks and footnote or endnote
+    marks are dropped. Copied verbatim they were duplicates — a bookmark
+    defined twice, a second marker for one comment or note — and the
+    caller stripped them by hand (BiH elderly poverty, 2026-10-27).
 
     Negative `index` counts from the bottom, so ``clone_row(t, -1,
     count=4)`` is the block above spelled without counting the rows.
@@ -1413,7 +1444,7 @@ def clone_row(xml: str, table: Table, index: int, *, count: int = 1) -> str:
     trs = [tr.group(0) for tr in rows_of(body)]
     index = _row_at(table, len(trs), index, "clone")
     rows = list(trs)
-    rows[index] = trs[index] * (count + 1)
+    rows[index] = trs[index] + _as_copy(trs[index]) * count
     return _rows_replaced(xml, table, rows)
 
 

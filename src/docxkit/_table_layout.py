@@ -2008,3 +2008,46 @@ def _keep_with_table(xml: str, caption: str) -> tuple[str, bool]:
     if new == para:
         return xml, False
     return xml[:hits[0].start()] + new + xml[hits[0].end():], True
+
+
+def keep_together(xml: str, table: Table, *,
+                  caption: str | None = None) -> tuple[str, int]:
+    """Keep `table` on one page: ``keepNext`` on every row but the LAST.
+
+    Word has no table-level switch for this. What it honours is
+    ``keepNext`` on the paragraphs of each row, which ties the row to the
+    one below, so the flag goes on every paragraph of every row except the
+    last; flagging the last would tie the table to the paragraph after
+    it. `caption` (as in :func:`house`) gets ``keepNext`` too.
+
+    For a table that FITS on a page and had stopped fitting where it
+    stood: a row added at the foot of Table 2 put that row alone on the
+    next page, without its header, and no gate saw it — the caller
+    flagged the rows by hand (BiH elderly poverty, 2026-10-27). A table
+    longer than a page cannot be kept together, and Word breaks it
+    anyway. Rows can still break INSIDE themselves; :func:`house` sets
+    ``cantSplit``.
+
+    Returns (xml, paragraphs changed); idempotent. Refuses a table with
+    tracked changes, like every mutator here.
+    """
+    table = _fresh(xml, table, "keep_together")
+    body = xml[table.start:table.end]
+    if _has_revisions(body):
+        raise AnchorError(
+            f"table {table.index} contains tracked changes - keep the "
+            f"clean build together and rebuild the redline from it")
+    changed = 0
+    for tr in reversed(list(rows_of(body))[:-1]):
+        row = tr.group(0)
+        for p in reversed(list(PARA_RE.finditer(row))):
+            new = set_para_property(p.group(0), "keepNext", "<w:keepNext/>")
+            if new != p.group(0):
+                changed += 1
+                row = row[:p.start()] + new + row[p.end():]
+        body = body[:tr.start()] + row + body[tr.end():]
+    out = xml[:table.start] + body + xml[table.end:]
+    if caption is not None:
+        out, kept = _keep_with_table(out, caption)
+        changed += kept
+    return out, changed

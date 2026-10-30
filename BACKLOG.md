@@ -48,6 +48,44 @@ already fixed, and the batch was ordered off the stale list.
 
 ## Open
 
+### `tables.clone_row` copies the row's `w14:paraId`/`w14:textId` — the document then holds duplicates
+<!-- status: open -->
+
+Found 2026-10-27 (BiH elderly poverty, `D:\bih_elderly_replication\paper\make_corrected.py`,
+Table 2 row added). `clone_row` repeats the source `<w:tr>` verbatim, so every
+paragraph in the copy carries the same `w14:paraId` as its original. Word wants
+these unique (a duplicated anchor is the "unreadable content" shape in the
+house notes on cloning paragraphs). The caller stripped the attributes from the
+new row by hand and checked 569/569 unique.
+
+Fix: drop `w14:paraId`/`w14:textId` from the copies inside `clone_row` (Word
+mints new ones on save), and add a lint check for duplicate paraIds in a part.
+
+A second, related point: a row added at the foot of a table can push it across
+a page break, leaving the new row alone on the next page without its header. No
+gate sees this (the "table pagination has no gate" house note). The caller set
+`keepNext` on every row but the last. A `keep_together(xml, table)` helper would
+make that one call.
+
+### `link_all` matches a particle surname case-sensitively — "van der Linden 2015" never meets "Van der Linden"
+<!-- status: open -->
+
+Found 2026-10-25 (Misconceptions, `do/W21_jbee_ingest.py`). The entry
+"Van der Linden, S. (2015)." parses with surname `Van der Linden`; the
+text cites "(van der Linden 2015)", as the English convention has it
+mid-sentence. `link_all(parts, only=["Linden2015", ...])` linked the
+other three works it was asked for and said nothing about this one —
+not `unmatched`, not `skipped`: the in-text scanner, built from the
+entries' surnames (`_patterns_for`), never produced a candidate, so
+there was nothing to report. The audit then still showed it UNLINKED
+and REF WITHOUT CITE. W21 hand-wires it.
+
+Fix: match the entries' surnames with a case-insensitive LEADING
+particle (van/von/de/der/den/du/la/le…), and keep the citation's own
+spelling as the label. Also: a work named in `only=` that ends the pass
+with no link and no finding should be reported, since the caller
+listed it because it was broken.
+
 ### S4 — four tests fail by ORDER in a full run under a one-module `--cov`
 <!-- status: open -->
 

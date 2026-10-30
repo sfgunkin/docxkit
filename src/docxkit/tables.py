@@ -74,6 +74,7 @@ from ._table_layout import fit_columns as fit_columns
 from ._table_layout import house as house
 from ._table_layout import house_ppr as house_ppr
 from ._table_layout import house_rpr as house_rpr
+from ._table_layout import keep_together as keep_together
 from ._table_layout import plan_booktabs as plan_booktabs
 from ._table_layout import regrid as regrid
 from ._table_layout import set_decimals as set_decimals
@@ -100,6 +101,7 @@ __all__ = [
     "house",
     "house_ppr",
     "house_rpr",
+    "keep_together",
     "parse_number",
     "plan_booktabs",
     "read_all",
