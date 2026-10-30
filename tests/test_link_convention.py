@@ -98,3 +98,52 @@ def test_only_still_reads_the_whole_reference_BLOCK():
     tail = doc[doc.index("Ravallion, M. (2016)"):]
     assert "<w:hyperlink" not in tail, \
         "the reference entry itself was linked as if it were prose"
+
+
+def _linden(mark: str = "") -> dict[str, bytes]:
+    """Misconceptions' shape: a particle surname, cited lower-case, and
+    an entry that may already carry the paper's own `Linden2015`."""
+    entry = ("Van der Linden, S. (2015). The social-psychological "
+             "determinants of climate change risk perceptions. Journal of "
+             "Environmental Psychology.")
+    body = (para(run("Concern is social (van der Linden 2015), and so is "
+                     "poverty (Kanbur 2007).")),
+            para(run("References")),
+            para(run("Kanbur, R. (2007). Poverty and distribution. "
+                     "Journal of Development Economics.")),
+            para(mark + run(entry)))
+    return make_parts("".join(body))
+
+
+_LINDEN_MARK = ('<w:bookmarkStart w:id="7" w:name="Linden2015"/>'
+                '<w:bookmarkEnd w:id="7"/>')
+
+
+def test_a_particle_surname_is_selected_by_its_CORE_and_year():
+    """`only=["Linden2015"]` selected nothing and said nothing, so the
+    paper hand-wired it (Misconceptions W21, 2026-10-25). The key drops
+    the particles, as citation keys usually do."""
+    parts = _linden()
+    report = link_all(parts, only=["Linden2015"])
+
+    assert len(report.linked) == 1 and not report.skipped
+    assert "VanderLinden2015txt" in _bookmarks(parts)
+
+
+def test_a_particle_surname_ADOPTS_the_entrys_own_core_named_bookmark():
+    """With only «vanderlinden» to compare, the entry's `Linden2015`
+    was not recognised as its own, and a whole-document pass minted
+    `VanderLinden2015` beside it."""
+    parts = _linden(_LINDEN_MARK)
+    link_all(parts)
+
+    names = _bookmarks(parts)
+    assert {"Linden2015", "Linden2015txt"} <= names
+    assert not any(n.startswith("VanderLinden") for n in names)
+
+
+def test_only_REPORTS_a_name_that_selects_no_entry():
+    parts = _linden()
+    report = link_all(parts, only=["Linden2015", "Nobody1999"])
+
+    assert report.skipped == ["only: 'Nobody1999' names no reference entry"]

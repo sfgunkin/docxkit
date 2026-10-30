@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, replace
 from ._cite_audit import _BOOKMARK_NAME_RE, _KEY_SHAPE_RE, _name_runs
 from ._cite_grammar import (
     _DEFAULT_HEADINGS,
+    _LEAD,
     _REF_YEAR_RE,
     IGNORED_LEADS,
     Reference,
@@ -131,11 +132,7 @@ def _own_bookmark(para_xml: str, r: Reference, before: str = "") -> str | None:
     search safe: a marker hoisted out of the PREVIOUS entry cannot match
     this one.
     """
-    # BOTH stems: the current one, and the strip-only stem earlier runs minted.
-    # A document linked before _ascii_stem existed carries «Aczl1966», and
-    # recognising only «Aczel» would orphan it and mint a second marker.
-    stems = {_ascii_stem(r.surname).casefold(),
-             re.sub(r"[^0-9A-Za-z]", "", r.surname).casefold()}
+    stems = _stems(r)
     names: list[str] = _BOOKMARK_NAME_RE.findall(before + para_xml)
     for n in names:
         km = _KEY_SHAPE_RE.match(n)
@@ -187,10 +184,33 @@ def _foreign_bookmark(names: list[str], r: Reference,
     return None
 
 
+#: The particles a surname may OPEN on, in either case: the entry says
+#: "Van der Linden", the text "van der Linden", and a key often drops them.
+_LEADING_PARTICLES_RE = re.compile(rf"^(?:(?:{_LEAD}|della)\s+)+",
+                                   re.IGNORECASE)
+
+
 def _stems(r: Reference) -> set[str]:
-    """The two spellings a bookmark may file this work's surname under."""
-    return {_ascii_stem(r.surname).casefold(),
-            re.sub(r"[^0-9A-Za-z]", "", r.surname).casefold()}
+    """The spellings a bookmark may file this work's surname under.
+
+    BOTH stems: the current one, and the strip-only stem earlier runs
+    minted. A document linked before `_ascii_stem` existed carries
+    «Aczl1966», and recognising only «Aczel» would orphan it and mint a
+    second marker.
+
+    And each of them for the surname WITHOUT its leading particles too.
+    Misconceptions files "Van der Linden, S. (2015)" as ``Linden2015``,
+    the usual citation-key habit, and with only «vanderlinden» to go on
+    the entry's own bookmark was not recognised: a whole-document pass
+    minted a second one beside it, and ``only=["Linden2015"]`` selected
+    nothing and said nothing (BACKLOG, 2026-10-25; filed as a case
+    mismatch, which it was not — "Van" and "van" fail alike).
+    """
+    out: set[str] = set()
+    for name in {r.surname, _LEADING_PARTICLES_RE.sub("", r.surname)}:
+        out |= {_ascii_stem(name).casefold(),
+                re.sub(r"[^0-9A-Za-z]", "", name).casefold()}
+    return out
 
 
 def _names_work(name: str, r: Reference, stems: set[str]) -> bool:
@@ -566,13 +586,19 @@ def _bookmark_names(entries: list[Reference],
 
 def _wanted(only: Collection[str] | None, entries: list[Reference],
             names: dict[int, str]) -> set[str] | None:
-    """The keys `only` selects — by key, surname or bookmark name."""
+    """The keys `only` selects — by key, surname or bookmark name.
+
+    A bookmark name in the document's convention counts whether or not
+    the entry carries it yet: ``Linden2015`` selects "Van der Linden, S.
+    (2015)" by its stem and year, as the name `link_all` would adopt.
+    """
     if only is None:
         return None
     asked = {str(o).casefold() for o in only}
     return {r.key for r in entries
-            if {r.key.casefold(), r.surname.casefold(),
-                names[r.index].casefold()} & asked}
+            if ({r.key.casefold(), r.surname.casefold(),
+                 names[r.index].casefold()}
+                | {s + r.year for s in _stems(r)}) & asked}
 
 
 def _plan_notes(notes: dict[str, str],
@@ -870,6 +896,12 @@ def link_all(parts: Parts, *,
     # is WRITTEN, not what is understood, and the block's bounds below
     # are what tell an entry from a sentence.
     wanted = _wanted(only, entries, names)
+    # A work named in `only` and matching no entry was dropped without a
+    # word: the caller listed it BECAUSE it is broken, and "linked 3"
+    # read as success for the other three (Misconceptions W21).
+    report.skipped += [f"only: {o!r} names no reference entry"
+                       for o in (only or ())
+                       if not _wanted([o], entries, names)]
 
     # First mentions: body prose (outside the reference block), then
     # footnotes. Planned per paragraph, applied bottom-up so earlier
