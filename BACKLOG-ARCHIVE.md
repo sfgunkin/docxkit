@@ -14,6 +14,189 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 — four tests fail by ORDER in a full run under a one-module `--cov`~~ — FIXED 31.10, `0f1f8ef`
+
+<!-- status: fixed -->
+
+Found 2026-10-24 while measuring a coverage floor by hand. At `21636d2`
+(and with the step-3 lock work on top) this run fails four tests every
+time:
+
+    pytest -q -p no:cacheprovider -n 8 --cov=docxkit.revision._baseline --cov-branch tests
+
+`test_pending_working::test_a_clean_working_file_REACHES_the_comparison`
+(`ModuleNotFoundError: import of pythoncom halted; None in sys.modules`),
+`test_comments_in_place::test_a_change_beyond_the_anchors_is_REFUSED_and_nothing_written`
+("DID NOT RAISE PackageError"), and the two lock-faking tests in
+`test_revision_batch_deletions.py` ("DID NOT RAISE DocumentLocked").
+Each passes alone, and `tools/gates.py`'s own pytest run passes them all,
+so no gate is red. The lock tests fake Word by monkeypatching
+`guard.sha256` and `package.is_locked` on the module objects they
+imported; a "DID NOT RAISE" there says the code under test reached a
+DIFFERENT object, i.e. something in the same worker left a module
+replaced or a `None` in `sys.modules` (conftest's pywin32 stub at
+`conftest.py:385` uses `monkeypatch.setitem`, so it is not obviously
+that). Workaround: measure floors with `tools/gates.py` or on the
+module's harness, not on the whole folder with a one-module `--cov`.
+
+**Narrowed 2026-10-24, not yet fixed.** A probe test in that run read
+`tracked._comments is docxkit.comments` as **False**: the code and the
+tests hold two different `docxkit.comments` module objects, so a
+`monkeypatch` on the test's copy never reaches the code (the lock tests'
+fakes, the leaky `_write`). A pytest plugin recording identity at every
+test boundary saw NO swap during any test, so the second object exists
+before a worker's first test. It reproduces only under xdist with a
+ONE-module `--cov`: serially, collecting the whole suite and running the
+probe, identity holds, and with `--cov=docxkit` (the gates) it holds
+too. Suspect: pytest-cov starting coverage in each worker with a module
+`source`, whose spec lookup imports `docxkit` and `docxkit.revision`
+before the worker has its `pythonpath` — not proved. (The leaky-write
+test it also broke led to the `_write` regression entry, fixed.)
+
+Then, the same day: it reproduces with `-n 1` as well, and with
+`--collect-only`; pytest-randomly is not installed (the plugins are
+benchmark, cov, timeout, xdist). In the worker, at `pytest_sessionstart`
+nothing of docxkit is loaded; by `pytest_collection_finish` `tracked`
+holds a `comments` that is not `sys.modules["docxkit.comments"]`, and a
+`pytest_collectreport` watcher puts the break at the FIRST module whose
+collection loads `docxkit.tracked` (`tests/test_api_surface.py`). A
+bare `importlib.util.find_spec("docxkit.revision._baseline")` imports
+the whole package, which coverage does for a module `source`. Nothing in
+`tests/` removes a docxkit module from `sys.modules` (every use was
+read). So `docxkit.comments` is executed twice during collection under
+these flags, and the next step is to log every `docxkit.comments`
+module CREATION (an import hook) in that worker and read who triggered
+the second.
+
+**Fixed 2026-10-31 (traced on coverage 7.16.2, pytest-cov, xdist).**
+An import hook logged each creation of `docxkit.comments`. During one
+worker's collection it was created five times. Every time, the cause
+was the same: `coverage.inorout.set_matchers_depending_on_syspath`,
+which runs again whenever `sys.path` changes. For each `--cov` source
+package it calls `importlib.util.find_spec`, inside
+`sys_modules_saved()`.
+
+* While `docxkit` itself is not loaded, that lookup creates the whole
+  chain and discards it, which does no harm.
+* Once `docxkit` IS loaded and `docxkit.revision` is not, the lookup
+  imports `revision`, and with it `tracked` and `comments` (via
+  `revision/__init__` → `_build` → `tracked`). It then removes them
+  from `sys.modules`. Meanwhile, the modules that survive keep their
+  references to the discarded copies.
+
+The next real `import docxkit.comments` builds a fresh module, so
+`tracked._comments` and `sys.modules["docxkit.comments"]` are two
+different objects. A test's monkeypatch then lands on the copy the
+code under test does not call.
+
+`--cov=docxkit` (the gates) never shows it, because `find_spec` on a
+top-level name imports nothing. A module below `docxkit.revision`
+does.
+
+Fix: `tests/conftest.py` imports `docxkit.revision` whole, straight
+after it puts `src` on the path, so every later lookup finds the chain
+already loaded and discards nothing. It loads no pywin32.
+
+`test_import_cost.py::test_every_docxkit_module_refers_to_the_LOADED_copy_of_another`
+states the invariant directly: no docxkit module holds a docxkit
+module that `sys.modules` does not. `test_the_split_check_would_notice_a_discarded_copy`
+shows the check can fail.
+
+Measured under `-n 8 --cov=docxkit.revision._baseline --cov-branch
+tests`:
+* with the fix, 9,633 passed;
+* with the fix reverted, 6 failed: the invariant plus the five
+  order-dependent tests (`test_pending_working` came back as the
+  fifth).
+
+### ~~`link_all` matches a particle surname case-sensitively — "van der Linden 2015" never meets "Van der Linden"~~ — FIXED 31.10, `f7192a8`
+
+<!-- status: fixed -->
+
+Found 2026-10-25 (Misconceptions, `do/W21_jbee_ingest.py`). The entry
+"Van der Linden, S. (2015)." parses with surname `Van der Linden`; the
+text cites "(van der Linden 2015)", as the English convention has it
+mid-sentence. `link_all(parts, only=["Linden2015", ...])` linked the
+other three works it was asked for and said nothing about this one —
+not `unmatched`, not `skipped`: the in-text scanner, built from the
+entries' surnames (`_patterns_for`), never produced a candidate, so
+there was nothing to report. The audit then still showed it UNLINKED
+and REF WITHOUT CITE. W21 hand-wires it.
+
+Fix: match the entries' surnames with a case-insensitive LEADING
+particle (van/von/de/der/den/du/la/le…), and keep the citation's own
+spelling as the label. Also: a work named in `only=` that ends the pass
+with no link and no finding should be reported, since the caller
+listed it because it was broken.
+
+**Fixed 2026-10-31. The heading's diagnosis was wrong.** Case never
+mattered: the scanner reads "(van der Linden 2015)" fine, and "Van" and
+"van" failed alike. What failed was the NAME. An entry's stems
+(`_stems`) were built from the full surname only, «vanderlinden», so:
+
+* `only=["Linden2015"]` selected no entry, and said nothing;
+* the entry's OWN `Linden2015` bookmark was not recognised as its own,
+  so a whole-document pass minted `VanderLinden2015` beside it. The
+  docstring promises never to do that.
+
+`_stems` now adds each spelling of the surname without its leading
+particles (`_LEAD` from the grammar, plus "della", in either case).
+`_wanted` accepts `<stem><year>` for every stem. And a name in `only`
+that selects no entry now goes to `report.skipped` as `only: 'X' names
+no reference entry`. That half of the original fix sketch still
+stood. Three tests in `test_link_convention.py` fail without the fix.
+
+Workaround NOT deleted: Misconceptions `revision/do/W21_jbee_ingest.py`
+hand-wires `Linden2015`, but W21 is a finished round whose output is
+already the paper's truth. Editing a closed round's script would
+rewrite its record, so it is left as it is. A new round should call
+`link_all(only=["Linden2015"])` and drop the hand-wire.
+
+### ~~`tables.clone_row` copies the row's `w14:paraId`/`w14:textId` — the document then holds duplicates~~ — FIXED 31.10, `74435fd`
+
+<!-- status: fixed -->
+
+Found 2026-10-27 (BiH elderly poverty, `D:\bih_elderly_replication\paper\make_corrected.py`,
+Table 2 row added). `clone_row` repeats the source `<w:tr>` verbatim, so every
+paragraph in the copy carries the same `w14:paraId` as its original. Word wants
+these unique (a duplicated anchor is the "unreadable content" shape in the
+house notes on cloning paragraphs). The caller stripped the attributes from the
+new row by hand and checked 569/569 unique.
+
+Fix: drop `w14:paraId`/`w14:textId` from the copies inside `clone_row` (Word
+mints new ones on save), and add a lint check for duplicate paraIds in a part.
+
+A second, related point: a row added at the foot of a table can push it across
+a page break, leaving the new row alone on the next page without its header. No
+gate sees this (the "table pagination has no gate" house note). The caller set
+`keepNext` on every row but the last. A `keep_together(xml, table)` helper would
+make that one call.
+
+**Fixed 2026-10-31.** The copies `clone_row` writes go through `_as_copy`:
+no `w14:paraId`/`w14:textId` (Word mints new ones on save), no range
+markers (`_xml._MARKER_TAG_RE`: bookmarks, comment ranges, permissions,
+proofing marks), and no runs that hold a comment, footnote or endnote
+reference. The original row keeps every one of them.
+`test_clone_row_gives_the_copy_NO_ids_or_anchors_of_the_original` fails
+without the fix.
+
+**The lint half was measured and dropped.** 26 of 1,863 manuscripts
+under `Papers` carry a duplicate paraId, all within one part, several
+of them saved by Word itself (Middle class, Misconceptions author
+edits). Word opens them, so a `lint` finding would refuse writes Word
+accepts, which is the S3 shape `audit`'s docstring records. Nothing
+was added to `audit` either: the duplicate has no effect anyone has
+seen.
+
+**The pagination half is `tables.keep_together(xml, table, caption=)`**:
+`keepNext` on every paragraph of every row except the last, idempotent,
+refuses a tracked table, and is in the property and pathological
+invariant suites.
+
+Workaround deleted: `D:\bih_elderly_replication\paper\make_corrected.py`
+now calls `clone_row` + `set_row` + `keep_together`, with no hand
+stripping. The rebuilt document is identical, part for part.
+
 ### ~~S2 — `comments._write` checked the body against the text it was HANDED, not the part~~ — FIXED 24.10, `c841316`
 
 <!-- status: fixed -->
