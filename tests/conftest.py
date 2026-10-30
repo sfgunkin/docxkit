@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import importlib
 import io
 import itertools
 import sys
@@ -42,6 +43,19 @@ if _SRC in sys.path:
 sys.path.insert(0, _SRC)
 
 import pytest  # noqa: E402
+
+# `docxkit.revision` imported WHOLE, before any test module imports part of
+# it. Under ``--cov=<a module below docxkit.revision>`` coverage re-resolves
+# that name each time `sys.path` changes, inside `sys_modules_saved()`: with
+# `docxkit` loaded and its `revision` not, the lookup imports `revision` —
+# and `tracked` and `comments` with it — then drops them from `sys.modules`,
+# while the surviving `docxkit` keeps them as ATTRIBUTES. `from docxkit
+# import tracked` then answers with the discarded copy, the next `import
+# docxkit.comments` builds a fresh one, and a monkeypatch lands on the copy
+# the code under test does not use: four tests failed by order (BACKLOG S4,
+# 2026-10-24; traced 2026-10-31 on coverage 7.16.2). Loaded here, every
+# later lookup finds it all in place and discards nothing.
+importlib.import_module("docxkit.revision")
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

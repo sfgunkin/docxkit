@@ -157,3 +157,49 @@ def test_the_collection_record_would_notice_pywin32():
     assert pywin32_loaded(["win32com.gen_py", "lxml.etree", "pythoncom",
                            "pywintypes", "docxkit.word"]) == [
         "pythoncom", "pywintypes", "win32com.gen_py"]
+
+
+def _split_modules(modules: dict[str, object]) -> list[str]:
+    """``holder -> module`` for each `docxkit` module that refers to a
+    `docxkit` module which is NOT the one `sys.modules` holds.
+
+    Read off every loaded module's globals, because that is where a
+    discarded copy survives: re-importing the module resets its package
+    ATTRIBUTE, so comparing the two sees nothing, while `tracked` goes on
+    calling the `comments` it was executed against.
+    """
+    import types
+    out = set()
+    for name, mod in modules.items():
+        if not name.startswith("docxkit") or mod is None:
+            continue
+        for value in vars(mod).values():
+            if (isinstance(value, types.ModuleType)
+                    and value.__name__.startswith("docxkit")
+                    and modules.get(value.__name__) is not value):
+                out.add(f"{name} -> {value.__name__}")
+    return sorted(out)
+
+
+def test_every_docxkit_module_refers_to_the_LOADED_copy_of_another():
+    """BACKLOG S4. Under ``--cov=docxkit.revision._baseline`` coverage
+    imported `docxkit.revision` inside `sys_modules_saved()` and threw
+    it away, while `docxkit` kept the discarded `tracked` and `comments`
+    as attributes; a fresh `docxkit.comments` was built beside them, and
+    four tests' monkeypatches landed on the copy the code did not use.
+    `conftest` now imports `docxkit.revision` whole, first. This states
+    the invariant those four tests depended on without saying so."""
+    assert _split_modules(dict(sys.modules)) == []
+
+
+def test_the_split_check_would_notice_a_discarded_copy():
+    import types
+    tracked, stale, fresh = (types.ModuleType(n) for n in (
+        "docxkit.tracked", "docxkit.comments", "docxkit.comments"))
+    tracked._comments = stale  # type: ignore[attr-defined]
+
+    assert _split_modules({"docxkit.tracked": tracked,
+                           "docxkit.comments": fresh}) == [
+        "docxkit.tracked -> docxkit.comments"]
+    assert _split_modules({"docxkit.tracked": tracked,
+                           "docxkit.comments": stale}) == []
