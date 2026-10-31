@@ -77,6 +77,138 @@ a fix that cannot change any real output and is its own entry, fixed.
    every paper on that drive and `init` ignores the False (not this
    machine's TEMP).
 
+**Processed 2026-10-31: measured, not reasoned.** Every `.docx` under
+`F:/OneDrive/__Documents`, `D:/Aging_AI_GDP`, `D:/bih_elderly_replication`
+and `D:/PaperAttic`: 3,418 files, 3,226 unique, **847 holding revisions**,
+2,282 accepted/rejected views of their text parts. A shape counts as met
+when a candidate fix CHANGES a view, and then Word's own Accept All /
+Reject All (read back through `Content.WordOpenXML`, nothing saved)
+decides which side is right.
+
+- **1 — still latent.** `numPr/w:ins` and `numPr/w:del`: 0 in 847.
+- **2 — still latent.** 17 `w:moveTo` hold a nested `w:ins`; 0 of them
+  holds a bookmark.
+- **3 — NOT a defect; the reasoning was wrong.** One real file has it
+  (`D:/PaperAttic/Parental_style/documents_superseded/ps5_r1_tracked.docx`):
+  counting `commentReference` as kept content keeps `fig1txt`, `fig2` on
+  accept and `Table1txt` + 3 `*txt` back-link targets on reject. **Word
+  drops all six**, as the engine does today; the "fix" would have made
+  both views wrong. A comment mark is not content Word keeps a bookmark
+  for. Do not re-derive this one.
+- **4 — still latent.** 19 flagged rows hold a bookmark marker; skipping a
+  dropped row's paragraphs in `_marks_between` changes 0 of 2,282 views.
+- **5 — fixed** (24.10, `bee928a`). **6 — fixed**, its own entry below.
+
+**The parent tally found what the review did not:** 5,640 `w:ins`/`w:del`
+in `m:ctrlPr` — the flag Word uses for a whole equation OBJECT — read by
+the engine as a wrapper. That one was real; see the entry below.
+
+**The first pass of this measurement measured nothing**, and said 0 for
+3 and 4 with full confidence: `_simulate_clean` is `lru_cache`d on the
+XML, so every patched re-run was served the unpatched view. See the S4
+entry on measuring a view change.
+
+### S2 — the rejected view keeps a math object Word tracks by a flag in its own `m:ctrlPr`
+<!-- status: open -->
+
+**Observed** 2026-10-31, processing the latent shapes above. An author who
+types a math object with tracking on — a subscript, a fraction, a
+delimiter — gets ONE flag from Word, in the object's own properties:
+`<m:sSubPr><m:ctrlPr><w:ins …><w:rPr/></w:ins></m:ctrlPr></m:sSubPr>`.
+Its runs carry no mark (HPPA2.docx: 104 runs inside flagged objects, 0
+marked). Word's Reject All removes the object whole. The engine read the
+flag as a wrapper round the `w:rPr`, removed the flag, kept the object.
+
+**Repro:** `revisions.reject` on
+`Papers/HPPA_Index/Documents/Archive/HPPA2.docx` → the rejected view
+holds `p_i` subscripts Word's does not. Measured with Word as the oracle
+on 8 sampled redlines: the rejected view diverged on 3 —
+`AFI/Report/afi_v11_ABLA.docx` (66 `sSub`, 17 `sSubSup`, 11 `nary`, 10
+`d`, 4 `f`, 15 equations Word removes), HPPA2 (26 `sSub`, 4 `d`, 4 `f`),
+`Poverty_lines_elderly/Literature/Minimum consumption basket for
+FBiH_v1.docx`. Accepted views agreed on all 8. 5,640 such flags in 104
+files; `numPr` was the flag parent the review guessed at and has 0.
+
+**Why it matters for the protocol:** a hand-back where the author typed
+an equation with tracking on gave a rejected view still containing it —
+gate 5 reads `reject-all == baseline` off that view.
+
+**Workaround:** none in any paper.
+
+**Fix:** `revisions._removed_with(el)` — the object whose `<obj>Pr/m:ctrlPr`
+holds the flag goes with it, in `_apply_content` and in
+`_doomed_bookmarks`' removed set. An argument's own `m:ctrlPr` (16 in
+ACC6_ARINA) flags no object and is still the flag alone — unmeasured
+against Word in isolation.
+
+### S2 — the rejected view prunes empty delimiter and fraction objects Word's Reject All keeps
+<!-- status: open -->
+
+**Observed** 2026-10-31, the one file of 20 still off Word after the
+`m:ctrlPr` fix: `Papers/_Accepted/CC_age_gap/Documents/ACC6_ARINA_07102024.docx`.
+Text is identical (Word merges four adjacent equations into one; their
+concatenated text is the engine's exactly), but Word's rejected body
+holds **4 `m:d` and 1 `m:f` with no glyph** that the engine's does not:
+`_prune_math` removes them, before and after the fix. A default `m:d`
+with nothing in it renders as `()`.
+
+`_prune_math`'s docstring rests on "Word's own AcceptAllRevisions prunes
+these" — true of ACCEPT on this corpus, and not of Reject All here. One
+file, one measurement; whether Word keeps every emptied shell on reject or
+only these (the merge region, its inserted prose rejected) is not known.
+
+**Repro:** scratch probe `arina_shells.py` (2026-10-31 session): Word
+Reject All → `Content.WordOpenXML`, count `m:d`/`m:f` with no `m:t` text,
+vs `revisions.reject`. **Workaround:** none. **Fix sketch:** measure first —
+Reject All over the 104 math-flagged redlines, glyphless objects by kind,
+both sides; then make the prune view-dependent if Word's rule is.
+
+### S4 — no tool measures what a view-engine change does over the corpus, and a hand-rolled one measures nothing
+<!-- status: open -->
+
+**Observed** 2026-10-31. "Measure a shape before changing a view" is this
+package's rule for `revisions`, and nothing implements it: the session
+hand-rolled four probes (candidate patch vs current over every redline;
+before/after view hashes; Word Accept/Reject All vs the engine's math;
+the same for bookmarks), ~300 lines in all. `tools/sweep.py` runs the
+readers and `tools/writer_oracle.py` the writers; neither compares a
+VIEW, and neither asks Word.
+
+**The trap that made it S4 rather than S4-cosmetic:** `_simulate_clean`
+is `lru_cache(maxsize=4)` on the XML, so a probe that monkeypatches the
+engine and re-runs `accept(xml)` gets the cached unpatched view. The
+first pass reported 0 changed views for latent shapes 3 and 4, and shape
+3 in fact changes two views of a real file. A probe must call
+`revisions._simulate_clean.cache_clear()` around every patched call.
+
+**Workaround:** the 2026-10-31 scratch probes (not committed).
+**Fix sketch:** `tools/view_oracle.py --base HEAD` — the writers' oracle
+for views: accept/reject of every text part of every redline under
+`DOCXKIT_CORPUS`, working tree vs a base commit (run in a worktree, so no
+cache and no monkeypatching), byte diff per view; `--word` adds Word's
+Accept All / Reject All read through `Content.WordOpenXML` for the files
+that moved, with math-object and bookmark profiles.
+
+### S1 — `revision init` reports success for a paper the registry refused
+<!-- status: open -->
+
+Latent shape 6 above. `_under_temp` counts a drive-root TEMP
+(`TEMP=D:\`) as TEMP for the whole drive — deliberately, since 14.10, and
+pinned by `test_a_DRIVE_ROOT_temp_still_refuses_a_scaffold`. On such a
+machine every paper on that drive is refused by `register`, and `init`
+dropped the False: "scaffolded …" printed, `status --all` never listed
+the paper, nothing said why. Not reproduced on this machine (its TEMP is
+`C:\Users\Ezhik\AppData\Local\Temp`); a code-path claim, settled by test.
+"Unregisters" in the review's wording was not right — `register` refuses,
+nothing is removed.
+
+**Fix:** `_registry.refusal(config)` decides the TEMP rule once;
+`register` uses it, and `cmd_revision_init` prints `NOT REGISTERED:` with
+the reason and the `DOCXKIT_PAPERS=<registry> … --scan` way round it.
+The drive-root rule itself is unchanged. `_vanished_scaffold` on such a
+machine still calls a missing config on that drive `leftover` (exit 0)
+rather than `missing` (2); unreachable for a paper `register` refused.
+
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 

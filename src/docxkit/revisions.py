@@ -281,7 +281,7 @@ def _doomed_bookmarks(root: _Element, tag: str,
         parent = el.getparent()
         if parent is not None and parent.tag not in _FLAG_PARENTS \
                 and wants(el, tag):
-            removed.update(el.iter(*_BOOKMARKED))
+            removed.update(_removed_with(el).iter(*_BOOKMARKED))
     if not removed:
         return []        # nothing goes, so nothing can go with it
 
@@ -490,6 +490,33 @@ def changed_paragraphs(before: str, after: str) -> list[ParagraphChange]:
                 before=old[i1 + k] if i1 + k < i2 else "",
                 after=new[j1 + k] if j1 + k < j2 else ""))
     return out
+
+
+def _removed_with(el: _Element) -> _Element:
+    """What goes when the revision `el` is removed: `el` itself, or the
+    equation OBJECT whose ``m:ctrlPr`` it sits in.
+
+    Word records a math object an author typed with tracking on — a
+    subscript, a fraction, a delimiter — as one flag in the object's own
+    properties, ``<m:sSubPr><m:ctrlPr><w:ins><w:rPr/></w:ins>``, and
+    leaves its runs unmarked; its Reject All then removes the object
+    whole. Read as a wrapper round that `w:rPr`, the flag alone went and
+    the object stayed: 66 subscripts and 15 equations in AFI's
+    `afi_v11_ABLA.docx` survived a rejection Word's did not (measured
+    with Word as the oracle, 2026-10-31). Only the flag in an object's
+    OWN properties (`m:sSub` / `m:sSubPr`); one in an argument's
+    ``m:ctrlPr`` flags no object and is still the flag alone.
+    """
+    ctrl = el.getparent()
+    if ctrl is None or ctrl.tag != MATH + "ctrlPr":
+        return el
+    props = ctrl.getparent()
+    owner = props.getparent() if props is not None else None
+    if (owner is None or props is None or not isinstance(owner.tag, str)
+            or _local(owner.tag) not in MATH_OBJECTS
+            or props.tag != owner.tag + "Pr"):
+        return el
+    return owner
 
 
 def _enclosing_math(el: _Element) -> _Element | None:
@@ -1055,11 +1082,12 @@ def _apply_content(root: _Element, vanish: tuple[str, ...],
             if selective and tag in ("moveFrom", "moveTo"):
                 continue               # moves are a pair; see accept()
             if wants(el, tag):
-                om = _enclosing_math(el)
+                gone = _removed_with(el)
+                om = _enclosing_math(gone)
                 if om is not None and not any(om is seen for seen in touched):
                     touched.append(om)
-                _lift_anchors(el)
-                _parent(el).remove(el)
+                _lift_anchors(gone)
+                _parent(gone).remove(gone)
     for tag in keep:
         for el in _content_elements(root, tag):
             if selective and tag in ("moveFrom", "moveTo"):
