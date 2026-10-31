@@ -246,6 +246,18 @@ committed that hour: a blank-cell fix that grew a run in EQUATION cells
 and printed the formula again as prose. A synthetic test of the reported
 case is not a measurement of the population it touches.
 
+For a change to the accept/reject VIEWS (`revisions`), run the views'
+oracle the same way, and let Word judge the files that moved:
+
+```
+python tools/view_oracle.py --base HEAD --word   # views + Word's verdict
+```
+
+Never measure a view change by monkeypatching the engine and calling
+`accept` again: `_simulate_clean` is cached on the XML and hands back
+the unpatched view. The first hand-rolled probe of 2026-10-31 reported
+zero changed views that way for a shape that changes two.
+
 For a change to an AUDIT, or to a reader an audit stands on
 (`parse_reference`, the citation grammar), record the findings at both
 versions and diff them:
