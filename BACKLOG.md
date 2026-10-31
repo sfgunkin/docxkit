@@ -97,49 +97,18 @@ decides which side is right.
   for. Do not re-derive this one.
 - **4 — still latent.** 19 flagged rows hold a bookmark marker; skipping a
   dropped row's paragraphs in `_marks_between` changes 0 of 2,282 views.
-- **5 — fixed** (24.10, `bee928a`). **6 — fixed**, its own entry below.
+- **5 — fixed** (24.10, `bee928a`). **6 — fixed** (31.10, `aae1399`),
+  its own entry in the archive.
 
 **The parent tally found what the review did not:** 5,640 `w:ins`/`w:del`
 in `m:ctrlPr` — the flag Word uses for a whole equation OBJECT — read by
-the engine as a wrapper. That one was real; see the entry below.
+the engine as a wrapper. That one was real: fixed 31.10, `1400f2f`, its
+entry in the archive.
 
 **The first pass of this measurement measured nothing**, and said 0 for
 3 and 4 with full confidence: `_simulate_clean` is `lru_cache`d on the
 XML, so every patched re-run was served the unpatched view. See the S4
 entry on measuring a view change.
-
-### S2 — the rejected view keeps a math object Word tracks by a flag in its own `m:ctrlPr`
-<!-- status: open -->
-
-**Observed** 2026-10-31, processing the latent shapes above. An author who
-types a math object with tracking on — a subscript, a fraction, a
-delimiter — gets ONE flag from Word, in the object's own properties:
-`<m:sSubPr><m:ctrlPr><w:ins …><w:rPr/></w:ins></m:ctrlPr></m:sSubPr>`.
-Its runs carry no mark (HPPA2.docx: 104 runs inside flagged objects, 0
-marked). Word's Reject All removes the object whole. The engine read the
-flag as a wrapper round the `w:rPr`, removed the flag, kept the object.
-
-**Repro:** `revisions.reject` on
-`Papers/HPPA_Index/Documents/Archive/HPPA2.docx` → the rejected view
-holds `p_i` subscripts Word's does not. Measured with Word as the oracle
-on 8 sampled redlines: the rejected view diverged on 3 —
-`AFI/Report/afi_v11_ABLA.docx` (66 `sSub`, 17 `sSubSup`, 11 `nary`, 10
-`d`, 4 `f`, 15 equations Word removes), HPPA2 (26 `sSub`, 4 `d`, 4 `f`),
-`Poverty_lines_elderly/Literature/Minimum consumption basket for
-FBiH_v1.docx`. Accepted views agreed on all 8. 5,640 such flags in 104
-files; `numPr` was the flag parent the review guessed at and has 0.
-
-**Why it matters for the protocol:** a hand-back where the author typed
-an equation with tracking on gave a rejected view still containing it —
-gate 5 reads `reject-all == baseline` off that view.
-
-**Workaround:** none in any paper.
-
-**Fix:** `revisions._removed_with(el)` — the object whose `<obj>Pr/m:ctrlPr`
-holds the flag goes with it, in `_apply_content` and in
-`_doomed_bookmarks`' removed set. An argument's own `m:ctrlPr` (16 in
-ACC6_ARINA) flags no object and is still the flag alone — unmeasured
-against Word in isolation.
 
 ### S2 — the rejected view prunes empty delimiter and fraction objects Word's Reject All keeps
 <!-- status: open -->
@@ -188,26 +157,6 @@ for views: accept/reject of every text part of every redline under
 cache and no monkeypatching), byte diff per view; `--word` adds Word's
 Accept All / Reject All read through `Content.WordOpenXML` for the files
 that moved, with math-object and bookmark profiles.
-
-### S1 — `revision init` reports success for a paper the registry refused
-<!-- status: open -->
-
-Latent shape 6 above. `_under_temp` counts a drive-root TEMP
-(`TEMP=D:\`) as TEMP for the whole drive — deliberately, since 14.10, and
-pinned by `test_a_DRIVE_ROOT_temp_still_refuses_a_scaffold`. On such a
-machine every paper on that drive is refused by `register`, and `init`
-dropped the False: "scaffolded …" printed, `status --all` never listed
-the paper, nothing said why. Not reproduced on this machine (its TEMP is
-`C:\Users\Ezhik\AppData\Local\Temp`); a code-path claim, settled by test.
-"Unregisters" in the review's wording was not right — `register` refuses,
-nothing is removed.
-
-**Fix:** `_registry.refusal(config)` decides the TEMP rule once;
-`register` uses it, and `cmd_revision_init` prints `NOT REGISTERED:` with
-the reason and the `DOCXKIT_PAPERS=<registry> … --scan` way round it.
-The drive-root rule itself is unchanged. `_vanished_scaffold` on such a
-machine still calls a missing config on that drive `leftover` (exit 0)
-rather than `missing` (2); unreachable for a paper `register` refused.
 
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
