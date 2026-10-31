@@ -557,7 +557,11 @@ def _has_glyph(el: _Element) -> bool:
     return any(t.text for t in el.iter(MATH + "t"))
 
 
-def _prune_math(maths: list[_Element]) -> None:
+#: What a REJECT prunes: empty math runs, and nothing structural.
+_REJECT_PRUNES = frozenset({"r"})
+
+
+def _prune_math(maths: list[_Element], *, mode: str) -> None:
     """Drop the empty skeletons a removed revision leaves behind.
 
     Deleting the runs inside a fraction leaves ``<m:f><m:num/><m:den/>
@@ -567,6 +571,18 @@ def _prune_math(maths: list[_Element]) -> None:
     prunes these, which is exactly why the fault only ever appeared on
     the XML path, and why it took a visual render to catch.
 
+    **Reject All does not** (measured 2026-10-31 with
+    `tools/view_oracle.py --word`, 831 redlines). Rejecting the runs an
+    author typed into an existing ``m:d`` or ``m:f`` leaves the object
+    standing in Word, glyphless — four ``()`` and a fraction box in
+    CC_age_gap's `ACC6_ARINA_07102024.docx`, which the engine pruned and
+    Word kept. So on reject only empty math RUNS go (``_REJECT_PRUNES``;
+    pruning nothing broke 45 files Word agrees with), and an equation
+    left with no glyph at all still goes whole in both views: keeping
+    those put the engine off Word in 94 files. An object Word records as
+    typed whole is a different case, and goes with its flag — see
+    :func:`_removed_with`.
+
     Only objects are pruned, never the slots they live in, and only
     inside equations a removal actually touched — a legitimately empty
     ``m:f`` elsewhere in the document is the author's business.
@@ -574,6 +590,7 @@ def _prune_math(maths: list[_Element]) -> None:
     Bottom-up, so a fraction emptied only by pruning its own children is
     seen as empty in the same pass.
     """
+    kinds = MATH_OBJECTS if mode == FINAL else _REJECT_PRUNES
     for om in maths:
         if om.getparent() is None:
             continue                       # a nested one, already dropped
@@ -586,7 +603,7 @@ def _prune_math(maths: list[_Element]) -> None:
             # AttributeError naming cython, raised at an author whose
             # manuscript is the thing that failed (2026-09-16). Neither
             # is an equation object, so neither is the prune's business.
-            if (isinstance(el.tag, str) and _local(el.tag) in MATH_OBJECTS
+            if (isinstance(el.tag, str) and _local(el.tag) in kinds
                     and not _has_glyph(el)):
                 _parent(el).remove(el)
         if _glyphs(om) != before:          # never possible; never silent
@@ -1192,7 +1209,7 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
             for el in list(root.iter(W + tag)):
                 _parent(el).remove(el)
     if touched:
-        _prune_math(touched)
+        _prune_math(touched, mode=mode)
     _apply_rows(root, vanish, keep, wants)
     _apply_marks(root, vanish, keep, wants)
 

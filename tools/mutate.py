@@ -265,8 +265,8 @@ MUTATIONS = [
     Mutation("revisions.py",
              "accepting a deletion leaves the emptied equation shell "
              "standing, as it did in the DSI paper",
-             "    if touched:\n        _prune_math(touched)",
-             "    if False:\n        _prune_math(touched)"),
+             "    if touched:\n        _prune_math(touched, mode=mode)",
+             "    if False:\n        _prune_math(touched, mode=mode)"),
     Mutation("revisions.py",
              "a deliberate U+00A0 spacer counts as an empty shell",
              "    return any(t.text for t in el.iter(MATH + \"t\"))",
