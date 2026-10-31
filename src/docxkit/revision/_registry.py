@@ -72,9 +72,9 @@ def register(config: str | Path) -> bool:
     registry is, as the suite's `_isolated_paper_registry` does.
     """
     config = Path(config).resolve()
-    if not os.environ.get(REGISTRY_ENV) and _under_temp(config):
+    if refusal(config):
         return False
-    known = {p.resolve() if p.is_absolute() else p for p in registered()}
+    known ={p.resolve() if p.is_absolute() else p for p in registered()}
     if config in known:
         return False
     path = registry_path()
@@ -86,6 +86,26 @@ def register(config: str | Path) -> bool:
                      "# One paper.toml per line; # comments one out.\n")
         fh.write(f"{config}\n")
     return True
+
+
+def refusal(config: str | Path) -> str:
+    """Why :func:`register` refuses `config`, or "" when it does not.
+
+    The one place the TEMP rule is decided, so the command that
+    registers a paper can SAY it did not. `init` dropped `register`'s
+    False, and on a machine whose TEMP is a drive root (`TEMP=D:\\`,
+    which still counts as TEMP — see :func:`_under_temp`) every paper
+    on that drive was scaffolded, reported as done, and absent from
+    `status --all`, with nothing on the screen to say why (latent shape
+    6 of the 2026-10-24 review).
+    """
+    if os.environ.get(REGISTRY_ENV) or not _under_temp(Path(config)):
+        return ""
+    return (f"it is under the system TEMP directory "
+            f"({tempfile.gettempdir()}), where a project is scratch, so it "
+            f"is NOT registered and `status --all` will not list it; to "
+            f"register it, set {REGISTRY_ENV}={registry_path()} and run "
+            f"`docxkit revision status --all --scan` on its folder")
 
 
 def scan(root: str | Path, *, depth: int = 4) -> list[Path]:

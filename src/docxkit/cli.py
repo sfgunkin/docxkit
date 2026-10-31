@@ -2351,6 +2351,7 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
 def cmd_revision_init(args: argparse.Namespace) -> int:
     """Scaffold the layout around a manuscript that has not migrated."""
     from .revision import _CONFIG, _DIR, init
+    from .revision._registry import refusal
     source = Path(args.source).resolve()
     root = Path(args.root).resolve() if args.root else source.parent
     # Asked BEFORE the call: afterwards the config exists either way, and
@@ -2360,6 +2361,11 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
                  name=args.name or "", author=args.author,
                  language=args.language, attic=args.attic, force=args.force)
     adopted = paper.working == source
+    # `init` registers the paper, and `register` refuses one under TEMP
+    # with a False that `init` has nowhere to put. Said here, under the
+    # first line, or the paper is scaffolded, reported done, and absent
+    # from `status --all` with nothing on screen to say why.
+    unlisted = refusal(paper.config)
 
     if rewrite:
         kept = paper.config.parent
@@ -2367,6 +2373,8 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
                                   f"{paper.config.suffix}")),
                        key=lambda p: p.stat().st_mtime)
         print(f"updated {paper.config}")
+        if unlisted:
+            print(f"  NOT REGISTERED: {unlisted}")
         print(f"  the paper   : {paper.working}")
         print("  only the keys you gave were rewritten; every other key, "
               "section\n  and comment is unchanged, and log.md and "
@@ -2385,6 +2393,8 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
         return 0
 
     print(f"scaffolded {paper.config.parent}")
+    if unlisted:
+        print(f"  NOT REGISTERED: {unlisted}")
     print(f"  the paper   : {paper.working}"
           f"{'  (adopted in place — not copied)' if adopted else ''}")
     print("  build/prev.docx (baseline, same bytes)")

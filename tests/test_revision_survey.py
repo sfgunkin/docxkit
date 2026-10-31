@@ -568,6 +568,48 @@ def test_a_DRIVE_ROOT_temp_still_refuses_a_scaffold(tmp_path, monkeypatch):
     assert registered() == []
 
 
+def test_init_SAYS_when_a_drive_root_TEMP_kept_the_paper_off_the_registry(
+        tmp_path, monkeypatch, capsys):
+    """Latent shape 6 of the 2026-10-24 review. With `TEMP=D:\\` every
+    paper on D: is under TEMP, `register` refuses it, and `init` dropped
+    that False: the paper was scaffolded, `init` printed success, and
+    `status --all` never listed it. The refusal is now on the screen,
+    with the way round it."""
+    from test_cli import run_cli
+    path = _real_registry(tmp_path, monkeypatch, temp=tmp_path.anchor)
+    (tmp_path / "papers" / "HCW").mkdir(parents=True)
+    src = write(tmp_path / "papers" / "HCW" / "hcw.docx",
+                make_parts(para(run("The paper."))))
+
+    code, _ = run_cli(monkeypatch, "revision", "init", str(src))
+    out = capsys.readouterr().out
+
+    assert code == 0 and registered() == [] and not path.exists()
+    assert "NOT REGISTERED" in out
+    assert "DOCXKIT_PAPERS" in out and str(path) in out
+
+    # and on the REWRITE path, which prints its own "updated" header
+    code, _ = run_cli(monkeypatch, "revision", "init", str(src), "--force",
+                      "--name", "HCW")
+    out = capsys.readouterr().out
+    assert code == 0 and out.startswith("updated ")
+    assert "NOT REGISTERED" in out and registered() == []
+
+
+def test_init_says_nothing_about_the_registry_when_it_DID_register(
+        tmp_path, monkeypatch, capsys):
+    from test_cli import run_cli
+    _real_registry(tmp_path, monkeypatch, temp=tmp_path / "temp")
+    (tmp_path / "papers" / "HCW").mkdir(parents=True)
+    src = write(tmp_path / "papers" / "HCW" / "hcw.docx",
+                make_parts(para(run("The paper."))))
+
+    run_cli(monkeypatch, "revision", "init", str(src))
+
+    assert "NOT REGISTERED" not in capsys.readouterr().out
+    assert len(registered()) == 1
+
+
 def test_the_registry_folder_is_CREATED_however_deep(tmp_path, monkeypatch):
     deep = tmp_path / "not" / "there" / "yet" / "papers.txt"
     monkeypatch.setenv("DOCXKIT_PAPERS", str(deep))
