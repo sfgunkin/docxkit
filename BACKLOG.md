@@ -107,56 +107,9 @@ entry in the archive.
 
 **The first pass of this measurement measured nothing**, and said 0 for
 3 and 4 with full confidence: `_simulate_clean` is `lru_cache`d on the
-XML, so every patched re-run was served the unpatched view. See the S4
-entry on measuring a view change.
-
-### S2 — the rejected view prunes empty delimiter and fraction objects Word's Reject All keeps
-<!-- status: open -->
-
-**Observed** 2026-10-31, the one file of 20 still off Word after the
-`m:ctrlPr` fix: `Papers/_Accepted/CC_age_gap/Documents/ACC6_ARINA_07102024.docx`.
-Text is identical (Word merges four adjacent equations into one; their
-concatenated text is the engine's exactly), but Word's rejected body
-holds **4 `m:d` and 1 `m:f` with no glyph** that the engine's does not:
-`_prune_math` removes them, before and after the fix. A default `m:d`
-with nothing in it renders as `()`.
-
-`_prune_math`'s docstring rests on "Word's own AcceptAllRevisions prunes
-these" — true of ACCEPT on this corpus, and not of Reject All here. One
-file, one measurement; whether Word keeps every emptied shell on reject or
-only these (the merge region, its inserted prose rejected) is not known.
-
-**Repro:** scratch probe `arina_shells.py` (2026-10-31 session): Word
-Reject All → `Content.WordOpenXML`, count `m:d`/`m:f` with no `m:t` text,
-vs `revisions.reject`. **Workaround:** none. **Fix sketch:** measure first —
-Reject All over the 104 math-flagged redlines, glyphless objects by kind,
-both sides; then make the prune view-dependent if Word's rule is.
-
-### S4 — no tool measures what a view-engine change does over the corpus, and a hand-rolled one measures nothing
-<!-- status: open -->
-
-**Observed** 2026-10-31. "Measure a shape before changing a view" is this
-package's rule for `revisions`, and nothing implements it: the session
-hand-rolled four probes (candidate patch vs current over every redline;
-before/after view hashes; Word Accept/Reject All vs the engine's math;
-the same for bookmarks), ~300 lines in all. `tools/sweep.py` runs the
-readers and `tools/writer_oracle.py` the writers; neither compares a
-VIEW, and neither asks Word.
-
-**The trap that made it S4 rather than S4-cosmetic:** `_simulate_clean`
-is `lru_cache(maxsize=4)` on the XML, so a probe that monkeypatches the
-engine and re-runs `accept(xml)` gets the cached unpatched view. The
-first pass reported 0 changed views for latent shapes 3 and 4, and shape
-3 in fact changes two views of a real file. A probe must call
-`revisions._simulate_clean.cache_clear()` around every patched call.
-
-**Workaround:** the 2026-10-31 scratch probes (not committed).
-**Fix sketch:** `tools/view_oracle.py --base HEAD` — the writers' oracle
-for views: accept/reject of every text part of every redline under
-`DOCXKIT_CORPUS`, working tree vs a base commit (run in a worktree, so no
-cache and no monkeypatching), byte diff per view; `--word` adds Word's
-Accept All / Reject All read through `Content.WordOpenXML` for the files
-that moved, with math-object and bookmark profiles.
+XML, so every patched re-run was served the unpatched view. The tool
+for it now is `tools/view_oracle.py` (archive: the S4 on measuring a
+view change).
 
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->

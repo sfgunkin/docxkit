@@ -14,6 +14,60 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 — the rejected view prunes empty delimiter and fraction objects Word's Reject All keeps~~ — FIXED 31.10, `c4efe81`
+
+<!-- status: fixed -->
+
+**Observed** 2026-10-31, the one file of 20 still off Word after the
+`m:ctrlPr` fix: `Papers/_Accepted/CC_age_gap/Documents/ACC6_ARINA_07102024.docx`.
+Text is identical (Word merges four adjacent equations into one; their
+concatenated text is the engine's exactly), but Word's rejected body
+holds **4 `m:d` and 1 `m:f` with no glyph** that the engine's does not:
+`_prune_math` removes them, before and after the fix. A default `m:d`
+with nothing in it renders as `()`.
+
+`_prune_math`'s docstring rests on "Word's own AcceptAllRevisions prunes
+these" — true of ACCEPT on this corpus, and not of Reject All here. One
+file, one measurement; whether Word keeps every emptied shell on reject or
+only these (the merge region, its inserted prose rejected) is not known.
+
+**Repro:** scratch probe `arina_shells.py` (2026-10-31 session): Word
+Reject All → `Content.WordOpenXML`, count `m:d`/`m:f` with no `m:t` text,
+vs `revisions.reject`. **Workaround:** none. **Fix sketch:** measure first —
+Reject All over the 104 math-flagged redlines, glyphless objects by kind,
+both sides; then make the prune view-dependent if Word's rule is.
+
+**Fixed 2026-10-31**, `c4efe81`. On reject `_prune_math` removes empty math runs only (`_REJECT_PRUNES`) and keeps structural objects; an equation left with no glyph still goes whole in both views. Measured with `tools/view_oracle.py --word` over 831 redlines, three candidates: pruning nothing on reject moved 47 views and broke 45 files on empty runs; keeping emptied equations too moved 110 and broke 94; the fix moves 2 — ACC6_ARINA, now identical to Word in shells and objects (oMath count off only by Word's merge of adjacent equations), and `DSI/ИДУ концепция_MDIdraft.docx`, closer to Word but not equal. That file is a hand-built redline (author "Claude (Option B)", `w:ins` inside `m:r`, a shape Word does not write), so it is no evidence of Word's rule. Accepted views: 0 changed. Tests: `tests/test_math_reject_shells.py` (2 of its 4 red at HEAD; the other two pin the accept prune and the emptied equation).
+
+### ~~S4 — no tool measures what a view-engine change does over the corpus, and a hand-rolled one measures nothing~~ — FIXED 31.10, `d20c2b9`
+
+<!-- status: fixed -->
+
+**Observed** 2026-10-31. "Measure a shape before changing a view" is this
+package's rule for `revisions`, and nothing implements it: the session
+hand-rolled four probes (candidate patch vs current over every redline;
+before/after view hashes; Word Accept/Reject All vs the engine's math;
+the same for bookmarks), ~300 lines in all. `tools/sweep.py` runs the
+readers and `tools/writer_oracle.py` the writers; neither compares a
+VIEW, and neither asks Word.
+
+**The trap that made it S4 rather than S4-cosmetic:** `_simulate_clean`
+is `lru_cache(maxsize=4)` on the XML, so a probe that monkeypatches the
+engine and re-runs `accept(xml)` gets the cached unpatched view. The
+first pass reported 0 changed views for latent shapes 3 and 4, and shape
+3 in fact changes two views of a real file. A probe must call
+`revisions._simulate_clean.cache_clear()` around every patched call.
+
+**Workaround:** the 2026-10-31 scratch probes (not committed).
+**Fix sketch:** `tools/view_oracle.py --base HEAD` — the writers' oracle
+for views: accept/reject of every text part of every redline under
+`DOCXKIT_CORPUS`, working tree vs a base commit (run in a worktree, so no
+cache and no monkeypatching), byte diff per view; `--word` adds Word's
+Accept All / Reject All read through `Content.WordOpenXML` for the files
+that moved, with math-object and bookmark profiles.
+
+**Fixed 2026-10-31**, `d20c2b9`. `tools/view_oracle.py`: the base (`--base`, default HEAD) extracted by `git archive`, each side's accept/reject of every revised text part of every distinct redline computed in its own interpreters (no patching, no shared cache), hashed and diffed; a profile of each `document.xml` view (equation objects and shells by kind, glyphs, bookmarks, a text hash) kept for `--word [moved|all]`, which reads Word's Accept All / Reject All through `Content.WordOpenXML` and reports per field which side Word agrees with. `--contains` narrows the corpus. Tests: `tests/test_view_oracle.py`; named in CONTRIBUTING beside the writers' oracle. Its first run, against `22cc1b1`, reproduced the hand measurement of the ctrlPr fix exactly (24 rejected views, 20 files, 0 accepted); its second settled the S2 shells entry. Math runs are counted as shells only: Word re-splits runs, so their number differed in 38 of 47 views that were otherwise the same. Not a gate: it needs a corpus, and Word for its verdict.
+
 ### ~~S1 — `revision init` reports success for a paper the registry refused~~ — FIXED 31.10, `aae1399`
 
 <!-- status: fixed -->
