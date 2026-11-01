@@ -293,7 +293,14 @@ HARNESS: dict[str, list[str]] = {
                      "tests/test_revisions_selective.py",
                      "tests/test_revision_state.py", "tests/test_comments.py",
                      "tests/test_value_types.py",
-                     "tests/test_cell_revisions.py"],
+                     "tests/test_cell_revisions.py",
+                     # the only tests of the math-object flags and the
+                     # equation prune; outside the `test_revisions*` names,
+                     # so the map's own check could not ask for them
+                     # (review of 2026-11-01)
+                     "tests/test_math_object_flags.py",
+                     "tests/test_math_reject_shells.py",
+                     "tests/test_math_prune_keeps.py"],
     # `test_refstyle_layout.py` is where `paragraph_property` is tested,
     # because that is where the question comes up — refstyle asks "would
     # writing this value be redundant?". Leaving it out read the function

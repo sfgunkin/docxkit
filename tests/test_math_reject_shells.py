@@ -60,14 +60,27 @@ def test_REJECT_keeps_the_delimiters_an_insertion_was_typed_into():
     assert out.count("<m:d><m:e/></m:d>") == 3       # empty, the runs gone
 
 
-def test_REJECT_keeps_a_fraction_box_but_not_an_emptied_run():
+def test_REJECT_keeps_a_fraction_box_its_runs_were_typed_into():
     eq = mr("x") + frac(tracked("ins", "1", 1), tracked("ins", "2", 2))
 
     out = reject(doc(eq))
 
     assert out.count("<m:f>") == 1
     assert glyphs(out) == ["x"]
-    assert "<m:t></m:t>" not in out and "<m:t/>" not in out
+
+
+def test_REJECT_still_prunes_an_EMPTY_math_run_in_a_touched_equation():
+    """Word drops it (45 files said so, 2026-10-31): three empty runs
+    beside an insertion the rejection removes, in an equation that keeps
+    its glyphs."""
+    empty = "<m:r><m:t></m:t></m:r>"
+    eq = (mr("x") + empty + mr("y") + empty + tracked("ins", "n", 1)
+          + empty + mr("z"))
+
+    out = reject(doc(eq))
+
+    assert glyphs(out) == ["x", "y", "z"]
+    assert "<m:t/>" not in out and "<m:t></m:t>" not in out
 
 
 def test_ACCEPT_still_prunes_the_delimiters_a_deletion_emptied():

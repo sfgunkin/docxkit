@@ -224,6 +224,27 @@ def _lift_anchors(el: _Element,
         parent.insert(at + offset, marker)
 
 
+def _lift_math_anchors(el: _Element) -> None:
+    """:func:`_lift_anchors` for something removed from inside an EQUATION.
+
+    The range markers go where `el` stood, which an equation admits. A
+    ``w:commentReference`` is run content, and lifted bare it sat
+    directly under ``m:oMath`` or ``m:e``, where the schema has no place
+    for it (review of 2026-11-01); it goes in a math run of its own.
+    """
+    _lift_anchors(el, _BLOCK_ANCHORS)
+    refs = list(el.iter(W + "commentReference"))
+    parent = el.getparent()
+    if not refs or parent is None:
+        return
+    at = list(parent).index(el)
+    for offset, ref in enumerate(refs):
+        _parent(ref).remove(ref)
+        holder = el.makeelement(MATH + "r", {})
+        holder.append(ref)
+        parent.insert(at + offset, holder)
+
+
 #: What counts as CONTENT between a bookmark's start and its end, for
 #: :func:`_doomed_bookmarks`. A field's own characters are content: a
 #: bookmark round a citation whose result was deleted and whose code
@@ -415,7 +436,11 @@ _M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 
 
 def _info(el: _Element, kind: str) -> Revision:
-    text = "".join(t.text or "" for t in el.iter(
+    # The text the revision SPANS: for a math object's own flag that is
+    # the object, which goes or stays with it — not the flag's empty
+    # `w:rPr`, which showed a predicate `text=''` for a whole subscript
+    # (review of 2026-11-01).
+    text = "".join(t.text or "" for t in _removed_with(el).iter(
         W + "t", W + "delText", _M + "t"))
     return Revision(kind=kind,
                     author=el.get(W + "author", ""),
@@ -506,14 +531,22 @@ def _removed_with(el: _Element) -> _Element:
     with Word as the oracle, 2026-10-31). Only the flag in an object's
     OWN properties (`m:sSub` / `m:sSubPr`); one in an argument's
     ``m:ctrlPr`` flags no object and is still the flag alone.
+
+    The flag may be nested: an object one author typed and another
+    deleted is ``m:ctrlPr/w:ins/w:del`` (`CT_MathCtrlIns` admits the
+    `w:del`), and the inner deletion removes the object as surely as
+    the outer insertion does. Read as the flag alone, accepting it
+    unwrapped the insertion and kept the object (review of 2026-11-01).
     """
     ctrl = el.getparent()
+    while ctrl is not None and ctrl.tag in (W + "ins", W + "del"):
+        ctrl = ctrl.getparent()
     if ctrl is None or ctrl.tag != MATH + "ctrlPr":
         return el
     props = ctrl.getparent()
     owner = props.getparent() if props is not None else None
-    if (owner is None or props is None or not isinstance(owner.tag, str)
-            or _local(owner.tag) not in MATH_OBJECTS
+    if (owner is None or props is None
+            or _local(str(owner.tag)) not in MATH_OBJECTS
             or props.tag != owner.tag + "Pr"):
         return el
     return owner
@@ -560,6 +593,47 @@ def _has_glyph(el: _Element) -> bool:
 #: What a REJECT prunes: empty math runs, and nothing structural.
 _REJECT_PRUNES = frozenset({"r"})
 
+#: Besides a glyph, what keeps a math object or an equation from being an
+#: empty shell: anything else that prints or anchors a note (a run holding
+#: only a `w:footnoteReference` has no `m:t`, and the prune deleted it from
+#: every touched equation — MDI's comment 97 lost its reference so), a
+#: comment's reference, and a revision still PENDING because a `where=`
+#: predicate declined it, which the prune removed with its glyphless
+#: object (review of 2026-11-01).
+_SHELL_KEEPS = tuple(sorted(
+    (_BOOKMARKED - _TEXT_BEARING) | {W + t for t in (
+        "commentReference", "ins", "del", "moveFrom", "moveTo")}))
+
+
+def _holds_content(el: _Element) -> bool:
+    """A glyph, or anything in :data:`_SHELL_KEEPS`."""
+    return _has_glyph(el) or next(el.iter(*_SHELL_KEEPS), None) is not None
+
+
+def _drop_equation(om: _Element) -> None:
+    """Remove an equation left with nothing in it, and keep what it marked.
+
+    Its range markers go where it stood — or, inside a display block,
+    where the block stands, since ``m:oMathPara`` holds equations only;
+    a ``bookmarkStart`` lifted into the equation from an object removed
+    a moment before went with it, and left a lone ``bookmarkEnd``
+    (review of 2026-11-01). A display block left with no equation goes
+    too: ``m:oMathPara`` requires one.
+    """
+    parent = _parent(om)
+    para = parent if parent.tag == MATH + "oMathPara" else None
+    outer = para if para is not None else om
+    host = _parent(outer)
+    at = list(host).index(outer)
+    wanted = {W + tag for tag in _BLOCK_ANCHORS}
+    for offset, marker in enumerate(
+            [m for m in om.iter() if m.tag in wanted]):
+        _parent(marker).remove(marker)
+        host.insert(at + offset, marker)
+    parent.remove(om)
+    if para is not None and para.find(MATH + "oMath") is None:
+        host.remove(para)
+
 
 def _prune_math(maths: list[_Element], *, mode: str) -> None:
     """Drop the empty skeletons a removed revision leaves behind.
@@ -604,14 +678,15 @@ def _prune_math(maths: list[_Element], *, mode: str) -> None:
             # manuscript is the thing that failed (2026-09-16). Neither
             # is an equation object, so neither is the prune's business.
             if (isinstance(el.tag, str) and _local(el.tag) in kinds
-                    and not _has_glyph(el)):
+                    and not _holds_content(el)):
+                _lift_anchors(el, _BLOCK_ANCHORS)
                 _parent(el).remove(el)
         if _glyphs(om) != before:          # never possible; never silent
             raise DocxKitError(
                 "revisions: pruning an empty equation shell changed the "
                 f"glyphs {before!r} -> {_glyphs(om)!r}")
-        if not _has_glyph(om):
-            _parent(om).remove(om)
+        if not _holds_content(om):
+            _drop_equation(om)
 
 
 def _local(tag: str) -> str:
@@ -1100,10 +1175,15 @@ def _apply_content(root: _Element, vanish: tuple[str, ...],
                 continue               # moves are a pair; see accept()
             if wants(el, tag):
                 gone = _removed_with(el)
+                if gone.getparent() is None:
+                    continue       # an object a second flag already took
                 om = _enclosing_math(gone)
                 if om is not None and not any(om is seen for seen in touched):
                     touched.append(om)
-                _lift_anchors(gone)
+                if om is None:
+                    _lift_anchors(gone)
+                else:
+                    _lift_math_anchors(gone)
                 _parent(gone).remove(gone)
     for tag in keep:
         for el in _content_elements(root, tag):
