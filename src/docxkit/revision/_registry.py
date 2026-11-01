@@ -72,10 +72,7 @@ def register(config: str | Path) -> bool:
     registry is, as the suite's `_isolated_paper_registry` does.
     """
     config = Path(config).resolve()
-    if refusal(config):
-        return False
-    known ={p.resolve() if p.is_absolute() else p for p in registered()}
-    if config in known:
+    if refusal(config) or listed(config):
         return False
     path = registry_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +83,19 @@ def register(config: str | Path) -> bool:
                      "# One paper.toml per line; # comments one out.\n")
         fh.write(f"{config}\n")
     return True
+
+
+def listed(config: str | Path) -> bool:
+    """Does the registry already name this ``paper.toml``?
+
+    Asked by `init` before it says a paper is NOT REGISTERED: the TEMP
+    rule predicts what `register` refuses today, and a paper the user
+    registered by the message's own advice (or before the 2026-10-14
+    drive-root change) is listed all the same (review of 2026-11-01).
+    """
+    config = Path(config).resolve()
+    return config in {p.resolve() if p.is_absolute() else p
+                      for p in registered()}
 
 
 def refusal(config: str | Path) -> str:

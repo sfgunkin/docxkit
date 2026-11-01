@@ -2351,7 +2351,7 @@ def cmd_revision_baseline(args: argparse.Namespace) -> int:
 def cmd_revision_init(args: argparse.Namespace) -> int:
     """Scaffold the layout around a manuscript that has not migrated."""
     from .revision import _CONFIG, _DIR, init
-    from .revision._registry import refusal
+    from .revision._registry import listed, refusal
     source = Path(args.source).resolve()
     root = Path(args.root).resolve() if args.root else source.parent
     # Asked BEFORE the call: afterwards the config exists either way, and
@@ -2364,17 +2364,20 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
     # `init` registers the paper, and `register` refuses one under TEMP
     # with a False that `init` has nowhere to put. Said here, under the
     # first line, or the paper is scaffolded, reported done, and absent
-    # from `status --all` with nothing on screen to say why.
-    unlisted = refusal(paper.config)
+    # from `status --all` with nothing on screen to say why. Asked of the
+    # REGISTRY first: a paper it already lists is listed, whatever the
+    # TEMP rule would refuse today (review of 2026-11-01).
+    unlisted = "" if listed(paper.config) else refusal(paper.config)
+    print(f"updated {paper.config}" if rewrite
+          else f"scaffolded {paper.config.parent}")
+    if unlisted:
+        print(f"  NOT REGISTERED: {unlisted}")
 
     if rewrite:
         kept = paper.config.parent
         saved = sorted((kept.glob(f"{paper.config.stem}_pre_init*"
                                   f"{paper.config.suffix}")),
                        key=lambda p: p.stat().st_mtime)
-        print(f"updated {paper.config}")
-        if unlisted:
-            print(f"  NOT REGISTERED: {unlisted}")
         print(f"  the paper   : {paper.working}")
         print("  only the keys you gave were rewritten; every other key, "
               "section\n  and comment is unchanged, and log.md and "
@@ -2392,9 +2395,6 @@ def cmd_revision_init(args: argparse.Namespace) -> int:
         print(f"  previous config: {saved[-1].name}")
         return 0
 
-    print(f"scaffolded {paper.config.parent}")
-    if unlisted:
-        print(f"  NOT REGISTERED: {unlisted}")
     print(f"  the paper   : {paper.working}"
           f"{'  (adopted in place — not copied)' if adopted else ''}")
     print("  build/prev.docx (baseline, same bytes)")

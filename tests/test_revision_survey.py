@@ -596,6 +596,32 @@ def test_init_SAYS_when_a_drive_root_TEMP_kept_the_paper_off_the_registry(
     assert "NOT REGISTERED" in out and registered() == []
 
 
+def test_init_does_NOT_say_unregistered_of_a_paper_the_registry_LISTS(
+        tmp_path, monkeypatch, capsys):
+    """The user took the message's own advice — registered the paper
+    with the registry named — and re-ran `init` without the variable.
+    The TEMP rule would still refuse it, but it is listed, and
+    `status --all` shows it: saying NOT REGISTERED was a false alarm
+    (review of 2026-11-01)."""
+    from test_cli import run_cli
+    path = _real_registry(tmp_path, monkeypatch, temp=tmp_path.anchor)
+    (tmp_path / "papers" / "HCW").mkdir(parents=True)
+    src = write(tmp_path / "papers" / "HCW" / "hcw.docx",
+                make_parts(para(run("The paper."))))
+    monkeypatch.setenv("DOCXKIT_PAPERS", str(path))
+    run_cli(monkeypatch, "revision", "init", str(src))
+    assert len(registered()) == 1
+    monkeypatch.delenv("DOCXKIT_PAPERS")
+    capsys.readouterr()
+
+    code, _ = run_cli(monkeypatch, "revision", "init", str(src), "--force",
+                      "--name", "HCW")
+
+    out = capsys.readouterr().out
+    assert code == 0 and out.startswith("updated ")
+    assert "NOT REGISTERED" not in out and len(registered()) == 1
+
+
 def test_init_says_nothing_about_the_registry_when_it_DID_register(
         tmp_path, monkeypatch, capsys):
     from test_cli import run_cli
