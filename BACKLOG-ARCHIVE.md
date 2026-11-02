@@ -14,6 +14,48 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S3 — lint check 7 refuses the empty boxes Word's own Reject All leaves~~ — FIXED 02.11, `3020fe2`
+
+<!-- status: fixed -->
+
+**Observed** 2026-11-01 (review of the shells fix). Word's Reject All
+keeps a delimiter or fraction whose runs were typed in under tracking,
+glyphless (`c4efe81`, measured). `lint._empty_math` — check 7, not an
+advisory — calls exactly that "an empty math object inside a surviving
+m:oMath (renders as a blank box)". The engine's own views are not
+linted, so no build refuses on it today; a hand-back the AUTHOR rejected
+in Word would be, wherever a lint runs on it (`save`, `revision
+validate`'s lint of the parts). Not measured on a real hand-back.
+
+**Fix sketch:** measure first — lint the Word-rejected ACC6_ARINA and
+count check-7 findings; if it fires, decide whether an empty `m:d` (it
+draws `()`) is a blank box at all, or only an empty `m:f` is.
+
+**Fixed 2026-11-02 — measured, and the defect was elsewhere.** Linted, Word's Reject All of the 137 redlines whose equations hold a revision trips check 7 in one real file, ACC6_ARINA (4 `m:d`, 1 `m:f`), and in the hand-built MDI draft. Rendered through Word's PDF export, every `MATH_OBJECTS` kind empty between `x` and `y`: `acc`, `bar`, `borderBox`, `d`, `f`, `groupChr`, `nary`, `rad` print a mark (`( )`, a bare fraction bar, `∫`, `√`), the rest leave an 11-28 pt gap — so an empty `m:d` is no box but is a stray `( )`, and check 7 is right to refuse it; it still does. What check 7 got WRONG was the math run: it counted `m:r` among the objects, and 28 of 3,033 distinct stored .docx were refused, every one for a run holding a comment reference (27), a soft hyphen (15), a footnote reference (3, which prints) or a line break — not one empty box. A run draws nothing round its content and, empty, prints nothing (measured, three forms). Check 7 now counts `lint._DRAWN_OBJECTS` (the objects, not the run), takes a footnote or endnote reference, symbol or drawing inside an object as content, and says what prints. After: 0 of 3,033. Tests: two in `tests/test_lint.py`, both red at HEAD.
+
+### ~~S2 — the accepted view keeps comments Word's Accept All drops with their deleted text~~ — FIXED 02.11, `a155fa2`
+
+<!-- status: fixed -->
+
+**Observed** 2026-11-01, measuring the review fixes with
+`view_oracle --word`: `Multidimensional and Specific Inequalities
+08.12.23 Responses JEF.docx` holds 105 comments; Word's Accept All
+keeps 99, the engine 105 (before and after the fix). The 6 are,
+apparently, comments whose whole range was deleted — comment 97, in an
+equation whose every glyph goes, among them. Before the 2026-11-01
+prune fix the engine left 97 BROKEN (its start without an end or a
+reference); now it keeps it whole, which is consistent and still not
+Word. `_doomed_bookmarks` is the rule for bookmarks (measured
+2026-10-12); comments have none.
+
+**Repro:** scratch `mdi_comments.py` (2026-11-01 session): comment
+markers in `accept(xml)` vs Word's Accept All. **Fix sketch:** measure
+first — comment counts, both views, Word against the engine over the
+redlines that hold comments (`view_oracle` profiles no comments yet);
+then a `_doomed_comments` on `_doomed_bookmarks`' rule, if Word's is it.
+
+**Fixed 2026-11-02.** Word deletes a comment outright — range, reference and `comments.xml` entry — when its whole range goes (the bookmark rule) or its REFERENCE goes, whatever the range still holds. `revisions._doomed_comments` drops every marker of such a comment, and a reference's run with it. Measured with Word's Accept All / Reject All on the 368 redlines on this machine that hold comments (444 of 445 selected files opened; one Word itself calls corrupted), keyed by author, minute and text because Word renumbers every comment and rewrites the seconds of its date: the engine matched Word on 267 accepted and 249 rejected views (it kept 2,055 and 1,915 comments Word drops), the fix on 362 and 356; the range rule alone 335/329, the reference rule alone 305/300, rules on where the MARKERS stand far worse. A removed `moveFrom` counts on accept (4 views more, none wrong); moves on reject do not follow one rule (Word dropped a comment in one `moveTo`, kept others of the same shape) and stay out. Residue, in the docstring: 3 drops Word does not make, all on reject (two in a tool-built redline authored "Claude", one range opening in a content control); 8/12 views where a comment Word drops is still kept (a marker with no `comments.xml` entry, an empty comment, a rejected move, a few with no pattern). Over the corpus 188 views move against HEAD and none differs once comment markers are stripped. Tests: `tests/test_comment_doom.py` (7 of 10 red at HEAD); three older tests that asserted the keep now assert Word's drop and that no comment is ever left half. `view_oracle` profiles `comments` (a count), and parses Word's flat XML with `huge_tree`.
+
 ### ~~S2 — the rejected view prunes empty delimiter and fraction objects Word's Reject All keeps~~ — FIXED 31.10, `c4efe81`
 
 <!-- status: fixed -->

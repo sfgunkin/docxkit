@@ -111,42 +111,6 @@ XML, so every patched re-run was served the unpatched view. The tool
 for it now is `tools/view_oracle.py` (archive: the S4 on measuring a
 view change).
 
-### S2 — the accepted view keeps comments Word's Accept All drops with their deleted text
-<!-- status: open -->
-
-**Observed** 2026-11-01, measuring the review fixes with
-`view_oracle --word`: `Multidimensional and Specific Inequalities
-08.12.23 Responses JEF.docx` holds 105 comments; Word's Accept All
-keeps 99, the engine 105 (before and after the fix). The 6 are,
-apparently, comments whose whole range was deleted — comment 97, in an
-equation whose every glyph goes, among them. Before the 2026-11-01
-prune fix the engine left 97 BROKEN (its start without an end or a
-reference); now it keeps it whole, which is consistent and still not
-Word. `_doomed_bookmarks` is the rule for bookmarks (measured
-2026-10-12); comments have none.
-
-**Repro:** scratch `mdi_comments.py` (2026-11-01 session): comment
-markers in `accept(xml)` vs Word's Accept All. **Fix sketch:** measure
-first — comment counts, both views, Word against the engine over the
-redlines that hold comments (`view_oracle` profiles no comments yet);
-then a `_doomed_comments` on `_doomed_bookmarks`' rule, if Word's is it.
-
-### S3 — lint check 7 refuses the empty boxes Word's own Reject All leaves
-<!-- status: open -->
-
-**Observed** 2026-11-01 (review of the shells fix). Word's Reject All
-keeps a delimiter or fraction whose runs were typed in under tracking,
-glyphless (`c4efe81`, measured). `lint._empty_math` — check 7, not an
-advisory — calls exactly that "an empty math object inside a surviving
-m:oMath (renders as a blank box)". The engine's own views are not
-linted, so no build refuses on it today; a hand-back the AUTHOR rejected
-in Word would be, wherever a lint runs on it (`save`, `revision
-validate`'s lint of the parts). Not measured on a real hand-back.
-
-**Fix sketch:** measure first — lint the Word-rejected ACC6_ARINA and
-count check-7 findings; if it fires, decide whether an empty `m:d` (it
-draws `()`) is a blank box at all, or only an empty `m:f` is.
-
 ### ~~S1 — `revision promote` silently strips tracked-change markup from one paragraph~~ — RETRACTED 04.09
 <!-- status: withdrawn -->
 
