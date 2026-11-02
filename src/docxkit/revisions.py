@@ -288,31 +288,54 @@ def _doomed_bookmarks(root: _Element, tag: str,
     `w:moveTo` on reject (Aging_Well 2026-09-07, `Brown2019txt`), and
     :func:`_lift_anchors` keeps such markers on purpose for DSI's sake,
     with one measurement each way and no rule between them yet.
+    """
+    if next(root.iter(W + "bookmarkStart"), None) is None:
+        return []
+    removed = _removed_content(root, (tag,), wants)
+    if not removed:
+        return []        # nothing goes, so nothing can go with it
+    doomed: list[_Element] = []
+    for start, end in _emptied_spans(root, "bookmark", removed, tag, wants):
+        doomed.extend((start, end))
+    return doomed
+
+
+def _removed_content(root: _Element, tags: tuple[str, ...],
+                     wants: Callable[[_Element, str], bool]
+                     ) -> set[_Element]:
+    """Every piece of content (:data:`_BOOKMARKED`) and every comment
+    reference the view that removes `tags` takes out of `root`."""
+    removed: set[_Element] = set()
+    for el in root.iter(*(W + tag for tag in tags)):
+        parent = el.getparent()
+        if parent is not None and parent.tag not in _FLAG_PARENTS \
+                and wants(el, _local(str(el.tag))):
+            removed.update(_removed_with(el).iter(
+                *_BOOKMARKED, W + "commentReference"))
+    return removed
+
+
+def _emptied_spans(root: _Element, kind: str, removed: set[_Element],
+                   tag: str, wants: Callable[[_Element, str], bool]
+                   ) -> list[tuple[_Element, _Element]]:
+    """The (start, end) of each ``bookmark`` or ``comment`` range whose
+    content all goes: it holds content, every piece of it is in
+    `removed`, and no paragraph mark that stays lies between its ends.
 
     A flat pass over the tags that matter, not a recursive walk of every
     element: that walk cost 27-82 % of a whole accept or reject on the
     kept redlines (2026-10-14), and its self-referencing closure kept
     the parsed tree alive until the cycle collector ran.
     """
-    if next(root.iter(W + "bookmarkStart"), None) is None:
-        return []
-    flag = W + tag
-    removed: set[_Element] = set()
-    for el in root.iter(flag):
-        parent = el.getparent()
-        if parent is not None and parent.tag not in _FLAG_PARENTS \
-                and wants(el, tag):
-            removed.update(_removed_with(el).iter(*_BOOKMARKED))
-    if not removed:
-        return []        # nothing goes, so nothing can go with it
-
+    first, last = ((W + "bookmarkStart", W + "bookmarkEnd") if kind ==
+                   "bookmark" else (W + "commentRangeStart",
+                                    W + "commentRangeEnd"))
     opened: dict[str | None, _Span] = {}
     candidates: list[tuple[_Element, _Element]] = []
-    for el in root.iter(W + "bookmarkStart", W + "bookmarkEnd",
-                        *_BOOKMARKED):
-        if el.tag == W + "bookmarkStart":
+    for el in root.iter(first, last, *_BOOKMARKED):
+        if el.tag == first:
             opened[el.get(W + "id")] = _Span(el)
-        elif el.tag == W + "bookmarkEnd":
+        elif el.tag == last:
             span = opened.pop(el.get(W + "id"), None)
             if span is not None and span.removed and not span.kept:
                 candidates.append((span.start, el))
@@ -325,12 +348,75 @@ def _doomed_bookmarks(root: _Element, tag: str,
                     span.removed += size
                 else:
                     span.kept += size
-    doomed: list[_Element] = []
     order = _Order(root) if candidates else None
-    for start, end in candidates:
-        if not _marks_between(root, start, end, flag, wants, order=order):
-            doomed.extend((start, end))
-    return doomed
+    return [(start, end) for start, end in candidates
+            if not _marks_between(root, start, end, W + tag, wants,
+                                  order=order)]
+
+
+_COMMENT_MARKS = tuple(W + t for t in ("commentRangeStart",
+                                       "commentRangeEnd", "commentReference"))
+
+
+def _doomed_comments(root: _Element, tags: tuple[str, ...],
+                     wants: Callable[[_Element, str], bool]
+                     ) -> list[_Element]:
+    """Every marker of each comment Word drops with what it is on.
+
+    `tags` are the sides the view removes: ``del`` and ``moveFrom`` on
+    accept, ``ins`` on reject. Word deletes a comment outright — its
+    range, its reference and its entry in ``comments.xml`` — when either
+    its whole range goes (the bookmark rule) or its REFERENCE goes,
+    whatever the range still holds: a comment whose reference run was
+    typed in under tracking is gone on Reject All with its range of
+    untouched text.
+
+    Measured 2026-11-02 against Word's Accept All and Reject All, keyed
+    by author, minute and text because Word renumbers every comment, on
+    the 368 redlines on this machine that hold comments (backlog S2).
+    The engine kept every comment — 2,055 that Word's Accept All drops,
+    1,915 that its Reject All does — and matched Word on 267 accepted
+    and 249 rejected views; this rule matches 362 and 356. The range
+    rule alone matched 335 and 329, the reference rule alone 305 and
+    300. It drops a comment Word keeps 3 times, all on reject: two in a
+    tool-built redline whose comments are all by "Claude", one whose
+    range opens inside a content control. What it still keeps that Word
+    drops — 8 accepted and 12 rejected views, a few comments each — is a
+    marker whose comment has no entry at all, an empty comment, a
+    rejected move, and a handful with no pattern found.
+
+    A move counts on accept: a comment on the text a ``moveFrom`` takes
+    away goes, 4 views more and none wrong. Not on reject, where Word
+    dropped one in a ``moveTo`` and kept others of the same shape, and
+    including them traded 4 views right for 4 wrong. Under `where`,
+    moves are never applied (:func:`accept`), so they never count.
+
+    The engine views one part, so ``comments.xml`` keeps the dropped
+    comment's entry; nothing reads the views for comments today.
+    """
+    if next(root.iter(W + "commentRangeStart", W + "commentReference"),
+            None) is None:
+        return []
+    removed = _removed_content(root, tags, wants)
+    if not removed:
+        return []
+    ids = {el.get(W + "id") for el in removed
+           if el.tag == W + "commentReference"}
+    ids |= {end.get(W + "id")
+            for _, end in _emptied_spans(root, "comment", removed, tags[0],
+                                         wants)}
+    return [el for el in root.iter(*_COMMENT_MARKS) if el.get(W + "id") in ids]
+
+
+def _drop_comment_mark(mark: _Element) -> None:
+    """Remove one comment marker, and a reference's run with it when the
+    run holds nothing else (`hygiene._drop_comment_anchors`' rule)."""
+    holder = _parent(mark)
+    holder.remove(mark)
+    if mark.tag == W + "commentReference" and \
+            holder.tag in (W + "r", MATH + "r") and all(
+                child.tag in (W + "rPr", MATH + "rPr") for child in holder):
+        _parent(holder).remove(holder)
 
 
 class _Order:
@@ -1282,6 +1368,9 @@ def _simulate_where(xml: str, mode: str, where: Where | None = None) -> str:
     # a bookmark is what it spanned while the revision was still there.
     for marker in _doomed_bookmarks(root, vanish[0], wants):
         _parent(marker).remove(marker)
+    moves = ("moveFrom",) if mode == FINAL and where is None else ()
+    for marker in _doomed_comments(root, (vanish[0], *moves), wants):
+        _drop_comment_mark(marker)
     touched = _apply_content(root, vanish, keep, wants,
                              mode=mode, selective=where is not None)
     if where is None:

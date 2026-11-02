@@ -697,10 +697,12 @@ def test_accepting_the_same_move_keeps_them_where_they_were():
                                "Between."]
 
 
-def test_rejecting_an_INSERTION_keeps_a_comment_anchor_inside_it():
-    """The same shape one revision kind over: a comment whose range
-    start sits inside a rejected insertion is a comment Word reports as
-    damaged, and `commentRangeEnd` without its start is what does it."""
+def test_rejecting_an_INSERTION_drops_a_comment_inside_it_WHOLE():
+    """A comment wholly inside a rejected insertion is one Word's Reject
+    All deletes — range, reference and entry (backlog S2, 2026-11-02).
+    What must never happen is half of it going: a `commentRangeEnd`
+    without its start is a comment Word reports as damaged, which is
+    what the engine left before the anchors were lifted at all."""
     xml = document(
         para(run("Kept. "),
              f'<w:ins {_WHEN.format(i=7)}>'
@@ -713,9 +715,9 @@ def test_rejecting_an_INSERTION_keeps_a_comment_anchor_inside_it():
     out = reject(xml)
 
     assert "added text" not in out, "the insertion goes"
-    assert out.count("<w:commentRangeStart") == 1
-    assert out.count("<w:commentRangeEnd") == 1
-    assert out.count("<w:commentReference") == 1
+    assert "comment" not in out, out
+    assert "Kept." in out
+    assert accept(xml).count('w:id="3"') == 3, "accepting keeps it whole"
 
 
 def test_the_anchors_keep_their_ORDER_when_they_are_lifted():

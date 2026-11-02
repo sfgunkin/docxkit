@@ -31,7 +31,8 @@ hash, and a profile of each ``document.xml`` view is kept for Word:
   comparable); ``count`` — the number of equations, on its own because
   Word merges adjacent equations on Reject All;
 * ``equations`` — every glyph of every equation, in order, joined;
-* ``bookmarks`` — the names, sorted; ``text`` — a hash of the body's
+* ``bookmarks`` — the names, sorted; ``comments`` — how many comments
+  have a marker in the body (Word renumbers them); ``text`` — a hash of the body's
   ``w:t`` text paragraph by paragraph, so a merged or split paragraph
   is a different text.
 
@@ -96,6 +97,11 @@ OBJECTS = ("acc", "bar", "borderBox", "box", "d", "eqArr", "f", "func",
 #: (38 of 47 accepted views, 2026-10-31); an EMPTY one is still a fact.
 #: Equations are counted in their own field.
 SHELL_ONLY = ("oMath", "r")
+#: A comment is COUNTED, by the ids its markers carry: Word renumbers
+#: every comment on Accept All and Reject All, so the ids themselves are
+#: not comparable (2026-11-02).
+COMMENT_MARKS = tuple(W + t for t in ("commentRangeStart",
+                                      "commentRangeEnd", "commentReference"))
 VIEWS = ("accept", "reject")
 #: `ProcessPoolExecutor` refuses more than 61 workers on Windows.
 MAX_JOBS = 61
@@ -131,6 +137,7 @@ def profile(root: Any) -> Profile:
         "equations": "".join(t.text or "" for t in body.iter(M + "t")),
         "bookmarks": sorted(b.get(W + "name") or ""
                             for b in body.iter(W + "bookmarkStart")),
+        "comments": len({c.get(W + "id") for c in body.iter(*COMMENT_MARKS)}),
         "text": hashlib.sha1(text.encode("utf-8")).hexdigest()[:12],
     }
 
@@ -263,8 +270,12 @@ def word_profiles(path: str, deadline: float) -> dict[str, Profile]:
                     doc.AcceptAllRevisions()
                 else:
                     doc.RejectAllRevisions()
+                # huge_tree: an embedded image is one base64 text node,
+                # past libxml2's 10 MB default on a figure-heavy paper
+                # ("huge text node", 2 of 445 redlines, 2026-11-02)
                 flat = etree.fromstring(
-                    doc.Content.WordOpenXML.encode("utf-8"))
+                    doc.Content.WordOpenXML.encode("utf-8"),
+                    etree.XMLParser(huge_tree=True))
             for part in flat.iter(_word.PKG + "part"):
                 if part.get(_word.PKG + "name") == "/word/document.xml":
                     out[view] = profile(next(part.iter(W + "document")))

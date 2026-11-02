@@ -300,7 +300,9 @@ HARNESS: dict[str, list[str]] = {
                      # (review of 2026-11-01)
                      "tests/test_math_object_flags.py",
                      "tests/test_math_reject_shells.py",
-                     "tests/test_math_prune_keeps.py"],
+                     "tests/test_math_prune_keeps.py",
+                     # which comments a view keeps (backlog S2, 2026-11-02)
+                     "tests/test_comment_doom.py"],
     # `test_refstyle_layout.py` is where `paragraph_property` is tested,
     # because that is where the question comes up — refstyle asks "would
     # writing this value be redundant?". Leaving it out read the function

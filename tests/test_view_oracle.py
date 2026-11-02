@@ -53,6 +53,21 @@ def test_profile_counts_objects_SHELLS_glyphs_and_bookmarks():
     assert got["bookmarks"] == ["eq1"]
 
 
+def test_profile_COUNTS_comments_by_id_not_by_marker():
+    """Word renumbers comments, so they are counted: three comments, one
+    with a range and a reference, one reference only, one range only."""
+    xml = document(para(
+        '<w:commentRangeStart w:id="4"/>', run("a"),
+        '<w:commentRangeEnd w:id="4"/>',
+        '<w:r><w:commentReference w:id="4"/></w:r>',
+        '<w:r><w:commentReference w:id="9"/></w:r>',
+        '<w:commentRangeStart w:id="11"/>', run("b"),
+        '<w:commentRangeEnd w:id="11"/>'))
+
+    assert vo.profile_xml(xml)["comments"] == 3
+    assert vo.profile_xml(document(para(run("none"))))["comments"] == 0
+
+
 def test_profile_text_sees_a_MERGED_paragraph():
     """Same characters, one paragraph instead of two: a different text."""
     two = vo.profile_xml(document(para(run("One.")) + para(run("Two."))))

@@ -281,27 +281,33 @@ def test_a_COMMENT_REFERENCE_is_not_lifted_where_a_paragraph_cannot_MERGE():
     are range markup a block may hold, its `w:commentReference` is run
     inner content no block may. The paragraph was inserted above a
     TABLE, so rejecting it removes it rather than merging it, and what
-    stands where it stood is the range and nothing else. Under the
-    mutant the reference is lifted too, and `w:body` gains an element
+    stands where it stood is the range's start and nothing else. Under
+    the mutant the reference is lifted too, and `w:body` gains an element
     the schema has no place for.
+
+    The range runs on into the table's kept text, and the reference is
+    in a run of its own outside the insertion: a comment whose range all
+    goes, or whose reference does, is one Word deletes whole (backlog
+    S2, 2026-11-02), and then there is nothing left to lift.
     """
     from docxkit.revisions import reject
 
     tbl = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid>'
            f"<w:tr><w:tc><w:tcPr/>{para(run('cell'))}</w:tc></w:tr></w:tbl>")
+    kept_end = tbl.replace(
+        "<w:t>cell</w:t></w:r>",
+        '<w:t>cell</w:t></w:r><w:commentRangeEnd w:id="4"/>')
     inserted = (f'<w:p>{MARK_INS}<w:ins w:id="82" w:author="A" w:date="d">'
                 '<w:commentRangeStart w:id="4"/>'
-                f'{run("A new sentence.")}<w:commentRangeEnd w:id="4"/>'
-                '<w:r><w:commentReference w:id="4"/></w:r>'
-                "</w:ins></w:p>")
+                f'{run("A new sentence.")}</w:ins>'
+                '<w:r><w:commentReference w:id="4"/></w:r></w:p>')
 
-    out = reject(document(inserted + tbl))
+    out = reject(document(inserted + kept_end))
 
     lifted = out[out.index("<w:body>"):out.index("<w:tbl>")]
-    assert lifted == ('<w:body><w:commentRangeStart w:id="4"/>'
-                      '<w:commentRangeEnd w:id="4"/>'), out
+    assert lifted == '<w:body><w:commentRangeStart w:id="4"/>', out
     assert "<w:commentReference" not in out
-    assert tbl in out, "the table itself is untouched"
+    assert kept_end in out, "the table itself is untouched"
 
 
 # --- what WORD makes of the anchors the fix leaves ---------------------

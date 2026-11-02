@@ -211,12 +211,33 @@ def test_a_predicate_is_shown_the_TEXT_of_the_object_its_flag_removes():
     assert glyphs(out) == ["x", "q", "2", "y"]
 
 
-def test_a_comment_reference_in_a_removed_object_stays_IN_A_MATH_RUN():
+def test_a_comment_whose_reference_is_in_a_removed_object_goes_WHOLE():
+    """Word deletes a comment whose reference goes (backlog S2,
+    2026-11-02): its range in the kept prose goes too, and nothing is
+    lifted bare under `m:oMath`."""
     eq = sub(mr("p") + '<m:r><w:commentReference w:id="4"/></m:r>',
              mr("1"), "ins")
-    out = reject(body(eqp(mr("x"), eq, mr("y"))))
+    xml = body(f'<w:p><w:commentRangeStart w:id="4"/>{wr("prose")}'
+               '<w:commentRangeEnd w:id="4"/></w:p>',
+               eqp(mr("x"), eq, mr("y")))
 
-    assert re.search(r'<m:r><w:commentReference w:id="4"/></m:r>', out)
+    out = reject(xml)
+
+    assert "comment" not in out, out
+    assert glyphs(out) == ["x", "y"] and "prose" in out
+    assert accept(xml).count('w:id="4"') == 3
+
+
+def test_a_comment_reference_lifted_out_of_a_MOVE_in_math_is_IN_A_MATH_RUN():
+    """A REJECTED move is outside the comment rule, as moves are outside
+    the bookmark rule: its markers are lifted, and a reference lifted
+    bare under `m:oMath` has no place in the schema (review of
+    2026-11-01)."""
+    moved = mark("moveTo", inner=mr("p")
+                 + '<m:r><w:commentReference w:id="4"/></m:r>')
+    out = reject(body(eqp(mr("x"), moved, mr("y"))))
+
+    assert re.search(r'<m:r><w:commentReference w:id="4"/></m:r>', out), out
     assert not re.search(r'</m:r><w:commentReference', out)
 
 
