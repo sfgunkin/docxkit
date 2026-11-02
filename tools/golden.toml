@@ -6,15 +6,15 @@
 path = "Papers/_Accepted/MDI_UZ/Documents/Archive/MDI_UZ_08182025_ML.docx"
 input = "4088f53b32bca405"
 [golden.fingerprint]
-accepted_document = "b32ce847e150abd8"
+accepted_document = "7cae35ba5443b48a"
 bookmarks = 70
 captions = 10
 comments = 15
 equations = 161
 footnotes = 19
 links = 79
-lint = 1
-lint_findings = "2a3c24bb4ab1d619"
+lint = 0
+lint_findings = "e3b0c44298fc1c14"
 markdown = "f1733d720f7f6f2b"
 paragraphs = 175
 revision_kinds = "e2c30497e38966e9"

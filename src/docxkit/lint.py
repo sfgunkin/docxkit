@@ -182,7 +182,7 @@ def _empty_shells(roots: tuple[_Element | None, ...]) -> list[str]:
     the refusal was not true of the file. A shell is still worth a look
     — an equation that lost its glyphs lost the maths — so it is
     reported here, never refused (backlog S3, 2026-09-18). An empty
-    object INSIDE a surviving equation, a blank box on the page, is a
+    object INSIDE a surviving equation, a stray mark on the page, is a
     different finding and stays in `lint`.
     """
     problems: list[str] = []
@@ -248,15 +248,45 @@ def _child_order(root: _Element) -> list[str]:
     return problems
 
 
+#: What check 7 counts: the objects that DRAW something round their
+#: arguments — brackets, a bar, a radical, an operator, a gap. Not the
+#: math RUN, which draws nothing round its content and prints nothing
+#: when it has none. Rendered through Word's PDF export 2026-11-02 (`x`,
+#: one empty object, `y`), every kind: `acc`, `bar`, `borderBox`, `d`,
+#: `f`, `groupChr`, `nary` and `rad` print a mark — `( )`, a bare
+#: fraction bar, `∫`, `√` — and the rest leave a gap of 11-28 pt; an
+#: empty `m:r`, bare, with an empty `m:t` or with only properties,
+#: moves `y` by nothing. Counting runs was the whole of what check 7
+#: found in stored documents: 28 of 3,033 distinct .docx on this machine
+#: refused, every one for a run holding a comment reference (27), a soft
+#: hyphen (15), a footnote reference (3, which prints) or a line break,
+#: and not one empty box among them (backlog S3).
+_DRAWN_OBJECTS = frozenset(MATH_OBJECTS - {"r"})
+
+#: Run content that prints inside an object though it is not an `m:t`:
+#: a footnote's number in a delimiter is not an empty pair of brackets.
+_PRINTS_IN_MATH = tuple(W + t for t in (
+    "footnoteReference", "endnoteReference", "sym", "drawing", "object",
+    "pict"))
+
+
+def _math_prints(el: _Element) -> bool:
+    return _math_has_glyph(el) or next(el.iter(*_PRINTS_IN_MATH),
+                                       None) is not None
+
+
 def _empty_math(root: _Element) -> list[str]:
     """Check 7 — an empty object inside a surviving equation.
 
     Asking only whether a WHOLE equation has gone textless misses the
     commoner and more visible case: a surviving equation carrying an
-    emptied fraction, which Word draws as an empty box beside the real
+    emptied fraction, which Word prints as a bare bar beside the real
     content. On the DSI paper the split was 53 wholly-empty against 121
     empty children. The wholly-empty shell is an advisory now
-    (:func:`_empty_shells`); this, the box on the page, is not.
+    (:func:`_empty_shells`); this, the mark on the page, is not. Word's
+    own Reject All leaves such a mark where an object was typed in under
+    tracking (`revisions._prune_math`); see :data:`_DRAWN_OBJECTS` for
+    what counts.
     """
     problems = []
     orphaned = 0
@@ -265,12 +295,12 @@ def _empty_math(root: _Element) -> list[str]:
             continue                   # a whole shell: the advisory's
         orphaned += sum(
             1 for el in om.iter()
-            if el is not om and _local(el.tag) in MATH_OBJECTS
-            and not _math_has_glyph(el))
+            if el is not om and _local(el.tag) in _DRAWN_OBJECTS
+            and not _math_prints(el))
     if orphaned:
         problems.append(
             f"{orphaned} empty math object(s) inside a surviving "
-            f"m:oMath (renders as a blank box)")
+            f"m:oMath (prints its brackets, bar or gap round nothing)")
     return problems
 
 

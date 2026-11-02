@@ -599,6 +599,47 @@ def test_an_equation_after_an_EMPTY_one_is_still_examined():
     assert any("1 empty math object(s)" in p for p in problems), problems
 
 
+_RUNS_WORD_WRITES = (
+    # the four shapes check 7 refused in 28 stored .docx (backlog S3)
+    '<m:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+    '<w:commentReference w:id="4"/></m:r>',
+    "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><w:rPr/><w:softHyphen/></m:r>",
+    '<m:r><w:rPr/><w:footnoteReference w:id="6"/></m:r>',
+    "<m:r><w:rPr/><w:br/></m:r>",
+    "<m:r/>",
+)
+
+
+def test_a_math_RUN_is_never_an_empty_box():
+    """A run draws nothing round its content, so it prints nothing when
+    it has none, and these hold a reference, a soft hyphen or a break.
+    Every check-7 refusal of a stored document on this machine was one
+    of them (28 of 3,033, 2026-11-02)."""
+    m = 'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
+    body = (f"<w:p><m:oMath {m}><m:r><m:t>x</m:t></m:r>"
+            f"{''.join(_RUNS_WORD_WRITES)}<m:r><m:t>y</m:t></m:r>"
+            "</m:oMath></w:p>")
+
+    assert lint_parts(_parts(body)) == []
+
+
+def test_empty_OBJECTS_are_still_counted_and_a_footnote_is_content():
+    """Three empty delimiters and five empty fractions print `( )` and
+    bare bars (Word's PDF export, 2026-11-02); a delimiter round nothing
+    but a footnote's number is not empty."""
+    m = 'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
+    noted = ('<m:d><m:e><m:r><w:footnoteReference w:id="2"/></m:r></m:e>'
+             "</m:d>")
+    body = (f"<w:p><m:oMath {m}><m:r><m:t>x</m:t></m:r>"
+            + "<m:d><m:e/></m:d>" * 3 + "<m:f><m:num/><m:den/></m:f>" * 5
+            + noted + "</m:oMath></w:p>")
+
+    problems = lint_parts(_parts(body))
+
+    assert any(p.startswith("8 empty math object(s)") for p in problems), \
+        problems
+
+
 def test_the_empty_shell_count_is_a_COUNT():
     m = 'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
     one = f"<w:p><m:oMath {m}><m:r><m:t></m:t></m:r></m:oMath></w:p>"
