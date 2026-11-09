@@ -14,6 +14,272 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 `repack` recommends a placement that leaves a table's caption and header row alone at the foot of a page~~ — FIXED 09.11, `a5dd301`
+
+<!-- status: fixed -->
+
+Found 2026-11-08 on LFP_Inflows (`_2`, Figure 1 at the end of Section 2 left page 3 at 41 percent).
+
+**Measured.** `docxkit repack _2.docx --labels Figure,Table` ranked "Figure 1 after 'A second set of estimates…'" (and
+"after 'The two groups differ…'") first: "1 fewer under-filled sheet, 17 -> 16 sheets". Applied, page 4 ended with the
+Figure 1 note and then Table 1's caption and header row only, with every data row on page 5. No line of the report
+mentioned it. The caption check (`caption_problems`) covers raster FIGURE captions, not tables.
+
+**Effect.** The best-ranked move is wrong output. Keeping Table 1 together (`tables.keep_together`) then moves the
+under-filled sheet to page 6, so the ranking compared layouts that a correct gate would have refused.
+
+**Suggested fix.** In each trial render, refuse (or report) a table whose caption is on a different sheet from its
+first data row, and a table that breaks although it fits on one sheet. Rank only the clean trials.
+
+**Workaround in use.** Placements rendered and checked by hand (scratch `variants.py`). The chosen layout: Figure 1 at
+the end of Section 3's prose, Table 1 kept together, Figure 2 after the Calculation paragraph. Result: 16 pages, no
+short sheet before Figure 5.
+
+**Fixed 2026-11-09**, `a5dd301`. `Landing.data` is the sheet a table's first data row landed on (the header read as `plan_booktabs` reads it: the leading rows with an empty first cell, and the row after them). Each trial is compared with the layout it would replace (`_table_faults` / `_new_faults`): a trial that leaves a caption and header alone on a sheet, or breaks a table the current layout holds on one sheet, is reported "not offered" with the reason and is not ranked. A fault the current layout already has does not count against a trial. Tests: `test_repack.py::test_a_trial_that_STRANDS_or_BREAKS_a_table_is_not_offered` (both shapes; red at HEAD) and `::test_a_trial_that_keeps_the_table_whole_IS_offered`. Workaround: LFP_Inflows' scratch `variants.py`, not in that repo, nothing to delete.
+
+### ~~S2 `footnotes.add` names styles the document may not define; the note renders unstyled and Compare strips it~~ — FIXED 09.11, `a5dd301`
+
+<!-- status: fixed -->
+
+Found 2026-11-08 on LFP_Inflows (`Documents\Uzbekistan_new_labor_market_entrants_2.docx`).
+
+**Measured.** `footnotes.add(parts, after=..., text=...)` wrote the new note's
+paragraph with `<w:pStyle w:val="FootnoteText"/>` and the in-text reference run
+with `<w:rStyle w:val="FootnoteReference"/>`. `word/styles.xml` defines
+neither, because the paper's five existing notes use DIRECT formatting
+(`<w:spacing w:after="2"/>`, `w:sz 20`, `vertAlign superscript` on both marks).
+So the new note rendered at the Normal size (11 pt, not 10 pt), and its in-text
+mark was not superscript. Word Compare (`tracked.build`) then dropped the
+dangling style references. After the author accepted the redline, the note
+was 12 pt and the mark a full-size "6" in the body text. `tracked.build`'s
+gates passed. `docxkit footnotes --check` does see it ("1 footnote(s) do not
+agree with the rest").
+
+**Suggested fix.** Clone the properties of a sibling note: its `w:pPr`, the
+`footnoteRef` run's `w:rPr`, the text run's `w:rPr`, and the body's existing
+`footnoteReference` run `w:rPr`. Use a style name only if `styles.xml` defines
+it. Also run the `footnotes --check` agreement inside `add` (or in
+`tracked.build`'s lint gate).
+
+**Workaround in use.** Footnote 6 was rewritten by hand from footnote 5's
+properties (LFP_Inflows scratch `figs_and_links.py::fix_footnote_6`).
+
+**Fixed 2026-11-09**, `a5dd301`. `footnotes.add` sets the new note like the note whose reference precedes it (else the first note): that note's `w:pPr`, its `footnoteRef` run's `w:rPr`, its text run's face only (rFonts, colour, sz, szCs, lang — a first run's italics or character style belong to its words), and the body reference run's `w:rPr`. With no note carrying a mark to copy, `FootnoteText`/`FootnoteReference` are named only if `styles.xml` defines them, else the note is set directly (10 pt text, superscript marks). The agreement check was not moved into `add`: by construction the new note agrees with the note it was cloned from, and `footnotes --check` stays the gate for a part whose notes already disagree. Tests: `test_footnotes.py::test_a_new_note_is_SET_LIKE_its_siblings_not_by_undefined_styles` (5 direct-formatted notes; `sizes().ok` on the result; red at HEAD) and `::test_with_no_sibling_a_DEFINED_style_is_named`; the old assertion that pinned the undefined style name now pins direct formatting. Workaround: LFP_Inflows' scratch `figs_and_links.py::fix_footnote_6`, not in that repo, nothing to delete.
+
+### ~~S4 `backup` glues the sequence number onto a tag that ends in a digit~~ — FIXED 09.11, `a5dd301`
+
+<!-- status: fixed -->
+
+Found 2026-11-08 on LFP_Inflows (`Documents\Uzbekistan_new_labor_market_entrants_2.docx`).
+
+**Measured.** `backup(p, "before_tracked_2026-11-08")` wrote
+`Uzbekistan_new_labor_market_entrants_2_before_tracked_2026-11-081.docx`.
+`next_backup_path` builds `f"{path.stem}_{tag}{n}{path.suffix}"`, so a dated
+tag reads as the 81st of November, and a second backup (`...-082`) as a
+different date. A stem that already ends in a digit (`_2`) is unaffected;
+only the tag/number seam is.
+
+**Suggested fix.** Put a separator between tag and number when the tag ends in
+a digit (`..._2026-11-08_1.docx`), or always (`_{tag}_{n}`) if no caller
+parses the old form.
+
+**Workaround in use.** None needed for this paper; the file is named in the
+LFP_Inflows handover.
+
+**Fixed 2026-11-09**, `a5dd301`. `next_backup_path` writes `_` between a tag that ends in a digit and the number (`..._2026-11-08_1.docx`). Every other tag keeps the old form, which the rescue globs and the papers' handovers already name. Test: `test_package.py::test_a_tag_ending_in_a_DIGIT_is_kept_apart_from_the_number` (red at HEAD). No workaround existed.
+
+### ~~S4 `compare` FORMAT reports a caption label that became a link as "bold lost"~~ — FIXED 09.11, `a5dd301`
+
+<!-- status: fixed -->
+
+Found 2026-11-05 on ep3_sc. The caption runs "Table " and the SEQ result keep
+`<w:b/>` and gain `<w:rStyle w:val="Hyperlink"/>`. The render is bold.
+
+**Measured.** `docxkit compare` printed
+`'Table 1': ['bold', 'colour 000000', 'size 24'] -> ['colour 1F3864', 'size 24']`
+for all four. `_compare_read._char_fmt` gives a Hyperlink-styled run NO toggle
+flags ("their underline is structural"), so bold, italic and strike vanish
+along with the underline. `Cascade.toggle` resolves bold as on for the same run.
+The opposite case is a false negative: a link that really lost its bold
+compares clean.
+
+**Suggested fix.** Mask only what the Hyperlink style itself contributes (the
+underline) and resolve the toggles as for any other run.
+
+**Fixed 2026-11-09**, `a5dd301`. `_compare_read._char_fmt` resolves a Hyperlink-styled run's toggles like any other run's. Underline — what the style itself contributes — is not among the compared toggles, so there was nothing to mask. A caption label that became a link now reports only its real change (it turned link-blue); a link that lost its bold is reported. The equivalent-mutant claim on the old `| _valued(...)` line expired with the line and was deleted from `tools/equivalents.toml`. Tests: `test_compare.py::test_a_bold_label_that_BECAME_A_LINK_is_still_bold` and `::test_a_link_that_LOST_its_bold_is_reported` (both red at HEAD). No workaround existed.
+
+### ~~S2 `crossrefs.link` reports a mention split across runs instead of linking it~~ — FIXED 09.11, `da01387`
+
+<!-- status: fixed -->
+
+Found 2026-11-05 on ep3_sc_accepted. The only mention of Table 3 is stored as
+`<w:t>T</w:t>` | `<w:t>able </w:t>` | `<w:t>3</w:t>`, split at rsid boundaries
+in three bare runs.
+
+**Measured.** `link()` returned `no_mention: Table3` with the note "mention
+found but its label is split across runs", and left the table unlinked.
+`link_more` beside it handles the same split through
+`citations.wrap_visible_span`. So the forward-only pass can link a split
+mention and the bookmarking pass cannot. The module's own docstring says Word
+fragments runs at rsid boundaries.
+
+**Suggested fix.** `_link_mention` should fall back to `wrap_visible_span` (and
+put the `<key>txt` bookmark around the result) when no single `w:t` holds the
+label.
+
+**Workaround in use.** `make_corrected.py::link_tables` rejoins the first
+mention with `replace_in_para(para, label, label)` and drops the emptied runs.
+
+**Fixed 2026-11-09**, `da01387`. `_link_mention` falls back to `_link_split_mention`: the mention is found in `masked_visible_text` and wrapped with `wrap_visible_span` under a placeholder anchor, which is then given the real anchor and, unless `mark=False`, the `<key>txt` bookmark around it. The mode is "linked", not a caveat — ep3_sc's build refuses any note. Already-linked characters stay masked, so a label split inside the author's own HYPERLINK field is still reported as a mention it could not link; the two tests that pinned the old report now use that shape. Test: `test_crossrefs.py::test_a_MENTION_split_across_runs_is_linked_and_bookmarked` (3 tables; red with the fallback disabled). Workaround deleted: the mention rejoin in `make_corrected.py::link_tables` (BiH `598ade6`).
+
+### ~~S2 `crossrefs.link` raises on a caption that numbers itself with a SEQ field~~ — FIXED 09.11, `da01387`
+
+<!-- status: fixed -->
+
+Found 2026-11-05 on ep3_sc. All four captions are Word's Insert Caption form,
+`<w:r><w:t>Table </w:t></w:r><w:fldSimple w:instr=" SEQ Table \* ARABIC ">`
+`<w:r><w:t>1</w:t></w:r></w:fldSimple><w:r><w:t>:</w:t></w:r>…`.
+
+**Measured.** `crossrefs.link(doc, labels=("Table",))` raised `AnchorError:
+Table 1: caption label is split across runs and could not be wrapped in a
+back-link` on the first caption and linked nothing. `_wrap_label` looks for
+"Table 1" inside ONE `w:t`, and here the number is a field result. `find_captions`
+reads the same caption correctly, because it uses the visible text. So the
+common Word form gets past the reader and then breaks the writer. The `crossrefs`
+CLI has the same path.
+
+**Suggested fix.** When the label's number is a `fldSimple` (or a fldChar
+field) right after the "Table " run, wrap the run AND the field in the
+`w:hyperlink`. CT_Hyperlink admits `fldSimple`, and Word renders and follows it.
+Give both runs the Hyperlink style. A test should parse a SEQ-numbered caption.
+
+**Workaround in use.** `make_corrected.py::link_tables` wraps "Table " + the
+`fldSimple` in `<w:hyperlink w:anchor="TableNtxt">` before calling `link()`.
+`_backlink_caption` then finds the anchor and only adds the bookmark.
+
+**Fixed 2026-11-09**, `da01387`. When no single `w:t` opens with "Table N", `_wrap_label` falls back to `_wrap_numbered_label`: a run whose text is the label word alone, at the caption's start, followed (across whitespace, bookmarks and proofing marks only) by a `w:fldSimple` or a fldChar field whose result shows the caption's number. The run and the whole field go inside the `w:hyperlink`, every run in the Hyperlink style. A second `link` is a no-op, `audit` reports the caption linked, and lint is clean on the result. Test: `test_crossrefs.py::test_a_caption_whose_NUMBER_IS_A_FIELD_is_linked_not_refused` (3 fldSimple + 3 fldChar captions; red with the fallback disabled). Workaround deleted: `make_corrected.py::_LABEL_RE` and its pre-wrap (BiH `598ade6`); the paper keeps only its house rule that the caption link drops the caption's black.
+
+### ~~S2 `tables.house` + `booktabs` leave a theme table style's conditional formatting in place~~ — FIXED 09.11, `df9ebb9`
+
+<!-- status: fixed -->
+
+Found 2026-11-03 on ep3_sc, Table 3: `<w:tblStyle w:val="GridTable4-Accent1"/>`
+with `tblLook firstRow=1 firstColumn=1 noHBand=0`, and `w:cnfStyle` cached on
+14 cells.
+
+**Measured.** After `house(xml, t)` and `booktabs(xml, t, align="left")` the
+render still showed the style's accent-blue header with white bold text, the
+banded light-blue rows and a bold first column, under booktabs rules. The style
+also sets Candara as the table font; house's face overrides that on the runs.
+Removing `w:tblStyle`, writing an all-off `tblLook` and deleting the
+`w:cnfStyle` elements gave a plain three-line table.
+
+**Suggested fix.** `house` (or `booktabs`, which already "clears every existing
+rule") should neutralise the conditional formats: turn `tblLook` off and drop
+`cnfStyle`. It could also drop a theme `tblStyle`, or report it. The
+neutralising is the half nothing can see without a render.
+
+**Workaround in use.** `make_corrected.py::house_tables` strips the style, the
+look and the `cnfStyle` before `house()`.
+
+**Fixed 2026-11-09**, `df9ebb9`. `booktabs` ends with `_table_layout._without_conditional_formats`: when the table's OWN `tblPr` names a `w:tblStyle`, its `tblLook` becomes all-off (`w:val="0600"`, firstRow/lastRow/firstColumn/lastColumn 0, both bands suppressed; inserted in its schema slot if absent) and every `w:cnfStyle` cache outside nested tables goes. The style itself stays — `house` overrides its font on the runs, and dropping it would move the cell margins it sets; the paper's own strip removed it, and the renders still match. A table with no style is left alone. Tests: `test_tables_house.py::test_booktabs_switches_a_theme_styles_CONDITIONAL_formats_off` (7 cells, 2 rows and a nested table's own cache; red with the step disabled) and `::test_a_table_with_NO_style_keeps_its_look`. Workaround deleted: the tblStyle/tblLook/cnfStyle strip in `make_corrected.py::house_tables` (BiH `598ade6`). EP4's `make_ep4.py` still strips `tblStyle` before `house` — a stronger choice, left to that paper.
+
+### ~~S2 `house.apply` styles a caption's SEQ field result, and Word's next field update throws the face away~~ — FIXED 09.11, `e020e1e`
+
+<!-- status: fixed -->
+
+Found 2026-11-03 on ep3_sc. The captions are
+`Table <fldSimple w:instr=" SEQ Table \* ARABIC "><w:r>…1…</w:r></fldSimple>: …`
+in the `Caption` style (9 pt, bold, accent-blue).
+
+**Measured.** After `house.apply`, `set_run_properties` (`skip_fields` leaves the
+displayed result alone) and `embolden(para, "Table 1:")`, the XML is correct:
+the result run carries Times New Roman 12, bold and black. `docxkit pdf` drew
+the "1" at 9 pt in accent-blue on all four captions. Word updates fields on
+print/PDF, and an instruction without `\* MERGEFORMAT` regenerates the result in
+the paragraph style. Adding ` \* MERGEFORMAT ` to the instruction fixed the
+render. `house.audit` reads the XML and calls the caption conformant.
+
+**Suggested fix.** When `house.apply` (or `set_run_properties` /
+`embolden` over a caption) restyles the result of a `fldSimple` or complex
+field, add `\* MERGEFORMAT` to its instruction. `audit` should name a styled
+field result whose instruction lacks it. Field codes in fldChar form need the
+same, in the `instrText`.
+
+**Workaround in use.** `make_corrected.py::house_tables` adds `\* MERGEFORMAT`
+to each caption's SEQ instruction and raises if it is absent.
+
+**Fixed 2026-11-09**, `e020e1e`. `house._styled` puts `\* MERGEFORMAT` on every SEQ or STYLEREF field that shows a result in a paragraph it restyles — the `w:instr` of a `w:fldSimple`, or the field's own last `w:instrText` in fldChar form — unless it already carries MERGEFORMAT or CHARFORMAT; idempotent. `audit` names a caption whose number field lacks it, unless the paragraph style alone already resolves to the house face (then Word's regeneration costs nothing). No such finding in a 300-document corpus sample. Tests: `test_house.py::test_a_caption_NUMBER_field_gets_MERGEFORMAT_so_an_update_keeps_the_face` (3 fldSimple + 5 fldChar captions; red at HEAD) and `::test_a_caption_style_that_IS_the_house_face_needs_no_switch`. Workaround deleted: the MERGEFORMAT replace in `make_corrected.py::house_tables`, which keeps only an assertion (BiH `598ade6`).
+
+### ~~S2 `booktabs` writes `w:tcBorders` out of schema order, and `tracked.build` then refuses every redline of a ruled table~~ — FIXED 09.11, `df9ebb9`
+
+<!-- status: fixed -->
+
+Found 2026-11-03 on `D:\bih_elderly_replication` (ep3_sc). The four tables were
+set with `tables.house` + `tables.booktabs`, and the SAME layout was applied to
+both sides of the redline.
+
+**Measured.** `_table_layout._SIDES = ("top", "bottom", "left", "right")`.
+`_edges` writes the edges in that order, with nil edges as
+`<w:bottom w:val="nil" w:sz="0" w:space="0" w:color="auto"/>`. CT_TcBorders is
+a SEQUENCE: top, start|left, bottom, end|right, insideH, insideV, tl2br, tr2bl.
+So the output is schema-invalid. Word's Compare writes it back in schema order
+with bare nil edges (`<w:bottom w:val="nil"/>`). `tracked.build` then failed:
+"the redline does not carry the same STRUCTURE … rejected: cell properties: 358
+cell(s) differ … accepted: 360". Its advice ("a move is the usual cause … build
+with moves=False") points the wrong way: `moves=False` failed identically, and
+so did a build with no table moved at all. Rewriting the borders as Word does
+(schema order, bare nil) made the same build pass: 322 revisions, verified in
+Word.
+
+**Two defects.** (1) `_SIDES` must follow the schema order. Every booktabs
+table in every paper is currently schema-invalid; Word repairs it silently, and
+strict validators do not. (2) Even in schema order, the structure gate compares
+`tcPr` literally, so the redundant attributes on a nil edge still differ after
+Word's save. Either write nil edges bare (Word's normal form), or have the gate
+compare borders by meaning (val, sz, color; ignore sz/space/color on nil). The
+refusal message should also stop blaming a move when no move is present.
+
+**Workaround in use.** `paper\make_corrected.py::word_borders` rewrites each
+`w:tcBorders` inside the four tables into Word's form after booktabs.
+
+**Fixed 2026-11-09**, `df9ebb9`. Both halves. `_table_layout._SIDES` is schema order (top, left, bottom, right) and `_edges` writes a nil edge bare, as Word writes it back. `_tracked_gates._same_props` compares a `w:tcBorders` by meaning: an undrawn (nil/none) edge's size, space, colour and theme attributes are dropped and the edges sorted into schema order before the c14n comparison, so a drawn edge whose size changed still differs. A structure refusal that is only `cell properties` lines now says it is not a move (`tracked._structure_refusal`). Tests: `test_tables_house.py::test_booktabs_writes_every_edge_in_SCHEMA_order_and_nil_edges_bare`, `test_tracked_edges.py::test_BORDERS_compare_by_meaning_not_by_spelling` (both red at HEAD) and `::test_a_CELL_PROPERTIES_only_refusal_does_not_blame_a_move`. Workaround deleted: `make_corrected.py::word_borders` (BiH `598ade6`).
+
+### ~~S2 `house.NOTE` is narrower than `exhibits.NOTE`, so a "*"-led table note is never styled or audited~~ — FIXED 09.11, `e020e1e`
+
+<!-- status: fixed -->
+
+Found 2026-11-03 on `D:\bih_elderly_replication` (ep3_sc, Table 3) while moving
+the tables to the end and applying the house style.
+
+**Measured.** `exhibits.NOTE` and `placement.NOTE` are
+`^\s*(?:(?:Примечание|Источник|Note|Source)\b|[*†‡]|[0-9]{1,2}\)|[a-zа-яё]\))`.
+`house.NOTE` is `^\s*(?:Notes?|Sources?|Примечани[ея]|Источник[иа]?)\s*:`.
+For `"* The monthly costs of over-the-counter medicines…"`, the paragraph right
+under Table 3, `exhibits.NOTE.match` is True and `house.NOTE.match` is False.
+`house.apply(parts, Rules(number_equations=False, equation_lead_after=None))`
+on the paper returned `captions=4, notes=0`. The note moved with its table as
+part of the exhibit span and stayed in the body face (Times 12, 1.5-spaced,
+justified), where the house rule is Times 10, single-spaced and left-aligned.
+`house.audit` uses the same `house.NOTE`, so it cannot report the miss either.
+
+**Diagnosis.** The package has two definitions of "a note". One says what
+travels with an exhibit; the other says what gets the note face. A paragraph
+can belong to a table, move with it, and still be outside the house style,
+and no gate sees this.
+
+**Suggested fix.** Inside an exhibit span, decide note-ness with
+`exhibits.NOTE`, the paragraphs `exhibits()` already lists after the body.
+Keep the narrow `house.NOTE` only for free-standing paragraphs outside a span,
+where "1) …" or "a) …" may be a body list item. Add a test with a "*"-led note
+under a table: it must be styled by `apply` and reported by `audit`.
+
+**Workaround in use.** `paper\make_corrected.py` (`house_tables`) styles that
+paragraph with `set_run_properties` + `set_para_property`, the steps of
+`house._styled`.
+
+**Fixed 2026-11-09**, `e020e1e`. Inside an exhibit's block a note is what `exhibits.NOTE` says (`house._span_notes`: the body-level paragraphs after the body or caption, within `Exhibit.stop`); `house.NOTE` still rules free-standing paragraphs, so a "*" line in prose keeps the body face. `apply`, `audit` and `scope` all read it. Mapped by body-level paragraph ordinal and checked by text — an empty `<w:p/>` counts (ep3_sc has one, and the first walk skipped it and was refused by that check rather than guessing). Measured on 300 corpus documents: +93 audit findings in 22, every one a "*"/"***" significance note under a table; none lost. Test: `tests/test_house.py::test_a_STAR_LED_note_inside_a_table_block_is_styled_and_audited` (red at HEAD). Workaround deleted: `make_corrected.py`'s STAR_NOTES face (BiH `598ade6`; old and new builds compare clean and render pixel-identical).
+
 ### ~~S3 — lint check 7 refuses the empty boxes Word's own Reject All leaves~~ — FIXED 02.11, `3020fe2`
 
 <!-- status: fixed -->
