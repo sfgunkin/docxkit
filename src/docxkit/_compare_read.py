@@ -314,14 +314,18 @@ def _char_fmt(p_xml: str, cascade: Cascade | None = None
               ) -> tuple[str, list[frozenset[str]]]:
     """Per-character formatting over the prose (``<w:t>``) text.
 
-    Hyperlink-styled runs contribute no EMPHASIS: their underline is
-    structural, not an author's emphasis, and counting it makes every
-    link a formatting difference. Their size and colour are compared
-    like anything else's — resolved through the Hyperlink style, so the
-    ordinary case is equal on both sides and a link that really changed
-    colour is not waved through. One manuscript's citation links sat in
-    Word's default blue while every other link in the paper was the
-    house navy, and nothing said so.
+    A Hyperlink-styled run is read like any other. What the style itself
+    contributes — the underline — is structural rather than an author's
+    emphasis, and underline is not among the toggles compared here, so
+    there is nothing to mask. Until 2026-11-05 the run's toggles were
+    masked WHOLE: bold, italic and strike vanished with the underline,
+    so a caption label that became a link read as "bold lost" while it
+    printed bold (ep3_sc, all four captions), and a link that really did
+    lose its bold compared clean. Size and colour are resolved through
+    the Hyperlink style, so the ordinary case is equal on both sides and
+    a link that really changed colour is not waved through. One
+    manuscript's citation links sat in Word's default blue while every
+    other link in the paper was the house navy, and nothing said so.
     """
     cascade = cascade if cascade is not None else Cascade()
     pstyle = Cascade.paragraph_style(p_xml)
@@ -331,10 +335,8 @@ def _char_fmt(p_xml: str, cascade: Cascade | None = None
         body = run.group(1)
         rpr_m = RPR_RE.search(body)
         rpr = rpr_m.group(1) if rpr_m else None
-        is_hyper = rpr is not None and 'w:val="Hyperlink"' in rpr
-        flags = (frozenset[str]() if is_hyper
-                 else _resolved_flags(cascade, rpr, pstyle)) \
-            | _valued(cascade, rpr, pstyle)
+        flags = (_resolved_flags(cascade, rpr, pstyle)
+                 | _valued(cascade, rpr, pstyle))
         for t in WT_RE.findall(body):
             for ch in html.unescape(t):
                 text.append(ch)

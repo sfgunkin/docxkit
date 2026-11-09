@@ -240,6 +240,59 @@ def test_two_exhibits_sharing_a_NAME_are_each_moved_as_THEMSELVES():
         "one of the two was never tried as itself"
 
 
+TABLE_1 = (P("Table 1 lists it.") + P("Table 1. Rates")
+           + table(row("Region", "Rate"), row("North", "1.5"),
+                   row("South", "2.5"), row("East", "3.5")) + P("w"))
+_AS_IS = [FULL, "Figure 1 shows it.", "Figure 1. Cap",
+          "z Table 1 lists it. Table 1. Rates Region Rate North 1.5 "
+          "South 2.5 East 3.5 w " + FULL, FULL]
+#: the trial LFP_Inflows ranked first: caption and header at the foot of
+#: one sheet, every data row on the next
+_STRANDED = [FULL, "Figure 1 shows it. z Table 1 lists it. " + FULL,
+             "Figure 1. Cap Table 1. Rates Region Rate",
+             "North 1.5 South 2.5 East 3.5 w " + FULL, FULL]
+#: the same table, whole, but broken across two sheets
+_BROKEN = [FULL, "Figure 1 shows it. z Table 1 lists it. " + FULL,
+           "Figure 1. Cap Table 1. Rates Region Rate North 1.5",
+           "South 2.5 East 3.5 w " + FULL, FULL]
+_CLEAN = [FULL, "Figure 1 shows it. z " + FULL, "Figure 1. Cap",
+          "Table 1 lists it. Table 1. Rates Region Rate North 1.5 "
+          "South 2.5 East 3.5 w " + FULL, FULL]
+
+
+@pytest.mark.parametrize(("trial", "said"), [
+    (_STRANDED, "caption and header row sit alone on sheet 3, its first "
+                "data row on sheet 4"),
+    (_BROKEN, "Table 1 breaks across sheets, and the current layout holds "
+              "it on one"),
+], ids=["caption-stranded", "table-broken"])
+def test_a_trial_that_STRANDS_or_BREAKS_a_table_is_not_offered(trial, said):
+    """LFP_Inflows, 2026-11-08: the top-ranked move — "1 fewer
+    under-filled sheet" — left Table 1's caption and header row alone at
+    the foot of a page, and no line of the report said so."""
+    doc = parts(FIGURE + P("z") + TABLE_1)
+    original = order(doc)
+    render, _ = recording(lambda o: _AS_IS if o == original else trial)
+
+    rep = repack.repack(doc, render=render, max_drift=9, max_candidates=3)
+
+    assert rep.trials and rep.moves == [] and rep.best is None
+    assert any("not offered" in p and said in p for p in rep.problems), \
+        rep.problems
+
+
+def test_a_trial_that_keeps_the_table_whole_IS_offered():
+    doc = parts(FIGURE + P("z") + TABLE_1)
+    original = order(doc)
+    render, _ = recording(lambda o: _AS_IS if o == original else _CLEAN)
+
+    rep = repack.repack(doc, render=render, max_drift=9, max_candidates=3)
+
+    assert rep.best is not None and rep.best.gain == 1
+    assert not any("caption and header" in p or "breaks across" in p
+                   for p in rep.problems), rep.problems
+
+
 def test_a_move_beyond_the_drift_limit_is_not_offered():
     calls = []
 

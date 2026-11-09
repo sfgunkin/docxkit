@@ -565,6 +565,12 @@ def next_backup_path(path: str | Path, tag: str = "backup", *,
                      into: str | Path | None = None) -> Path:
     """First free ``<stem>_<tag>N.docx`` beside `path` (N starts at 1).
 
+    A tag that ENDS IN A DIGIT is followed by ``_`` before the number:
+    ``before_tracked_2026-11-08`` gave ``…_2026-11-081.docx``, the 81st of
+    November, and its second backup ``…-082``, a different date
+    (LFP_Inflows, 2026-11-08). Every other tag keeps the old form, which
+    the rescue globs and the papers' handovers already name.
+
     `into` puts it in another folder instead, keeping the name. Beside
     the manuscript is right for a file the author keeps in a folder of
     their own, and wrong in a revision-protocol folder, whose first rule
@@ -573,8 +579,9 @@ def next_backup_path(path: str | Path, tag: str = "backup", *,
     """
     path, n = Path(path), 1
     folder = Path(into) if into is not None else path.parent
+    seam = "_" if tag[-1:].isdigit() else ""
     while True:
-        cand = folder / f"{path.stem}_{tag}{n}{path.suffix}"
+        cand = folder / f"{path.stem}_{tag}{seam}{n}{path.suffix}"
         if not cand.exists():
             return cand
         n += 1

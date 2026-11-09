@@ -1451,13 +1451,38 @@ def test_a_character_style_supplies_the_value_too(tmp_path):
 
 
 def test_a_link_that_changed_colour_is_reported(tmp_path):
-    """Hyperlink runs contribute no EMPHASIS — their underline is
-    structural — but their colour is compared like anything else's. One
+    """A Hyperlink run's colour is compared like anything else's. One
     manuscript's citation links sat in Word's default blue while every
     other link in the paper was the house navy, and nothing said so."""
     report = compare(*_styled(tmp_path, _sized(rstyle="Hyperlink"),
                               _sized(colour="1F3864", rstyle="Hyperlink")))
     assert any("colour 1F3864" in str(e) for e in report["format"])
+
+
+def _bold_label(link: bool, bold: bool = True) -> str:
+    rpr = ('<w:rStyle w:val="Hyperlink"/>' if link else "") + (
+        "<w:b/>" if bold else "")
+    return (f"<w:p><w:r><w:rPr>{rpr}</w:rPr><w:t>Table 1</w:t></w:r>"
+            "<w:r><w:t>: Costs</w:t></w:r></w:p>")
+
+
+def test_a_bold_label_that_BECAME_A_LINK_is_still_bold(tmp_path):
+    """ep3_sc, 2026-11-05: all four caption labels kept `<w:b/>`, gained
+    the Hyperlink style, printed bold — and compare said "bold lost",
+    because a link's toggles were masked whole with its underline."""
+    report = compare(*_styled(tmp_path, _bold_label(link=False),
+                              _bold_label(link=True)))
+    # the colour DID change — the label is link-blue now — and is said
+    (said,) = report["format"]
+    assert "bold" in said["from"] and "bold" in said["to"], said
+    assert "colour 0563C1" in said["to"]
+
+
+def test_a_link_that_LOST_its_bold_is_reported(tmp_path):
+    """The false negative of the same mask: the link compared clean."""
+    report = compare(*_styled(tmp_path, _bold_label(link=True),
+                              _bold_label(link=True, bold=False)))
+    assert any("bold" in str(e) for e in report["format"]), report["format"]
 
 
 def test_auto_and_absent_are_the_same_claim_about_colour(tmp_path):
@@ -4253,8 +4278,8 @@ def test_a_paragraph_carries_WORDS_id_not_the_attribute_it_sits_in():
 # * `run.group(1)` and `rpr_m.group(1)` in `_char_fmt`, widened to group
 #   0. Both add only the element's own tags — `<w:r ...>` around a run's
 #   body, `<w:rPr>` around its properties — and everything read out of
-#   them (`RPR_RE`, `WT_RE`, the flag patterns, `w:val="Hyperlink"`)
-#   lives inside, so the same answers come back.
+#   them (`RPR_RE`, `WT_RE`, the flag patterns) lives inside, so the
+#   same answers come back.
 # * `_flags(rpr) | _valued(...)` written `^`. The two sets cannot
 #   intersect: one holds bare names ("italic", "superscript"), the other
 #   `f"{label} {value}"` pairs ("size 24"), and no name is ever a pair.

@@ -123,6 +123,9 @@ class Landing:
     first: int | None
     last: int | None
     mention: int | None
+    #: the sheet a TABLE's first data row landed on; None for a figure, a
+    #: box, a table with no row after its header, or a row not found
+    data: int | None = None
 
     @property
     def drift(self) -> int | None:
@@ -370,6 +373,12 @@ def _land(sheets: list[str], kids: list[etree._Element],
             continue
         first = _sheet_at(starts, at)
         cursor = at + len(probe)
+        data = None
+        if (row := _first_data_row(x)):
+            # searched without moving the cursor: in a one-row table the
+            # first data row IS the end probe, and must still be found
+            hit = text.find(_flat(row[:_PROBE]), cursor)
+            data = _sheet_at(starts, hit) if hit >= 0 else None
         last: int | None = first
         for end in (_flat(e[:_PROBE]) for e in _end_probes(x)):
             hit = text.find(end, cursor)
@@ -380,7 +389,68 @@ def _land(sheets: list[str], kids: list[etree._Element],
         else:
             if _end_probes(x):
                 last = None
-        out.append(Landing(x.name, first, last, mention))
+        out.append(Landing(x.name, first, last, mention, data))
+    return out
+
+
+def _first_data_row(x: Exhibit) -> str:
+    """A TABLE's first row below its header, as the page reads it, or "".
+
+    The header is :func:`docxkit.tables.plan_booktabs`' reading of it: the
+    leading rows whose first cell is empty — spanning group heads over a
+    stub column labelled only from the data down — and the row after them.
+    """
+    if x.kind != "table":
+        return ""
+    tables = [e for e in x.elements if e.tag == W + "tbl"]
+    if not tables:
+        return ""
+    rows = [[text_of(tc).strip() for tc in tr.findall(W + "tc")]
+            for tr in tables[0].findall(W + "tr")]
+    head = 0
+    while head < len(rows) and rows[head] and not rows[head][0]:
+        head += 1
+    data = [" ".join(r).strip() for r in rows[head + 1:]]
+    return next((r for r in data if r), "")
+
+
+def _table_faults(landings: list[Landing], found: list[Exhibit],
+                  ) -> dict[tuple[str, str], tuple[str, bool]]:
+    """Per table: what is wrong with how it landed, and whether it landed
+    WHOLE (caption to last row on one sheet). Keyed by name AND caption,
+    since two exhibits can share a name."""
+    out: dict[tuple[str, str], tuple[str, bool]] = {}
+    for z, x in zip(landings, found, strict=True):
+        if x.kind != "table" or z.first is None:
+            continue
+        fault = ""
+        if z.data is not None and z.data != z.first:
+            fault = (f"{x.name}'s caption and header row sit alone on sheet "
+                     f"{z.first}, its first data row on sheet {z.data}")
+        out[(x.name, x.caption)] = (fault, z.last == z.first)
+    return out
+
+
+def _new_faults(before: dict[tuple[str, str], tuple[str, bool]],
+                after: dict[tuple[str, str], tuple[str, bool]]) -> list[str]:
+    """What a trial does to the tables that the layout it would replace
+    did not: a caption stranded from its data, or a table broken across
+    sheets that the current layout holds on one.
+
+    LFP_Inflows, 2026-11-08: the top-ranked move left Table 1's caption
+    and header alone at the foot of page 4, every data row on page 5, and
+    no line of the report said so; keeping the table together then moved
+    the short sheet, so the ranking had compared layouts a correct gate
+    would have refused.
+    """
+    out = []
+    for key, (fault, whole) in after.items():
+        was_fault, was_whole = before.get(key, ("", False))
+        if fault and not was_fault:
+            out.append(fault)
+        elif was_whole and not whole:
+            out.append(f"{key[0]} breaks across sheets, and the current "
+                       f"layout holds it on one")
     return out
 
 
@@ -665,6 +735,7 @@ def repack(parts: Parts, *,
     blamed = _blame(rep.underfull, rep.landings)
     rep.blamed = {n: None if i is None else found[i].name
                   for n, i in blamed.items()}
+    as_is = _table_faults(rep.landings, found)
     tried: set[tuple[int, int]] = set()
     failed = 0
     for n in rep.underfull:
@@ -725,6 +796,11 @@ def repack(parts: Parts, *,
                     f"not offered")
                 continue
             if abs(there.drift) > allowed:
+                continue
+            harm = _new_faults(as_is, _table_faults(landings, shown))
+            if harm:
+                rep.problems.append(f"{name} after {after!r}: not offered — "
+                                    + "; ".join(harm))
                 continue
             rep.moves.append(Move(
                 name=name, after=after, target=target, drift=there.drift,

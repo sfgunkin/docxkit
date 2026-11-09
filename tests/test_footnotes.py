@@ -996,7 +996,76 @@ def test_the_new_note_carries_its_TEXT_and_the_reference_mark():
     note = find(parts["word/footnotes.xml"].decode("utf-8"), "Eurostat")
     assert "<w:footnoteRef/>" in note.xml
     assert note.text == "Data are from Eurostat (2023)."
-    assert 'w:rStyle w:val="FootnoteReference"' in note.xml
+    # no styles part and no sibling with a mark to copy: set DIRECTLY,
+    # never by a style name the document does not define
+    assert "FootnoteReference" not in note.xml
+    assert '<w:vertAlign w:val="superscript"/>' in note.xml
+
+
+def _direct_paper(n: int) -> dict[str, bytes]:
+    """LFP_Inflows' shape: `n` notes set by DIRECT formatting, and a
+    styles part that defines neither FootnoteText nor FootnoteReference."""
+    sup = '<w:rPr><w:vertAlign w:val="superscript"/><w:sz w:val="20"/></w:rPr>'
+    face = ('<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New '
+            'Roman"/><w:i/><w:sz w:val="20"/></w:rPr>')
+    defs = "".join(
+        f'<w:footnote w:id="{i}"><w:p><w:pPr><w:spacing w:after="2"/></w:pPr>'
+        f"<w:r>{sup}<w:footnoteRef/></w:r><w:r>{face}"
+        f'<w:t xml:space="preserve"> Italic title {i}.</w:t></w:r></w:p>'
+        "</w:footnote>" for i in range(1, n + 1))
+    body = "".join(f"<w:p><w:r><w:t>Claim {i}.</w:t></w:r><w:r>"
+                   '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+                   f'<w:footnoteReference w:id="{i}"/></w:r></w:p>'
+                   for i in range(1, n + 1))
+    body += "<w:p><w:r><w:t>An uncited claim.</w:t></w:r></w:p>"
+    return {
+        "word/document.xml":
+            f"<w:document {NS}><w:body>{body}</w:body></w:document>".encode(),
+        "word/footnotes.xml": (f"<w:footnotes {NS}>{_SEPARATORS}{defs}"
+                               "</w:footnotes>").encode(),
+        "word/styles.xml": (f'<w:styles {NS}><w:style w:type="paragraph" '
+                            'w:styleId="Normal"/></w:styles>').encode()}
+
+
+def test_a_new_note_is_SET_LIKE_its_siblings_not_by_undefined_styles():
+    """LFP_Inflows, 2026-11-08: the new note named FootnoteText and
+    FootnoteReference, which the document never defined; it rendered at
+    the Normal size with a full-size mark, Compare dropped the dangling
+    names, and after acceptance the mark was a full-size "6"."""
+    from docxkit.footnotes import add, find, sizes
+
+    parts = _direct_paper(5)
+    new_id = add(parts, after="An uncited claim.", text="A new note.")
+
+    notes = parts["word/footnotes.xml"].decode("utf-8")
+    doc = parts["word/document.xml"].decode("utf-8")
+    note = find(notes, "A new note")
+    assert "FootnoteText" not in note.xml
+    assert "FootnoteReference" not in note.xml + doc
+    assert '<w:spacing w:after="2"/>' in note.xml
+    assert ('<w:rPr><w:vertAlign w:val="superscript"/><w:sz w:val="20"/>'
+            "</w:rPr><w:footnoteRef/>") in note.xml
+    assert '<w:sz w:val="20"/>' in note.xml and "<w:i/>" not in note.xml
+    assert re.search(r'<w:r><w:rPr><w:vertAlign w:val="superscript"/>'
+                     rf'</w:rPr><w:footnoteReference w:id="{new_id}"/>', doc)
+    styles = parts["word/styles.xml"].decode("utf-8")
+    assert sizes(notes, styles_xml=styles).ok
+
+
+def test_with_no_sibling_a_DEFINED_style_is_named():
+    from docxkit.footnotes import add, find
+
+    parts = _package()
+    parts["word/styles.xml"] = (
+        f'<w:styles {NS}><w:style w:type="paragraph" '
+        'w:styleId="FootnoteText"/><w:style w:type="character" '
+        'w:styleId="FootnoteReference"/>'
+        "</w:styles>").encode()
+    add(parts, after="Sentence 2.", text="Styled.")
+
+    note = find(parts["word/footnotes.xml"].decode("utf-8"), "Styled")
+    assert '<w:pStyle w:val="FootnoteText"/>' in note.xml
+    assert '<w:rStyle w:val="FootnoteReference"/>' in note.xml
 
 
 def test_the_reference_lands_where_the_anchor_ENDS():

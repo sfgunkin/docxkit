@@ -218,6 +218,16 @@ def test_backup_numbers_sequentially(tmp_path):
             == "paper_user_edited3.docx")
 
 
+def test_a_tag_ending_in_a_DIGIT_is_kept_apart_from_the_number(tmp_path):
+    """LFP_Inflows, 2026-11-08: `before_tracked_2026-11-08` gave
+    `…_2026-11-081.docx`, which reads as the 81st of November."""
+    src = tmp_path / "paper_2.docx"
+    write(src, make_parts(para(run("x"))))
+    names = [backup(src, "before_tracked_2026-11-08").name for _ in range(3)]
+    assert names == [f"paper_2_before_tracked_2026-11-08_{n}.docx"
+                     for n in (1, 2, 3)]
+
+
 def test_is_locked_false_for_closed_file(simple_docx):
     assert is_locked(simple_docx) is False
 

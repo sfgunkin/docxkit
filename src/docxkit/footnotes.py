@@ -320,14 +320,92 @@ def prune_orphans(parts: Parts) -> list[Orphan]:
     return gone
 
 
-#: The reference run Word writes, and the definition's opening run.
-_REF_RUN = ('<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
-            '<w:footnoteReference w:id="{id}"/></w:r>')
-_DEF = ('<w:footnote w:id="{id}"><w:p><w:pPr>'
-        '<w:pStyle w:val="FootnoteText"/></w:pPr><w:r><w:rPr>'
-        '<w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/>'
-        '</w:r><w:r><w:t xml:space="preserve"> {text}</w:t></w:r>'
+#: The reference run, and the definition: the properties are filled from
+#: a sibling note (:func:`_shape`), never assumed.
+_REF_RUN = '<w:r>{rpr}<w:footnoteReference w:id="{id}"/></w:r>'
+_DEF = ('<w:footnote w:id="{id}"><w:p>{ppr}<w:r>{mark}<w:footnoteRef/>'
+        '</w:r><w:r>{run}<w:t xml:space="preserve"> {text}</w:t></w:r>'
         "</w:p></w:footnote>")
+#: what a note's FACE is, of everything its first text run may state —
+#: italics or a character style there belong to its first words
+_FACE_TAGS = ("rFonts", "color", "sz", "szCs", "lang")
+_FOOTNOTE_REF_RE = re.compile(r"<w:footnoteRef\b")
+_WT_OPEN_RE = re.compile(r"<w:t(?=[\s/>])")
+_REF_ID_RE = re.compile(r'<w:footnoteReference\b[^>]*\bw:id="([^"]*)"')
+
+
+class _Shape(NamedTuple):
+    """The properties a new note is written with."""
+
+    ppr: str            # the definition paragraph's whole `w:pPr`, or ""
+    mark: str           # the `w:footnoteRef` run's whole `w:rPr`, or ""
+    run: str            # the text run's `w:rPr`, face only, or ""
+    ref: str            # the body's `w:footnoteReference` run's `w:rPr`
+
+
+def _rpr_of(run_xml: str) -> str:
+    own = own_properties(run_xml, "rPr")
+    return run_xml[own[0]:own[1]] if own else ""
+
+
+def _face_only(rpr: str) -> str:
+    """`rpr` cut to the note's face: a sibling's first run can open with
+    an italic title, and the new note must not inherit that."""
+    if not rpr or rpr.endswith("/>"):
+        return ""
+    inner = live_properties(rpr[rpr.index(">") + 1:rpr.rindex("</w:rPr>")])
+    keep = [m.group(0) for tag in _FACE_TAGS
+            for m in re.finditer(rf"<w:{tag}\b[^>]*/>", inner)]
+    return f"<w:rPr>{''.join(keep)}</w:rPr>" if keep else ""
+
+
+def _shape(parts: Parts, notes_xml: str, doc: str,
+           sibling_id: str | None) -> _Shape:
+    """How the document's OWN notes are set — cloned from `sibling_id`,
+    or the first note there is — so a new one cannot name a style the
+    document never defined.
+
+    LFP_Inflows, 2026-11-08: `add` wrote `pStyle FootnoteText` and
+    `rStyle FootnoteReference`; `styles.xml` defined neither, because the
+    paper's five notes are set by DIRECT formatting. The note rendered
+    at the Normal size with a full-size mark, Word's Compare dropped the
+    dangling references, and every `tracked.build` gate passed.
+
+    With no note to copy, a style is named only if `styles.xml` defines
+    it; otherwise the note is set directly — 10 pt, superscript marks.
+    """
+    notes = find_all(notes_xml)
+    sib = next((n for n in notes if n.id == sibling_id),
+               notes[0] if notes else None)
+    if sib is not None:
+        para = PARA_RE.search(sib.xml)
+        p = para.group(0) if para else ""
+        own = own_properties(p, "pPr")
+        runs = [r.group(0) for r in RUN_RE.finditer(p)]
+        mark = next((r for r in runs if _FOOTNOTE_REF_RE.search(r)), None)
+        text = next((r for r in runs if _WT_OPEN_RE.search(r)
+                     and not _FOOTNOTE_REF_RE.search(r)), "")
+        body = next((r.group(0) for r in RUN_RE.finditer(doc)
+                     if (m := _REF_ID_RE.search(r.group(0)))
+                     and m.group(1) == sib.id), None)
+        if mark is not None and body is not None:
+            return _Shape(ppr=p[own[0]:own[1]] if own else "",
+                          mark=_rpr_of(mark), run=_face_only(_rpr_of(text)),
+                          ref=_rpr_of(body))
+    styles = parts.get("word/styles.xml", b"").decode("utf-8", "replace")
+
+    def defined(style_id: str) -> bool:
+        return re.search(rf'w:styleId="{re.escape(style_id)}"',
+                         styles) is not None
+    sup = '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+    ref = ('<w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr>'
+           if defined("FootnoteReference") else sup)
+    if defined("FootnoteText"):
+        return _Shape(ppr='<w:pPr><w:pStyle w:val="FootnoteText"/></w:pPr>',
+                      mark=ref, run="", ref=ref)
+    return _Shape(ppr="", mark=ref,
+                  run='<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr>',
+                  ref=ref)
 
 
 def add(parts: Parts, *, after: str, text: str) -> str:
@@ -371,17 +449,23 @@ def add(parts: Parts, *, after: str, text: str) -> str:
     used = {int(f.id) for f in find_all(notes_xml, include_reserved=True)}
     new_id = str(max({*used, 0}) + 1)
 
-    para = insert_in_para(para, at, _REF_RUN.format(id=new_id))
-    doc = doc[:start] + para + doc[end:]
-
     # WHERE the definition goes: right after the definition of the note
     # whose reference now precedes this one. That keeps the part in
     # reference order by construction, which is what `out_of_order`
-    # measures and what Compare would otherwise impose.
-    order = [i for i in _REFERENCE_OF["footnote"].findall(doc)
-             if i not in _RESERVED_IDS]
-    before = order[order.index(new_id) - 1] if order.index(new_id) else None
-    body = _DEF.format(id=new_id, text=escape(text))
+    # measures and what Compare would otherwise impose. That note is also
+    # the one the new note is SET like.
+    marker = "\x00docxkit-new-note\x00"
+    probe = doc[:start] + insert_in_para(para, at, marker) + doc[end:]
+    order = [i for i in _REFERENCE_OF["footnote"].findall(
+        probe[:probe.index(marker)]) if i not in _RESERVED_IDS]
+    before = order[-1] if order else None
+    shape = _shape(parts, notes_xml, doc, before)
+
+    para = insert_in_para(para, at, _REF_RUN.format(id=new_id,
+                                                    rpr=shape.ref))
+    doc = doc[:start] + para + doc[end:]
+    body = _DEF.format(id=new_id, text=escape(text), ppr=shape.ppr,
+                       mark=shape.mark, run=shape.run)
     if before is None:
         first = find_all(notes_xml)
         at_def = first[0].start if first else len(notes_xml) - len(
