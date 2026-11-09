@@ -496,9 +496,24 @@ _INTERTAG_WS_RE = re.compile(r">\s+<")
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
+#: CT_TcBorders' sequence, by local name; `start`/`end` are the bidi
+#: spellings of `left`/`right` and sit in their places.
+_BORDER_ORDER = {name: i for i, names in enumerate(
+    (("top",), ("start", "left"), ("bottom",), ("end", "right"),
+     ("insideH",), ("insideV",), ("tl2br",), ("tr2bl",)))
+    for name in names}
+#: an edge Word does not draw — what else it says about itself is noise
+_UNDRAWN = frozenset({"nil", "none"})
+
+
 def _same_props(a: str, b: str) -> bool:
     """Two property contents equal as XML: attribute order and the
-    whitespace between tags are not properties."""
+    whitespace between tags are not properties — and neither is how a
+    BORDER is spelled. An undrawn edge's size, space and colour mean
+    nothing, and edges out of schema order mean the same edges: Word
+    writes both back in its own form on save, and comparing them
+    literally refused every redline of a booktabs table (ep3_sc,
+    2026-11-03: 358 cells, with no table moved at all)."""
     if a == b:  # the same text: nothing to canonicalise
         return True
     from lxml import etree
@@ -506,7 +521,21 @@ def _same_props(a: str, b: str) -> bool:
     def canon(inner: str) -> bytes:
         wrapped = (f'<w:tcPr xmlns:w="{W_NS}">'
                    f"{_INTERTAG_WS_RE.sub('><', inner.strip())}</w:tcPr>")
-        return etree.tostring(etree.fromstring(wrapped), method="c14n")
+        root = etree.fromstring(wrapped)
+        for box in root.iter(f"{{{W_NS}}}tcBorders"):
+            edges = list(box)
+            for edge in edges:
+                if edge.get(f"{{{W_NS}}}val") in _UNDRAWN:
+                    for attr in ("sz", "space", "color", "themeColor",
+                                 "themeTint", "themeShade", "shadow",
+                                 "frame"):
+                        if f"{{{W_NS}}}{attr}" in edge.attrib:
+                            del edge.attrib[f"{{{W_NS}}}{attr}"]
+            edges.sort(key=lambda e: _BORDER_ORDER.get(
+                etree.QName(e).localname if isinstance(e.tag, str) else "",
+                len(_BORDER_ORDER)))
+            box[:] = edges
+        return etree.tostring(root, method="c14n")
 
     try:
         return canon(a) == canon(b)

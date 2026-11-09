@@ -243,6 +243,87 @@ def test_house_composes_with_booktabs():
     assert "<w:tblBorders" in ruled or "<w:tcBorders" in ruled
 
 
+def test_booktabs_writes_every_edge_in_SCHEMA_order_and_nil_edges_bare():
+    """CT_TcBorders is top, left, bottom, right. Written top, bottom,
+    left, right, every ruled table in every paper was schema-invalid,
+    and Word's repaired copy failed tracked.build (ep3_sc, 2026-11-03)."""
+    import re
+
+    from lxml import etree
+
+    from docxkit.tables import booktabs
+
+    xml = _doc()
+    styled, _ = house(xml, read_all(xml)[0])
+    ruled, _ = booktabs(styled, read_all(styled)[0])
+
+    boxes = re.findall(r"<w:tcBorders>(.*?)</w:tcBorders>", ruled)
+    assert len(boxes) == 6                      # 3 rows x 2 cells
+    rank = {"top": 0, "left": 1, "bottom": 2, "right": 3}
+    for box in boxes:
+        sides = re.findall(r"<w:(\w+) ", box)
+        assert sides == sorted(sides, key=rank.__getitem__), box
+        assert len(sides) == 4
+    nil = re.findall(r'<w:\w+ w:val="nil"[^>]*/>', ruled)
+    assert nil and all(e.endswith('w:val="nil"/>') for e in nil)
+    etree.fromstring(ruled.encode())
+
+
+_CNF = '<w:cnfStyle w:val="100000000000"/>'
+
+
+def _styled_table(nested: bool = False) -> str:
+    """ep3_sc's Table 3: a theme style, its look on, cnfStyle cached on
+    every cell (7 here), and optionally a nested table with its own."""
+    inner = ("<w:tbl><w:tblPr><w:tblStyle w:val='Inner'/></w:tblPr>"
+             "<w:tblGrid><w:gridCol w:w='500'/></w:tblGrid><w:tr><w:tc>"
+             f"<w:tcPr>{_CNF}</w:tcPr><w:p/></w:tc></w:tr></w:tbl>")
+
+    def cell(k: int) -> str:
+        return (f"<w:tc><w:tcPr>{_CNF}<w:tcW w:w='1000' w:type='dxa'/>"
+                f"</w:tcPr><w:p><w:r><w:t>v{k}</w:t></w:r></w:p>"
+                + (inner if nested and k == 0 else "") + "</w:tc>")
+    rows = "".join(
+        f"<w:tr><w:trPr>{_CNF}</w:trPr>{cell(k)}</w:tr>" if k < 2 else
+        f"<w:tr>{cell(k)}</w:tr>" for k in range(7))
+    return document(
+        para(run("Table 3: Costs"))
+        + '<w:tbl><w:tblPr><w:tblStyle w:val="GridTable4-Accent1"/>'
+        '<w:tblW w:w="0" w:type="auto"/><w:tblLook w:val="04A0" '
+        'w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" '
+        'w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>'
+        "<w:gridCol w:w='1000'/></w:tblGrid>" + rows + "</w:tbl>")
+
+
+def test_booktabs_switches_a_theme_styles_CONDITIONAL_formats_off():
+    """Header fill, banding and a bold first column all survived the
+    rules on ep3_sc (2026-11-03); only a render showed them."""
+    from lxml import etree
+
+    from docxkit.tables import booktabs
+
+    xml = _styled_table(nested=True)
+    assert xml.count("<w:cnfStyle") == 7 + 2 + 1
+
+    ruled, _ = booktabs(xml, read_all(xml)[0])
+
+    assert 'w:firstRow="0"' in ruled and 'w:noHBand="1"' in ruled
+    assert 'w:firstColumn="0"' in ruled and 'w:firstRow="1"' not in ruled
+    assert ruled.count("<w:cnfStyle") == 1       # the nested table's own
+    assert '<w:tblStyle w:val="GridTable4-Accent1"/>' in ruled
+    etree.fromstring(ruled.encode())
+
+
+def test_a_table_with_NO_style_keeps_its_look():
+    from docxkit.tables import booktabs
+
+    xml = _styled_table().replace(
+        '<w:tblStyle w:val="GridTable4-Accent1"/>', "")
+    ruled, _ = booktabs(xml, read_all(xml)[0])
+
+    assert 'w:firstRow="1"' in ruled and ruled.count("<w:cnfStyle") == 9
+
+
 def test_a_tracked_table_is_refused():
     xml = _doc().replace(
         "<w:tc>", '<w:tc><w:p><w:ins w:id="9" w:author="A" '

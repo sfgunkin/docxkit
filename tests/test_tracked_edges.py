@@ -327,6 +327,44 @@ def test_a_view_with_FEWER_rows_is_left_to_the_structure_counts():
     assert cell_property_changes(base, view) == []
 
 
+_BOOKTABS = ('<w:tcBorders><w:top w:val="single" w:sz="8" w:space="0" '
+             'w:color="auto"/><w:bottom w:val="nil" w:sz="0" w:space="0" '
+             'w:color="auto"/><w:left w:val="nil" w:sz="0" w:space="0" '
+             'w:color="auto"/><w:right w:val="nil" w:sz="0" w:space="0" '
+             'w:color="auto"/></w:tcBorders>')
+#: the same edges as Word writes them back: schema order, nil bare
+_WORDS = ('<w:tcBorders><w:top w:val="single" w:sz="8" w:space="0" '
+          'w:color="auto"/><w:left w:val="nil"/><w:bottom w:val="nil"/>'
+          '<w:right w:val="nil"/></w:tcBorders>')
+
+
+def test_BORDERS_compare_by_meaning_not_by_spelling():
+    """ep3_sc, 2026-11-03: 358 cells refused, no table moved. Out of
+    order, or a nil edge with a size, is the same edge; a DRAWN edge's
+    size is not noise."""
+    base = make_parts(_cells(*[(_BOOKTABS,) * 3] * 5))
+    view = make_parts(_cells(*[(_WORDS,) * 3] * 5))
+    thicker = make_parts(_cells(*[(_WORDS.replace('w:sz="8"', 'w:sz="12"'),)
+                                  * 3] * 5))
+
+    assert cell_property_changes(base, view) == []
+    (said,) = cell_property_changes(base, thicker)
+    assert said.startswith("cell properties: 15 cell(s) differ")
+
+
+def test_a_CELL_PROPERTIES_only_refusal_does_not_blame_a_move():
+    from docxkit.tracked import _structure_refusal
+
+    props = _structure_refusal(
+        ["rejected: cell properties: 358 cell(s) differ — table 1 row 1",
+         "accepted: cell properties: 360 cell(s) differ — table 1 row 1"])
+    counts = _structure_refusal(["rejected: tbl 4 -> 5",
+                                 "accepted: cell properties: 3 cell(s)"])
+
+    assert "not a move" in props and "moves=False" not in props
+    assert "A move is the usual cause" in counts
+
+
 def test_a_changed_cell_is_named_by_its_OWN_table_row_and_cell():
     """Past the first of each: `t ^ 1` and `t | 1` agree with `t + 1` at
     index 0 and nowhere after."""

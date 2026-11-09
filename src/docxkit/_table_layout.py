@@ -36,6 +36,7 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     T_PARTS_RE,
+    element_spans,
     escape_attr,
     live_properties,
     matching_close,
@@ -1377,7 +1378,13 @@ def bottom_border(xml: str, table: Table, *, val: str = "double",
 # arrived with rules stacked three deep at the top, headers that were
 # never closed, and panel rules in some tables but not others.
 
-_SIDES = ("top", "bottom", "left", "right")
+#: CT_TcBorders is a SEQUENCE — top, start|left, bottom, end|right, … —
+#: so this is the order the edges are WRITTEN in. It was ("top",
+#: "bottom", "left", "right") until 2026-11-03: every booktabs table in
+#: every paper was schema-invalid, Word repaired it silently on save,
+#: and the repaired cells then failed `tracked.build`'s structure gate
+#: (ep3_sc, 358 cells).
+_SIDES = ("top", "left", "bottom", "right")
 
 #: ``ST_Border``, the members a manuscript actually rules with. The check
 #: is not pedantry about the enumeration: `val` is interpolated straight
@@ -1470,8 +1477,12 @@ _JC_VALUES = frozenset({"left", "center", "right", "both", "start", "end"})
 
 
 def _edges(spec: dict[str, tuple[str, int]]) -> str:
-    """A ``w:tcBorders`` element from ``{side: (val, sz)}``."""
+    """A ``w:tcBorders`` element from ``{side: (val, sz)}``, in schema
+    order. A ``nil`` edge is written BARE, as Word writes it back: the
+    size, space and colour of an edge that is not drawn mean nothing,
+    and carrying them made every Word-saved copy differ cell by cell."""
     inner = "".join(
+        f'<w:{side} w:val="nil"/>' if val == "nil" else
         f'<w:{side} w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
         for side in _SIDES if (pair := spec.get(side))
         for val, sz in [pair])
@@ -1685,7 +1696,63 @@ def booktabs(xml: str, table: Table, *, plan: BooktabsPlan | None = None,
                               tr.start() + tc.end(), new))
     for start, end, replacement in sorted(edits, reverse=True):
         body = body[:start] + replacement + body[end:]
+    body = _without_conditional_formats(body)
     return xml[:table.start] + body + xml[table.end:], shape
+
+
+#: Every conditional format off: firstRow, lastRow, firstColumn and
+#: lastColumn clear, both banding kinds suppressed (0x0200 | 0x0400).
+_LOOK_OFF = ('<w:tblLook w:val="0600" w:firstRow="0" w:lastRow="0" '
+             'w:firstColumn="0" w:lastColumn="0" w:noHBand="1" '
+             'w:noVBand="1"/>')
+_TBLLOOK_RE = re.compile(r"<w:tblLook\b[^>]*/>|<w:tblLook\b[^>]*>.*?"
+                         r"</w:tblLook>", re.DOTALL)
+_CNF_RE = re.compile(r"<w:cnfStyle\b[^>]*/>")
+_AFTER_TBLLOOK = ("<w:tblCaption", "<w:tblDescription", "<w:tblPrChange")
+
+
+def _without_conditional_formats(body: str) -> str:
+    """`body` with its table style's CONDITIONAL formats switched off.
+
+    A theme style such as ``GridTable4-Accent1`` paints the header row
+    accent-blue with white bold text, bands the rows and bolds the first
+    column, and per-cell borders override none of it: ep3_sc's Table 3
+    rendered all three under booktabs rules (2026-11-03), and no gate
+    sees it without a render. The style itself stays — its font is
+    overridden on the runs by `house`, and dropping it would move the
+    cell margins it sets — but `tblLook` turns its conditional parts off,
+    and the `w:cnfStyle` caches Word wrote from them go, since a stale
+    cache is what a reader without the style (and Word's Compare) uses.
+
+    A table with no `w:tblStyle` is left alone: its conditional formats
+    come from the default table style, which has none. A NESTED table's
+    caches are its own style's business.
+    """
+    own = _own_tblpr(body)
+    if own is None or not re.search(r"<w:tblStyle\b", own[2]):
+        return body                     # also an empty <w:tblPr/>
+    start, end, inner = own
+    look = _TBLLOOK_RE.search(inner)
+    if look is not None:
+        inner = inner[:look.start()] + _LOOK_OFF + inner[look.end():]
+    else:
+        at = min((p for p in (inner.find(t) for t in _AFTER_TBLLOOK)
+                  if p != -1), default=len(inner))
+        inner = inner[:at] + _LOOK_OFF + inner[at:]
+    open_tag = re.match(r"<w:tblPr\b[^>]*?(?<!/)>", body[start:end])
+    assert open_tag is not None         # it holds a tblStyle: not empty
+    body = (body[:start] + f"{open_tag.group(0)}{inner}</w:tblPr>"
+            + body[end:])
+    nested = element_spans(body[1:], "tbl")
+    keep = [(a + 1, b + 1) for a, b in nested]
+    out, at = [], 0
+    for m in _CNF_RE.finditer(body):
+        if any(a <= m.start() < b for a, b in keep):
+            continue
+        out.append(body[at:m.start()])
+        at = m.end()
+    out.append(body[at:])
+    return "".join(out)
 
 
 #: What makes a textless row content anyway. An image, a shape or an

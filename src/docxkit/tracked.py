@@ -758,6 +758,36 @@ def _carry_parts(parts: Parts, revised_parts: Parts,
             f"its removal)")
 
 
+def _structure_refusal(diffs: list[str]) -> str:
+    """Why the structure gate refused, and what to try — which depends on
+    WHAT differs. Only cell properties, and no table, row or cell came
+    or went: no block was duplicated, so the move advice is wrong
+    (ep3_sc, 2026-11-03 — `moves=False` failed identically, and so did a
+    build that moved no table at all)."""
+    listed = "\n  ".join(diffs)
+    if all(": cell properties:" in d for d in diffs):
+        return (f"the redline does not carry the same CELL PROPERTIES as "
+                f"the documents it was built from:\n  {listed}\n"
+                f"No table, row or cell was added or lost, so this is not "
+                f"a move: Word rewrote those cells' w:tcPr while deriving "
+                f"the redline. The usual cause is a property spelled in a "
+                f"form Word normalises on save — save the clean copy "
+                f"through Word once and compare a cell's tcPr before and "
+                f"after. Pass reject_check=False to build the file anyway "
+                f"and inspect it.")
+    return (f"the redline does not carry the same STRUCTURE as the "
+            f"documents it was built from:\n  {listed}\n"
+            f"A move is the usual cause: Word's Compare answers a "
+            f"moved block by writing the table twice and marking "
+            f"neither copy, so neither accepting nor rejecting "
+            f"removes the duplicate. Build with moves=False "
+            f"(`revision build --no-moves`), which takes Word's move "
+            f"detection out of it and shows the block as a deletion "
+            f"and an insertion; move it in the CLEAN copy in a "
+            f"separate round; or pass reject_check=False to build "
+            f"the file anyway and inspect it.")
+
+
 def build(original: str | Path, revised: str | Path, out: str | Path,
           classify: Classifier | None = None,
           *, author: str = "Revision", generic: str | None = _comments.GENERIC,
@@ -1053,19 +1083,7 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         for missed in report.unaccepted:
             say(f"  UNACCEPTED {missed}")
         if report.structure_diff and reject_check:
-            listed = "\n  ".join(report.structure_diff)
-            raise PackageError(
-                f"the redline does not carry the same STRUCTURE as the "
-                f"documents it was built from:\n  {listed}\n"
-                f"A move is the usual cause: Word's Compare answers a "
-                f"moved block by writing the table twice and marking "
-                f"neither copy, so neither accepting nor rejecting "
-                f"removes the duplicate. Build with moves=False "
-                f"(`revision build --no-moves`), which takes Word's move "
-                f"detection out of it and shows the block as a deletion "
-                f"and an insertion; move it in the CLEAN copy in a "
-                f"separate round; or pass reject_check=False to build "
-                f"the file anyway and inspect it.")
+            raise PackageError(_structure_refusal(report.structure_diff))
         if report.unrejectable and reject_check:
             listed = "\n  ".join(str(u) for u in report.unrejectable)
             raise PackageError(
