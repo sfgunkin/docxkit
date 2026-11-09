@@ -67,6 +67,88 @@ def test_captions_found_for_both_labels_and_russian():
                                                              "Таблица4"]
 
 
+# --- the forms Word writes: a field number, a mention cut into runs ----
+
+def _seq_simple(k: int) -> str:
+    """Insert Caption's form — ep3_sc's four captions (2026-11-05)."""
+    return para(run("Table "),
+                r'<w:fldSimple w:instr=" SEQ Table \* ARABIC ">'
+                f"{run(str(k))}</w:fldSimple>", run(f": Costs {k}"))
+
+
+def _seq_complex(k: int) -> str:
+    return para(run("Figure "),
+                '<w:r><w:fldChar w:fldCharType="begin"/></w:r>',
+                r'<w:r><w:instrText xml:space="preserve"> SEQ Figure \* '
+                "ARABIC </w:instrText></w:r>",
+                '<w:r><w:fldChar w:fldCharType="separate"/></w:r>',
+                run(str(k)), '<w:r><w:fldChar w:fldCharType="end"/></w:r>',
+                run(f". Wages {k}"))
+
+
+def _text(xml: str) -> str:
+    return "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", xml))
+
+
+#: "Tabl" | "e 1" inside the author's own HYPERLINK field: split, and
+#: already a link, so nothing here may wrap it
+_SPLIT_IN_A_FIELD = (
+    '<w:r><w:fldChar w:fldCharType="begin"/></w:r>',
+    '<w:r><w:instrText xml:space="preserve"> HYPERLINK \\l "Other" '
+    "</w:instrText></w:r>",
+    '<w:r><w:fldChar w:fldCharType="separate"/></w:r>',
+    run("Tabl"), run("e 1"),
+    '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def test_a_caption_whose_NUMBER_IS_A_FIELD_is_linked_not_refused():
+    """`find_captions` read these by visible text and `link` raised
+    "caption label is split across runs" on the first (ep3_sc)."""
+    xml = doc(*[para(run(f"Prose cites Table {k} and Figure {k}."))
+                for k in (1, 2, 3)],
+              *[_seq_simple(k) for k in (1, 2, 3)],
+              *[_seq_complex(k) for k in (1, 2, 3)])
+
+    out, report = crossrefs.link(xml)
+
+    assert sorted(report.linked) == sorted(
+        [f"Table{k}" for k in (1, 2, 3)] + [f"Figure{k}" for k in (1, 2, 3)])
+    assert _text(out) == _text(xml)
+    for k in (1, 2, 3):
+        cap = paragraph_holding(out, f"Costs {k}")
+        link = re.search(rf'<w:hyperlink w:anchor="Table{k}txt">(.*?)'
+                         r"</w:hyperlink>", cap, re.DOTALL)
+        assert link is not None
+        assert "<w:fldSimple" in link.group(1) and "Table " in link.group(1)
+        assert link.group(1).count('<w:rStyle w:val="Hyperlink"/>') == 2
+        assert f'w:name="Table{k}"' in cap
+        fig = paragraph_holding(out, f"Wages {k}")
+        flink = re.search(rf'<w:hyperlink w:anchor="Figure{k}txt">(.*?)'
+                          r"</w:hyperlink>", fig, re.DOTALL)
+        assert flink is not None and 'w:fldCharType="end"' in flink.group(1)
+
+
+def test_a_MENTION_split_across_runs_is_linked_and_bookmarked():
+    """ep3_sc_accepted: "T" | "able " | "3", cut at rsid boundaries, read
+    as no mention — while `link_more` could link the same split."""
+    xml = doc(*[para(run("As "), run("T"), run("able "), run(f"{k} shows."))
+                for k in (3, 5, 7)],
+              *[para(run(f"Table {k}. Costs {k}")) for k in (3, 5, 7)])
+
+    out, report = crossrefs.link(xml)
+
+    assert sorted(report.linked) == ["Table3", "Table5", "Table7"]
+    assert report.no_mention == []
+    assert _text(out) == _text(xml)
+    for k in (3, 5, 7):
+        prose = paragraph_holding(out, f"{k} shows")
+        assert re.search(
+            rf'<w:bookmarkStart w:id="\d+" w:name="Table{k}txt"/>'
+            rf'<w:hyperlink w:anchor="Table{k}">.*?</w:hyperlink>'
+            r'<w:bookmarkEnd w:id="\d+"/>', prose, re.DOTALL)
+        assert crossrefs._PENDING not in out
+
+
 # --- the core behaviour -----------------------------------------------
 
 def test_link_creates_both_bookmarks_and_both_hyperlinks():
@@ -389,7 +471,7 @@ def test_a_caption_that_could_not_be_linked_does_not_stop_the_ones_after():
     and every exhibit after it is left plain while the report names only
     that one — the shape of a paper whose Table 1 was edited in Word."""
     xml = doc(
-        para(run("As Tabl"), run("e 1 shows, employment rises.")),
+        para(run("As "), *_SPLIT_IN_A_FIELD, run(" shows, employment rises.")),
         para(run("Table 1. Employment")),
         para(run("And Table 2 shows more.")),
         para(run("Table 2. Employment by sex")),
@@ -1247,10 +1329,13 @@ def test_a_citation_link_BEFORE_the_mention_is_stepped_over():
 
 
 def test_a_split_label_is_reported_as_a_mention_it_could_not_link():
-    """The "NOT-FOUND" mode itself: visible_text finds the label, the
-    run walk cannot, and the object must be reported rather than
-    silently skipped."""
-    xml = doc(para(run("As Tabl"), run("e 1 shows, the gap is wide.")),
+    """The "NOT-FOUND" mode itself: visible_text finds the label, neither
+    the run walk nor the visible-span fallback may link it — it is split
+    AND inside the author's own link field — and the object must be
+    reported rather than silently skipped. (A split label in plain runs
+    is linked now: `test_a_MENTION_split_across_runs_is_linked...`.)"""
+    xml = doc(para(run("As "), *_SPLIT_IN_A_FIELD,
+                   run(" shows, the gap is wide.")),
               para(run("Table 1. Employment by age")))
     _, rep = crossrefs.link(xml)
     assert rep.no_mention == ["Table1"]

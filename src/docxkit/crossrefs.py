@@ -41,6 +41,7 @@ run on every build.
 """
 from __future__ import annotations
 
+import html
 import re
 from bisect import bisect_right
 from collections import defaultdict
@@ -55,6 +56,7 @@ from ._xml import (
     HYPERLINK_OPEN_RE,
     INSTR_RE,
     PARA_RE,
+    RUN_RE,
     T_RE,
     WT_RE,
     field_anchors,
@@ -441,7 +443,48 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
                                 anchor=anchor, bookmark_name=name, bid=bid,
                                 mark=mark)
                 + para_xml[r_close:]), "linked"
-    return para_xml, "NOT-FOUND"
+    return _link_split_mention(para_xml, pattern, anchor, name, bid,
+                               mark=mark)
+
+
+#: a placeholder anchor no document carries, so the link just written
+#: can be found again without guessing which one it was
+_PENDING = "docxkit-pending-mention"
+
+
+def _link_split_mention(para_xml: str, pattern: re.Pattern[str],
+                        anchor: str, name: str, bid: int, *,
+                        mark: bool) -> tuple[str, str]:
+    """A mention Word stored across runs — ``T`` | ``able `` | ``3``, cut at
+    rsid boundaries — linked through the visible-text span, as
+    :func:`link_more` already does, and bookmarked around the result.
+
+    ep3_sc_accepted, 2026-11-05: Table 3's only mention was that shape,
+    and `link` reported it as no mention while `link_more` beside it
+    could link it. Already-linked characters are masked, so a label that
+    is already a link is never wrapped a second time.
+    """
+    from ._xml import matching_close
+    from .citations import masked_visible_text, wrap_visible_span
+
+    m = pattern.search(masked_visible_text(para_xml))
+    if m is None:
+        return para_xml, "NOT-FOUND"
+    try:
+        out = wrap_visible_span(para_xml, m.start(), m.end(), _PENDING)
+    except AnchorError:
+        return para_xml, "NOT-FOUND"
+    open_tag = f'<w:hyperlink w:anchor="{_PENDING}">'
+    at = out.index(open_tag)
+    end = matching_close(out, at + len(open_tag), "hyperlink")
+    link = out[at:end].replace(open_tag, f'<w:hyperlink w:anchor="{anchor}">',
+                               1)
+    if mark:
+        link = (f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>' + link
+                + f'<w:bookmarkEnd w:id="{bid}"/>')
+    # "linked", not a caveat: a split mention linked is a mention linked,
+    # and a paper that refuses any note (ep3_sc does) must not fail on it
+    return out[:at] + link + out[end:], "linked"
 
 
 def _find_mention(xml: str, cap: Caption,
@@ -536,9 +579,83 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
         if tail or cut.post:
             new += f"{cut.open_tag}{cut.rpr}{tail}{cut.post}</w:r>"
         return para_xml[:r_open] + new + para_xml[r_close:]
+    numbered = _wrap_numbered_label(para_xml, cap, anchor)
+    if numbered is not None:
+        return numbered
     raise AnchorError(
         f"{cap.prefix}: caption label is split across runs and could not be "
         f"wrapped in a back-link ({visible_text(para_xml)[:60]!r})")
+
+
+#: what may stand between a caption's label run and its number field
+_BETWEEN_RE = re.compile(
+    r"(?:\s|<w:(?:bookmarkStart|bookmarkEnd|proofErr)\b[^>]*/>)*")
+_FLDSIMPLE_OPEN_RE = re.compile(r"<w:fldSimple\b[^>]*?(/?)>")
+
+
+def _as_link_run(run_xml: str) -> str:
+    """`run_xml` wearing the Hyperlink character style."""
+    own = own_properties(run_xml, "rPr")
+    if own is None:
+        at = run_xml.index(">") + 1
+        return run_xml[:at] + _with_hyperlink_style("") + run_xml[at:]
+    return (run_xml[:own[0]] + _with_hyperlink_style(run_xml[own[0]:own[1]])
+            + run_xml[own[1]:])
+
+
+def _number_field_end(para_xml: str, at: int, number: str) -> int | None:
+    """Where the caption-number field that starts at `at` ends, if one
+    does and it SHOWS `number`: a `w:fldSimple`, or a fldChar field from
+    the run holding its `begin` to the run holding its `end`."""
+    from ._xml import fields, matching_close
+    m = _FLDSIMPLE_OPEN_RE.match(para_xml, at)
+    if m is not None:
+        if m.group(1):
+            return None
+        end = matching_close(para_xml, m.end(), "fldSimple")
+        shown = visible_text(para_xml[m.end():end - len("</w:fldSimple>")])
+        return end if shown.strip() == number else None
+    f = next((f for f in fields(para_xml)
+              if f.result is not None and f.end > 0
+              and run_open_before(para_xml, f.start) == at), None)
+    if f is None or f.result is None:
+        return None
+    if visible_text(f.result).strip() != number:
+        return None
+    close = para_xml.find("</w:r>", f.end)
+    return close + len("</w:r>") if close != -1 else None
+
+
+def _wrap_numbered_label(para_xml: str, cap: Caption,
+                         anchor: str) -> str | None:
+    r"""Link a caption whose NUMBER is a field: Insert Caption's own form,
+    ``Table `` in one run and ``SEQ Table \* ARABIC`` showing ``1`` after
+    it. The label run and the whole field go inside the `w:hyperlink` —
+    CT_Hyperlink admits a `w:fldSimple`, and Word renders and follows
+    both — and every run in it wears the Hyperlink style.
+
+    ep3_sc, 2026-11-05: all four captions were this form, `find_captions`
+    read them (it reads visible text) and `link` raised on the first.
+    None when the caption is not this shape either.
+    """
+    word = cap.label
+    for tm in WT_RE.finditer(para_xml):
+        if html.unescape(tm.group(1)).replace(" ", " ").strip() != word:
+            continue
+        r_open = run_open_before(para_xml, tm.start())
+        if r_open < 0 or visible_text(para_xml[:r_open]).strip():
+            return None                 # not where the caption opens
+        r_close = para_xml.find("</w:r>", tm.end()) + len("</w:r>")
+        gap = _BETWEEN_RE.match(para_xml, r_close)
+        assert gap is not None          # the pattern matches empty
+        stop = _number_field_end(para_xml, gap.end(), cap.number)
+        if stop is None:
+            return None
+        inner = RUN_RE.sub(lambda r: _as_link_run(r.group(0)),
+                           para_xml[r_open:stop])
+        return (para_xml[:r_open] + f'<w:hyperlink w:anchor="{anchor}">'
+                + inner + "</w:hyperlink>" + para_xml[stop:])
+    return None
 
 
 def _wrap_paragraph_in_bookmark(para_xml: str, name: str, bid: int) -> str:

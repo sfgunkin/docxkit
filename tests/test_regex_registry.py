@@ -640,6 +640,13 @@ EXACT_READS: dict[tuple[str, str], str] = {
     ("equations.py", "_char: startswith(<font> )"): (
         "not markup: `unicodedata.decomposition` of a math-alphanumeric "
         "glyph begins `<font> ` followed by the base code point"),
+    ("crossrefs.py", '_link_split_mention: index(<w:hyperlink '
+                     'w:anchor="docxkit-pending-mention">)'): (
+        "docxkit-built: the link `wrap_visible_span` wrote one call "
+        "earlier, under a placeholder anchor, spelled by that function"),
+    ("crossrefs.py", '_link_split_mention: replace(<w:hyperlink '
+                     'w:anchor="docxkit-pending-mention">)'): (
+        "docxkit-built: the same placeholder link, given its real anchor"),
 }
 
 
