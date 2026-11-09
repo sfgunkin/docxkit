@@ -32,6 +32,7 @@ __all__ = [
     "INSTR_ANCHOR_RE",
     "INSTR_RE",
     "INSTR_REF_RE",
+    "MARK_REVISION_RE",
     "MATH_OBJECTS",
     "NOTE_DEF_RE",
     "PARA_OPEN_RE",
@@ -1503,6 +1504,11 @@ _CHILD_OPEN_RE = re.compile(r"<w:(\w+)\b[^>]*?(/?)>")
 #: A paragraph's opening tag, capturing the slash of a self-closing
 #: `<w:p/>` so a caller can tell an empty paragraph from one that opens.
 PARA_OPEN_RE = re.compile(r"<w:p\b[^>]*?(/?)>")
+#: A paragraph MARK's own revision inside its `w:rPr`: inserted, deleted
+#: or moved. Empty elements, and they open CT_ParaRPr — a writer that
+#: rebuilds the mark keeps them first, and one that clones a mark for
+#: new text drops them, since new text is nobody's pending change.
+MARK_REVISION_RE = re.compile(r"<w:(?:ins|del|moveFrom|moveTo)\b[^>]*/>")
 
 
 def _own_children(inner: str) -> Iterator[tuple[str, int, int]]:

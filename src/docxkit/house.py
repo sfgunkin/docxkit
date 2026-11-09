@@ -67,10 +67,12 @@ from ._xml import (
     DOCUMENT,
     FLDCHAR_RE,
     INSTR_RE,
+    MARK_REVISION_RE,
     PARA_OPEN_RE,
     PARA_RE,
     RUN_RE,
     Parts,
+    _own_children,
     element_spans,
     fields,
     live_properties,
@@ -141,7 +143,12 @@ def _span_notes(xml: str) -> set[int]:
     for x in _exhibits.exhibits(body):
         if x.body_at is None:
             continue
-        for i in range(max(x.body_at, x.caption_at) + 1, x.stop):
+        # the WHOLE block but its caption and body: a note can sit between
+        # them — a picture, its "*" note, then a caption below — and a
+        # scan from the later of the two never saw it (review, 2026-11-09)
+        for i in range(x.start, x.stop):
+            if i in (x.body_at, x.caption_at):
+                continue
             text = _exhibits.text_of(kids[i]).strip()
             if (i in ordinal and text and _exhibits.NOTE.match(text)
                     and not caption_re().match(text)):
@@ -170,7 +177,11 @@ def _span_notes(xml: str) -> set[int]:
     out = set()
     for n, text in owned.items():
         a, b = paras[n]
-        if _WS_RE.sub("", visible_text(xml[a:b])) == _WS_RE.sub("", text):
+        # the tree side reads `w:t` only, so the string side drops the
+        # maths before comparing: a note holding an inline `p` in OMML
+        # failed the check and kept the body face (review, 2026-11-09)
+        shown = visible_text(OMATH_RE.sub("", xml[a:b]))
+        if _WS_RE.sub("", shown) == _WS_RE.sub("", text):
             out.add(a)
     return out
 #: The Abstract's label: alone as a heading, or opening its paragraph.
@@ -255,19 +266,29 @@ class HouseReport:
 
 
 def _with_mark(para: str, face: Face) -> str:
-    """The paragraph MARK given `face` — its size sets an empty line's."""
+    """The paragraph MARK given `face` — its size sets an empty line's.
+
+    The mark's `w:rPr` is found among the pPr's DIRECT children, wherever
+    it sits: `own_properties` answers only for a FIRST child, so behind a
+    `w:spacing` the mark was rebuilt from nothing, and a co-author's
+    pending mark `w:ins`/`w:del` went with it — rejecting their change
+    no longer removed the paragraph (review, 2026-11-09). Those revision
+    marks open CT_ParaRPr and stay first; the face goes after them."""
     ppr = own_properties(para, "pPr")
     mark = ""
     if ppr is not None:
-        props = para[ppr[0]:ppr[1]]
-        if (own := own_properties(props, "rPr")) is not None:
-            mark = props[own[0]:own[1]]
-    run = f"<w:r>{mark}</w:r>"
+        for tag, start, end in _own_children(ppr[2]):
+            if tag == "rPr":
+                mark = ppr[2][start:end]
+    revs = "".join(MARK_REVISION_RE.findall(mark))
+    run = f"<w:r>{MARK_REVISION_RE.sub('', mark)}</w:r>"
     for tag, element in face.props().items():
         run = set_run_property(run, tag, element)
     own = own_properties(run, "rPr")
     assert own is not None
-    return set_para_property(para, "rPr", run[own[0]:own[1]])
+    face_rpr = run[own[0]:own[1]]
+    face_inner = face_rpr[face_rpr.index(">") + 1:face_rpr.rindex("<")]
+    return set_para_property(para, "rPr", f"<w:rPr>{revs}{face_inner}</w:rPr>")
 
 
 def _spacing(para: str, after: int) -> str:
@@ -405,6 +426,9 @@ def _lead_ins(xml: str) -> list[re.Match[str]]:
     tables = element_spans(xml, "tbl")
     paras = list(PARA_RE.finditer(xml))
     cap_re = caption_re()
+    # a block's "*" note is a note too: styled as one and then re-spaced
+    # as a lead-in, it could never audit clean (review, 2026-11-09)
+    block_notes = _span_notes(xml)
     found: dict[int, re.Match[str]] = {}
     for eq in display_equations(xml):
         top = min((lo for lo, hi in tables if lo <= eq.start() < hi),
@@ -417,6 +441,7 @@ def _lead_ins(xml: str) -> list[re.Match[str]]:
             continue
         text = visible_text(OMATH_RE.sub("", lead.group(0))).strip()
         if (not text or cap_re.match(text) or NOTE.match(text)
+                or lead.start() in block_notes
                 or EQ_NUMBER_RE.fullmatch(text)):
             continue
         found[lead.start()] = lead

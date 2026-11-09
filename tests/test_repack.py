@@ -281,6 +281,27 @@ def test_a_trial_that_STRANDS_or_BREAKS_a_table_is_not_offered(trial, said):
         rep.problems
 
 
+@pytest.mark.parametrize(("header", "want"), [
+    ([row("", "(1)", "(2)")], "Age"),                   # esttab's own shape
+    ([row("Region", "Men", "Women")], "Age"),
+    ([row("", "Wages"), row("Region", "Men", "Women")], "Age"),
+], ids=["empty-stub", "named-stub", "group-head-over-names"])
+def test_the_first_DATA_row_is_the_one_plan_booktabs_reads(header, want):
+    """Review, 2026-11-09: a copy of the header rule skipped one row too
+    many after an empty-stub header, so on the usual results table the
+    strand gate measured 'Sex' and refused a trial whose 'Age' row was
+    with its caption."""
+    doc = parts(P("Table 1 lists it.") + P("Table 1. Estimates")
+                + table(*header, row("Age", "0.1", "0.2"),
+                        row("Sex", "0.3", "0.4"), row("N", "100", "200"))
+                + P("w"))
+    body = etree.fromstring(doc["word/document.xml"]).find(W + "body")
+    assert body is not None
+    (x,) = repack.exhibits(body)
+
+    assert repack._first_data_row(x).split()[0] == want
+
+
 def test_a_trial_that_keeps_the_table_whole_IS_offered():
     doc = parts(FIGURE + P("z") + TABLE_1)
     original = order(doc)

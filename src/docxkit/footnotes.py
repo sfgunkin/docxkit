@@ -24,6 +24,7 @@ from ._xml import (
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
+    MARK_REVISION_RE,
     NOTE_REF_RE,
     PARA_RE,
     RUN_RE,
@@ -345,7 +346,25 @@ class _Shape(NamedTuple):
 
 def _rpr_of(run_xml: str) -> str:
     own = own_properties(run_xml, "rPr")
-    return run_xml[own[0]:own[1]] if own else ""
+    return _settled(run_xml[own[0]:own[1]]) if own else ""
+
+
+#: what a properties element records about a REVISION rather than about
+#: the text, besides a mark's own (`MARK_REVISION_RE`): the snapshots of
+#: formatting a tracked change replaced
+_CHANGE_RECORD_RE = re.compile(
+    r"<w:(rPrChange|pPrChange)\b[^>]*?(?:/>|>.*?</w:\1>)", re.DOTALL)
+
+
+def _settled(props: str) -> str:
+    """A cloned properties element with its revision records removed.
+
+    Copied raw, a sibling's paragraph-mark `<w:ins w:id="241" …/>` gave
+    the new note the SAME revision id credited to another author, and
+    rejecting that author's changes emptied the new note — measured on a
+    real Life_Expectancy redline (review, 2026-11-09). A new note is this
+    call's text, not anybody's pending change."""
+    return MARK_REVISION_RE.sub("", _CHANGE_RECORD_RE.sub("", props))
 
 
 def _face_only(rpr: str) -> str:
@@ -383,13 +402,18 @@ def _shape(parts: Parts, notes_xml: str, doc: str,
         own = own_properties(p, "pPr")
         runs = [r.group(0) for r in RUN_RE.finditer(p)]
         mark = next((r for r in runs if _FOOTNOTE_REF_RE.search(r)), None)
-        text = next((r for r in runs if _WT_OPEN_RE.search(r)
-                     and not _FOOTNOTE_REF_RE.search(r)), "")
+        texts = [r for r in runs if _WT_OPEN_RE.search(r)
+                 and not _FOOTNOTE_REF_RE.search(r)]
+        # the first run with WORDS: Word's own note shape puts a bare
+        # " " run after the mark, with no properties, and taking that
+        # one set the new note at the Normal size (review, 2026-11-09)
+        text = next((r for r in texts if visible_text(r).strip()),
+                    texts[0] if texts else "")
         body = next((r.group(0) for r in RUN_RE.finditer(doc)
                      if (m := _REF_ID_RE.search(r.group(0)))
                      and m.group(1) == sib.id), None)
         if mark is not None and body is not None:
-            return _Shape(ppr=p[own[0]:own[1]] if own else "",
+            return _Shape(ppr=_settled(p[own[0]:own[1]]) if own else "",
                           mark=_rpr_of(mark), run=_face_only(_rpr_of(text)),
                           ref=_rpr_of(body))
     styles = parts.get("word/styles.xml", b"").decode("utf-8", "replace")

@@ -131,6 +131,83 @@ def test_a_STAR_LED_note_inside_a_table_block_is_styled_and_audited():
     well_formed(parts)
 
 
+def test_a_note_keeps_a_co_authors_pending_PARAGRAPH_MARK():
+    """Review, 2026-11-09: behind a `w:spacing`, the mark's `w:rPr` was
+    not found, the face replaced it whole, and the co-author's `w:ins`
+    on the mark was gone — rejecting their change kept the paragraph."""
+    from docxkit.revisions import by_author, reject
+
+    marks = [f'<w:p><w:pPr><w:spacing w:after="0"/><w:rPr><w:ins w:id='
+             f'"{70 + k}" w:author="Co" w:date="2026-11-01T00:00:00Z"/>'
+             f"</w:rPr></w:pPr>{_ins_run(f'* Added note {k}.', 80 + k)}</w:p>"
+             for k in (1, 2, 3)]
+    tables = [part for k in (1, 2, 3)
+              for part in (para(run(f"Table {k}. Costs {k}")), TABLE,
+                           marks[k - 1])]
+    parts = paper(*tables, para(run("Prose.")))
+
+    house.apply(parts)
+
+    xml = parts[DOCUMENT].decode()
+    for k in (1, 2, 3):
+        note = holding(parts, f"Added note {k}")
+        assert f'<w:ins w:id="{70 + k}" w:author="Co"' in note
+        assert '<w:sz w:val="20"/>' in note
+    kept = reject(xml, where=by_author("Co"))
+    assert "Added note" not in kept
+    from docxkit.lint import lint_parts
+    assert not [f for f in lint_parts(parts) if "order" in str(f).lower()]
+    well_formed(parts)
+
+
+def _ins_run(text: str, rid: int) -> str:
+    return (f'<w:ins w:id="{rid}" w:author="Co" w:date="2026-11-01T00:00:'
+            f'00Z">{run(text)}</w:ins>')
+
+
+def test_a_block_note_above_an_equation_is_NOT_its_lead_in():
+    """A '*' note is a note: styled as one, then re-spaced as an
+    equation's lead-in, the audit after apply could never come back
+    clean (review, 2026-11-09)."""
+    blocks = [part for k in (1, 2, 3)
+              for part in (*starred_tables(1)[:2],
+                           para(run(f"* The monthly costs of item {k}.")),
+                           para(M))]
+    blocks = [b.replace("Table 1.", f"Table {i // 4 + 1}.")
+              for i, b in enumerate(blocks)]
+    parts = paper(*blocks)
+
+    got = house.apply(parts, house.Rules(number_equations=False))
+
+    assert got.notes == 3 and got.lead_ins == 0
+    assert house.audit(parts, house.Rules(number_equations=False)) == []
+
+
+def test_a_block_note_holding_MATHS_or_sitting_ABOVE_its_caption_is_a_note():
+    """Two layouts `_span_notes` missed: the tree side reads `w:t` only,
+    so a note with an inline OMML `p` failed the text check; and a scan
+    from the later of body and caption never saw a note between them —
+    a picture, its note, then the caption below (review, 2026-11-09)."""
+    maths = ("<m:oMath><m:r><m:t>p</m:t></m:r></m:oMath>")
+    with_maths = [part for k in (1, 2, 3)
+                  for part in (para(run(f"Table {k}. Costs {k}")), TABLE,
+                               para(run("* Significant at 5 percent; ",
+                                        preserve=True), maths,
+                                    run(f" below 0.05, panel {k}.",
+                                        preserve=True)))]
+    below = [part for k in (1, 2, 3)
+             for part in (DRAWING, para(run(f"* Source: survey wave {k}.")),
+                          para(run(f"Figure {k}. Wages {k}")))]
+    parts = paper(*with_maths, para(run("Prose between.")), *below)
+
+    got = house.apply(parts)
+
+    assert got.notes == 6
+    for words in ("panel 1", "panel 3", "survey wave 1", "survey wave 3"):
+        assert '<w:sz w:val="20"/>' in holding(parts, words)
+    assert not [f for f in house.audit(parts) if f.startswith("note")]
+
+
 CAPTION_STYLE = ('<w:style w:type="paragraph" w:styleId="Caption">'
                  '<w:rPr><w:rFonts w:ascii="Aptos" w:hAnsi="Aptos"/>'
                  '<w:color w:val="0E2841"/><w:sz w:val="18"/></w:rPr>'

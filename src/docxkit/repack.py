@@ -65,6 +65,7 @@ from ._xml import DOCUMENT, Parts
 from .errors import DocxKitError, PackageError, WordTimeout
 from .exhibits import NOTE, Exhibit, exhibits, mention_of, text_of
 from .find import DEFAULT_LABELS, heading_level
+from .tables import plan_booktabs, read_all
 
 __all__ = [
     "DEFAULT_MAX_CANDIDATES",
@@ -396,21 +397,23 @@ def _land(sheets: list[str], kids: list[etree._Element],
 def _first_data_row(x: Exhibit) -> str:
     """A TABLE's first row below its header, as the page reads it, or "".
 
-    The header is :func:`docxkit.tables.plan_booktabs`' reading of it: the
-    leading rows whose first cell is empty — spanning group heads over a
-    stub column labelled only from the data down — and the row after them.
+    The header is :func:`docxkit.tables.plan_booktabs`' own reading, asked
+    of it rather than re-derived: a copy here skipped one row too many
+    after an empty-stub header (``'' (1) (2)`` over the data, the usual
+    results table) and ignored the spanning-row rule, so the strand gate
+    measured the wrong row (review, 2026-11-09).
     """
     if x.kind != "table":
         return ""
     tables = [e for e in x.elements if e.tag == W + "tbl"]
     if not tables:
         return ""
-    rows = [[text_of(tc).strip() for tc in tr.findall(W + "tc")]
-            for tr in tables[0].findall(W + "tr")]
-    head = 0
-    while head < len(rows) and rows[head] and not rows[head][0]:
-        head += 1
-    data = [" ".join(r).strip() for r in rows[head + 1:]]
+    found = read_all(etree.tostring(tables[0], encoding="unicode"))
+    if not found:
+        return ""
+    head = plan_booktabs(found[0]).header_rows
+    data = [" ".join(c.strip() for c in r).strip()
+            for r in found[0].rows[head:]]
     return next((r for r in data if r), "")
 
 

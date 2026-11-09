@@ -130,10 +130,9 @@ def test_the_FLATTENED_caption_Word_copies_fails_the_accept_gate():
         before[DOCUMENT].decode("utf-8"),
         caption="Figure 12. Wages").encode("utf-8")
 
-    (said,) = moves.verify_move(before, after, block="Wages",
-                                through="Note: from", where="Target",
-                                author=ME)
-    assert "accepted text is not the input's" in said
+    said = moves.verify_move(before, after, block="Wages",
+                             through="Note: from", where="Target", author=ME)
+    assert any("accepted text is not the input's" in s for s in said)
 
 
 def test_a_move_credited_to_SOMEONE_ELSE_fails_and_names_who():
@@ -169,6 +168,162 @@ def test_a_NEW_name_is_reassigned_and_an_OLD_one_refused():
         before[DOCUMENT].decode("utf-8"), author=CO).encode("utf-8")
     with pytest.raises(moves.MoveRefused, match="already carries"):
         moves._attribute(before, shared, ME, "CRC")
+
+
+def _mark(kind: str, author: str, rid: int, inner: str = "") -> str:
+    attrs = (f'w:id="{rid}" w:author="{author}" '
+             'w:date="2026-11-09T00:00:00Z"')
+    return f"<w:{kind} {attrs}>{inner}</w:{kind}>" if inner else (
+        f"<w:{kind} {attrs}/>")
+
+
+def _gone(text: str, rid: int, author: str = ME) -> str:
+    return _mark("del", author, rid, "<w:r><w:delText xml:space=\"preserve"
+                 f"\">{text}</w:delText></w:r>")
+
+
+def _new(text: str, rid: int, author: str = ME) -> str:
+    return _mark("ins", author, rid, run(text, preserve=True))
+
+
+def _pair(old_caption: str, gone_caption: str, new_caption: str,
+          *, cell: bool = False) -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """`before` with `old_caption` above a note; `after` with it deleted
+    there and `new_caption` inserted after the target (or inside the
+    table that follows the target, `cell`)."""
+    note = para(run("Note: from the survey."))
+    tail = "<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>" if cell else "{}"
+    rest = (para(run("Target paragraph.")) + "{moved}"
+            + para(run("End paragraph.")))
+    before = make_parts(para(run("Intro paragraph.")) + old_caption + note
+                        + rest.replace("{moved}", tail.format("<w:p/>")))
+    mark = f"<w:pPr><w:rPr>{_mark('del', ME, 90)}</w:rPr></w:pPr>"
+    moved = (f"<w:p><w:pPr><w:rPr>{_mark('ins', ME, 91)}</w:rPr></w:pPr>"
+             f"{new_caption}</w:p>"
+             f"<w:p><w:pPr><w:rPr>{_mark('ins', ME, 92)}</w:rPr></w:pPr>"
+             f"{_new('Note: from the survey.', 93)}</w:p>")
+    after = make_parts(
+        para(run("Intro paragraph.")) + f"<w:p>{mark}{gone_caption}</w:p>"
+        + f"<w:p>{mark.replace('90', '94')}"
+        f"{_gone('Note: from the survey.', 95)}</w:p>"
+        + rest.replace("{moved}", tail.format(moved + "<w:p/>") if cell
+                       else moved))
+    return before, after
+
+
+def _gates(before, after, **kw) -> list[str]:
+    return moves.verify_move(before, after, block="Wages",
+                             through="Note: from", where="Target",
+                             author=ME, **kw)
+
+
+def test_the_MIXED_verdict_is_gated_when_the_block_held_their_change():
+    """Review, 2026-11-09: a co-author's insertion inside the block went
+    over ACCEPTED, so accepting the move and rejecting them kept their
+    "2". The accept and reject-all views were both right."""
+    theirs = _mark("ins", CO, 80, run("2"))
+    before, after = _pair(
+        para(run("Figure ", preserve=True), theirs, run(". Wages")),
+        _gone("Figure ", 81) + _mark("ins", CO, 80, _gone("2", 82))
+        + _gone(". Wages", 83),
+        _new("Figure 2. Wages", 84))
+
+    said = _gates(before, after)
+
+    assert any("rejecting everyone else's" in s for s in said), said
+    assert not any("rejecting everyone else's" in s
+                   for s in _gates(before, after, mixed=False))
+
+
+def test_a_block_that_lands_INSIDE_a_table_is_refused():
+    before, after = _pair(para(run("Figure 2. Wages")),
+                          _gone("Figure 2. Wages", 81),
+                          _new("Figure 2. Wages", 84), cell=True)
+
+    assert any("inside a table" in s for s in _gates(before, after))
+
+
+def test_a_BOOKMARK_left_only_on_the_deleted_original_is_refused():
+    """After Accept All every link to the caption would dangle."""
+    bm = '<w:bookmarkStart w:id="5" w:name="Figure2"/>'
+    end = '<w:bookmarkEnd w:id="5"/>'
+    before, after = _pair(
+        para(bm + run("Figure 2. Wages") + end),
+        bm + _gone("Figure 2. Wages", 81) + end,
+        _new("Figure 2. Wages", 84))
+
+    assert any("bookmark" in s for s in _gates(before, after))
+    # carried with the copy instead: nothing to say
+    _, carried = _pair(para(bm + run("Figure 2. Wages") + end),
+                       _gone("Figure 2. Wages", 81),
+                       bm + _new("Figure 2. Wages", 84) + end)
+    assert not any("bookmark" in s for s in _gates(before, carried))
+
+
+def test_a_SECOND_move_by_the_same_author_is_not_refused():
+    """The reject gate compared with the un-rejected input, so an input
+    already carrying this author's revisions always failed it."""
+    earlier = _mark("ins", ME, 70, run("!"))
+    before, after = _pair(para(run("Figure 2. Wages")),
+                          _gone("Figure 2. Wages", 81),
+                          _new("Figure 2. Wages", 84))
+    for parts in (before, after):
+        xml = parts[DOCUMENT].decode()
+        parts[DOCUMENT] = xml.replace(
+            run("End paragraph."), run("End paragraph.") + earlier,
+            1).encode()
+
+    assert _gates(before, after) == []
+
+
+def test_attribution_leaves_CORE_alone_and_cuts_the_accounts_presence():
+    """`set_author` rewrites dc:creator whatever `only` says, and kept the
+    account's presenceInfo on the renamed person (review, 2026-11-09)."""
+    before = make_parts(BODY)
+    after = dict(before)
+    after[DOCUMENT] = _moved_by_hand(
+        before[DOCUMENT].decode("utf-8"), author="Office Account").encode()
+    after["docProps/core.xml"] = _core("Michael Lokshin")
+    after["word/people.xml"] = (
+        b'<w15:people xmlns:w15="http://schemas.microsoft.com/office/word/'
+        b'2012/wordml"><w15:person w15:author="Office Account">'
+        b'<w15:presenceInfo w15:providerId="AD" w15:userId="S::someone@corp'
+        b'.example::1"/></w15:person></w15:people>')
+
+    moves._attribute(before, after, ME, "CRC")
+
+    assert after["docProps/core.xml"] == _core("Michael Lokshin")
+    people = after["word/people.xml"].decode()
+    assert f'w15:author="{ME}"' in people and "presenceInfo" not in people
+
+
+class _Picky:
+    """An Application whose `CheckLanguage` setter fails."""
+
+    def __init__(self) -> None:
+        self.Options = _FakeOptions()
+        self.UserName, self.UserInitials = "Local Name", "LN"
+        self._check = True
+        self.order: list[str] = []
+
+    @property
+    def CheckLanguage(self) -> bool:
+        return self._check
+
+    @CheckLanguage.setter
+    def CheckLanguage(self, _v: bool) -> None:
+        raise RuntimeError("Word refused")
+
+
+def test_a_failing_setter_RESTORES_what_was_already_changed():
+    word = _Picky()
+
+    with pytest.raises(RuntimeError, match="Word refused"), \
+            moves._as_author(word, ME, "CRC"):
+        pass                                  # pragma: no cover - not reached
+
+    assert (word.Options.UseLocalUserInfo, word.UserName,
+            word.UserInitials) == (False, "Local Name", "LN")
 
 
 # ------------------------------------------------- the whole call, faked --
@@ -324,7 +479,17 @@ class _StepRange:
     def __init__(self, doc: _StepDoc, start: int, end: int) -> None:
         self.doc, self.Start, self.End = doc, start, end
         self.Find = _StepFind(doc, self)
-        self.Revisions: list[object] = []
+
+    @property
+    def Revisions(self) -> list[object]:
+        import types
+        # insertions (type 1): `_delete_live` steps over deletions only
+        return [types.SimpleNamespace(Author=a, Type=1)
+                for a in self.doc.pending]
+
+    def Information(self, what: int) -> bool:
+        assert what == moves._WD_WITHIN_TABLE
+        return self.doc.in_table
 
     @property
     def Range(self) -> _StepRange:
@@ -368,6 +533,8 @@ class _StepDoc:
         self.text, self.log, self.scratch = text, log, scratch
         self.TrackRevisions = False
         self.Revisions = self
+        self.pending: list[str] = []        # authors of revisions in range
+        self.in_table = False
 
     @property
     def Content(self) -> _StepRange:
@@ -411,10 +578,67 @@ def test_the_WORD_STEP_accepts_in_a_scratch_copy_then_inserts_tracked():
     assert n == 2                   # the caption and its note
 
 
+def _step_word(log: list[tuple[object, ...]]) -> object:
+    documents = type("D", (), {"Add": staticmethod(
+        lambda: _StepDoc("\r", log, scratch=True))})()
+    return type("W", (), {"Documents": documents})()
+
+
+def test_a_block_holding_ANOTHER_authors_revisions_is_refused():
+    """Review, 2026-11-09: the copy carries the block's ACCEPTED text, so
+    accepting the move and rejecting the co-author's change gave the
+    wrong words. Refused unless the caller opts in; the mover's own
+    earlier revisions do not count."""
+    log: list[tuple[object, ...]] = []
+    doc = _StepDoc("Intro.\rFigure 2. Wages\rNote: x.\rTarget.\rEnd.\r", log)
+    doc.pending = ["Co-author", ME, "Co-author"]
+
+    with pytest.raises(moves.MoveRefused, match="pending revisions by "
+                       "Co-author"):
+        moves._word_move(_step_word(log), doc, block="Wages",
+                         through="Note:", after="Target", author=ME)
+    assert log == [], "refused before anything was copied"
+
+    n = moves._word_move(_step_word(log), doc, block="Wages",
+                         through="Note:", after="Target", author=ME,
+                         accept_pending=True)
+    assert n == 2
+
+
+def test_a_target_that_is_followed_by_a_TABLE_is_refused():
+    """Its End is the table's first cell: the block would land inside."""
+    log: list[tuple[object, ...]] = []
+    doc = _StepDoc("Intro.\rFigure 2. Wages\rTarget.\rCell.\r", log)
+    doc.in_table = True
+
+    with pytest.raises(moves.MoveRefused, match="opens a table"):
+        moves._word_move(_step_word(log), doc, block="Wages",
+                         through="Wages", after="Target", author=ME)
+    assert log == []
+
+
 def test_an_anchor_WORD_cannot_find_is_refused():
     doc = _StepDoc("Intro.\r", [])
     with pytest.raises(moves.MoveRefused, match="Word did not find"):
         moves._paragraph(doc, "Absent")
+
+
+def test_a_CARET_in_an_anchor_reaches_Find_escaped():
+    """`^p` is a paragraph mark to Word's Find; a literal caret is `^^`."""
+    doc = _StepDoc("Wages in R^2 terms.\r", [])
+    seen: list[str] = []
+    real = _StepFind.Execute
+
+    def record(self, FindText: str, **kw) -> bool:
+        seen.append(FindText)
+        return real(self, FindText.replace("^^", "^"), **kw)
+
+    _StepFind.Execute = record                    # type: ignore[method-assign]
+    try:
+        moves._paragraph(doc, "R^2 terms")
+    finally:
+        _StepFind.Execute = real                  # type: ignore[method-assign]
+    assert seen == ["R^^2 terms"]
 
 
 def test_a_block_with_no_pending_deletion_is_deleted_whole():
@@ -444,13 +668,25 @@ def test_WORD_moves_a_caption_holding_a_pending_revision(tmp_path):
     doc = parts[DOCUMENT].decode("utf-8")
     at = doc.index("<w:body>") + len("<w:body>")
     sect = doc.rindex("<w:sectPr")
-    parts[DOCUMENT] = (doc[:at] + _body(LFP_CAPTION)
+    # the caption bookmarked, as `crossrefs` leaves every caption: the
+    # copy has to carry it or every link to the figure dangles on accept
+    caption = LFP_CAPTION.replace(
+        "<w:p>", '<w:p><w:bookmarkStart w:id="7" w:name="Figure2"/>', 1
+    ).replace("</w:p>", '<w:bookmarkEnd w:id="7"/></w:p>', 1)
+    parts[DOCUMENT] = (doc[:at] + _body(caption)
                        + doc[sect:]).encode("utf-8")
     src = tmp_path / "lfp_shape.docx"
     write_docx(src, parts)
 
+    # the co-author's change inside the block is refused by default...
+    with pytest.raises(moves.MoveRefused, match="pending revisions by "
+                       "Co-author"):
+        moves.tracked_move(src, tmp_path / "refused.docx", block="Wages",
+                           through="Note: from", after="Target", author=ME)
+    # ...and moved knowingly when asked
     rep = moves.tracked_move(src, tmp_path / "moved.docx", block="Wages",
-                             through="Note: from", after="Target", author=ME)
+                             through="Note: from", after="Target", author=ME,
+                             accept_pending=True)
 
     out = read_parts(tmp_path / "moved.docx")
     from docxkit.revisions import accept

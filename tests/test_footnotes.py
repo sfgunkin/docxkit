@@ -1052,6 +1052,81 @@ def test_a_new_note_is_SET_LIKE_its_siblings_not_by_undefined_styles():
     assert sizes(notes, styles_xml=styles).ok
 
 
+def _word_shaped_paper(n: int, *, tracked: bool = False) -> dict[str, bytes]:
+    """Word's own note shape: the mark run, a BARE " " run, then the text
+    run carrying the face. `tracked` gives every note a co-author's
+    pending paragraph mark and formatting change, as a redline has."""
+    sup = '<w:vertAlign w:val="superscript"/><w:sz w:val="20"/>'
+    change = ('<w:rPrChange w:id="{i}1" w:author="Co" w:date="2026-11-01T0'
+              '0:00:00Z"><w:rPr/></w:rPrChange>') if tracked else ""
+    mark_ins = ('<w:rPr><w:ins w:id="{i}2" w:author="Co" w:date="2026-11-0'
+                '1T00:00:00Z"/></w:rPr>') if tracked else ""
+    ppr_change = ('<w:pPrChange w:id="{i}3" w:author="Co" w:date="2026-11-'
+                  '01T00:00:00Z"><w:pPr/></w:pPrChange>') if tracked else ""
+    face = ('<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New '
+            'Roman"/><w:sz w:val="20"/></w:rPr>')
+    defs = "".join(
+        (f'<w:footnote w:id="{i}"><w:p><w:pPr><w:spacing w:after="2"/>'
+         + mark_ins + ppr_change + "</w:pPr>"
+         f"<w:r><w:rPr>{sup}{change}</w:rPr><w:footnoteRef/></w:r>"
+         '<w:r><w:t xml:space="preserve"> </w:t></w:r>'
+         f"<w:r>{face}<w:t>Note {i}.</w:t></w:r></w:p></w:footnote>")
+        .replace("{i}", str(i)) for i in range(1, n + 1))
+    body = "".join(f"<w:p><w:r><w:t>Claim {i}.</w:t></w:r><w:r>"
+                   '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+                   f'<w:footnoteReference w:id="{i}"/></w:r></w:p>'
+                   for i in range(1, n + 1))
+    body += "<w:p><w:r><w:t>An uncited claim.</w:t></w:r></w:p>"
+    styles = (f'<w:styles {NS}><w:docDefaults><w:rPrDefault><w:rPr>'
+              '<w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>'
+              "</w:styles>")
+    return {
+        "word/document.xml":
+            f"<w:document {NS}><w:body>{body}</w:body></w:document>".encode(),
+        "word/footnotes.xml": (f"<w:footnotes {NS}>{_SEPARATORS}{defs}"
+                               "</w:footnotes>").encode(),
+        "word/styles.xml": styles.encode()}
+
+
+def test_the_face_comes_from_the_run_with_WORDS_not_the_bare_space():
+    """Review, 2026-11-09: Word's shape puts an unformatted " " run after
+    the mark, and cloning THAT set the new note at the document default —
+    the LFP_Inflows defect the clone was written to close."""
+    from docxkit.footnotes import add, find, sizes
+
+    parts = _word_shaped_paper(5)
+    add(parts, after="An uncited claim.", text="A new note.")
+
+    notes = parts["word/footnotes.xml"].decode("utf-8")
+    assert '<w:sz w:val="20"/>' in find(notes, "A new note").xml
+    styles = parts["word/styles.xml"].decode("utf-8")
+    assert sizes(notes, styles_xml=styles).ok
+
+
+def test_a_new_note_carries_NONE_of_its_siblings_revision_records():
+    """A sibling's paragraph-mark `w:ins`, its `pPrChange` and its mark's
+    `rPrChange` are a co-author's pending changes: copied, they gave the
+    new note duplicate ids credited to someone else, and rejecting that
+    author emptied it (a real Life_Expectancy redline, 2026-11-09)."""
+    from docxkit.footnotes import add, find
+    from docxkit.revisions import by_author, reject
+
+    parts = _word_shaped_paper(5, tracked=True)
+    new_id = add(parts, after="An uncited claim.", text="A new note.")
+
+    notes = parts["word/footnotes.xml"].decode("utf-8")
+    note = find(notes, "A new note").xml
+    for tag in ("<w:ins", "<w:del", "<w:rPrChange", "<w:pPrChange",
+                'w:author="Co"'):
+        assert tag not in note, tag
+    assert '<w:vertAlign w:val="superscript"/>' in note
+    kept = reject(notes, where=by_author("Co"))
+    assert "A new note." in find(kept, "A new note").text
+    doc = parts["word/document.xml"].decode("utf-8")
+    assert f'<w:footnoteReference w:id="{new_id}"/>' in doc
+    assert "w:author" not in doc
+
+
 def test_with_no_sibling_a_DEFINED_style_is_named():
     from docxkit.footnotes import add, find
 

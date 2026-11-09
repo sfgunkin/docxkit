@@ -191,6 +191,7 @@ docxkit.tables	booktabs
 docxkit.tables	bottom_border
 docxkit.tables	by_caption
 docxkit.tables	fit_columns
+docxkit.tables	house
 docxkit.tables	read_all
 docxkit.tables	set_cell
 docxkit.tables	set_result
