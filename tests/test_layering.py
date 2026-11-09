@@ -41,7 +41,7 @@ LAYERS: tuple[tuple[str, ...], ...] = (
     # but `cli`
     ("snapshot",),
     ("tracked", "export", "wordcount", "renumber", "pages", "probe",
-     "refstyle", "testing", "repack", "house"),
+     "refstyle", "testing", "repack", "house", "moves"),
     ("tables", "crossrefs", "equations", "footnotes", "figures", "ingest",
      "placement"),
     ("citations", "exhibits", "sections"),

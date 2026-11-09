@@ -123,6 +123,7 @@ ACCUMULATORS = {
     "placement.Placement",
     "placement.PlacementReport",
     "repack.RepackReport",
+    "moves.MoveReport",
     "sections.SectionReport",
     "sections.Renumbering",
     "probe.Probe",

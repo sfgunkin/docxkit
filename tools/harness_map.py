@@ -503,6 +503,7 @@ HARNESS: dict[str, list[str]] = {
     "placement.py": ["tests/test_placement.py",
                      "tests/test_placement_landscape.py"],
     "repack.py": ["tests/test_repack.py"],
+    "moves.py": ["tests/test_moves.py"],
     "sections.py": ["tests/test_sections.py", "tests/test_sections_edges.py"],
     "snapshot.py": ["tests/test_snapshot.py"],
     "probe.py": ["tests/test_probe.py", "tests/test_probe_report.py"],
