@@ -936,7 +936,7 @@ repo): 300 shuffled `Papers/**/*.docx`, `house.audit` at the HEAD worktree and a
 ### S4 No command diffs two renders page by page; a byte-identical-render check was hand-rolled
 <!-- status: open -->
 
-Found 2026-11-09 verifying that dropping the BiH paper's workarounds (bih `598ade6`) left its output unchanged.
+Found 2026-11-09 verifying that dropping the BiH paper's workarounds (bih `f1b78f0`) left its output unchanged.
 
 **Measured.** `docxkit compare` reports no difference on any layer, but it does not read table properties, and the
 change kept a theme `tblStyle` the old build removed — only a render could say whether the page moved. `docxkit pdf`
