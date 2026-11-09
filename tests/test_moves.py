@@ -72,6 +72,22 @@ def test_the_expected_order_moves_the_block_BELOW_or_ABOVE_its_target():
         "a", "b", "c", "e", "f", "g", "d"]
 
 
+@pytest.mark.parametrize(("block", "through", "after", "want"), [
+    ("b", "d", "g", "aefgbcdhijkl"),
+    ("b", "f", "j", "aghijbcdefkl"),
+    ("h", "j", "c", "abchijdefgkl"),
+], ids=["3-below", "5-below", "3-above"])
+def test_the_insertion_point_counts_the_WHOLE_block(block, through, after,
+                                                    want):
+    """Blocks of 3 and 5, not 1 and 2: with a 2-paragraph block 4 places
+    down, `target - len(moved)` and `target // len(moved)` agree, and the
+    accept gate would compare against the wrong order unseen."""
+    texts = list("abcdefghijkl")
+
+    assert moves.expected_after_move(texts, block, through, after) == list(
+        want)
+
+
 @pytest.mark.parametrize(("block", "through", "after", "said"), [
     ("omega", None, "alpha", "block 'omega': 0 paragraphs"),
     ("beta", "alpha", "eps", "comes before block"),

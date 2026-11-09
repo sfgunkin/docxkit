@@ -272,9 +272,10 @@ def test_booktabs_writes_every_edge_in_SCHEMA_order_and_nil_edges_bare():
 _CNF = '<w:cnfStyle w:val="100000000000"/>'
 
 
-def _styled_table(nested: bool = False) -> str:
+def _styled_table(nested: int = 0) -> str:
     """ep3_sc's Table 3: a theme style, its look on, cnfStyle cached on
-    every cell (7 here), and optionally a nested table with its own."""
+    every cell (7 here), and `nested` cells each holding a table with a
+    cnfStyle of its own."""
     inner = ("<w:tbl><w:tblPr><w:tblStyle w:val='Inner'/></w:tblPr>"
              "<w:tblGrid><w:gridCol w:w='500'/></w:tblGrid><w:tr><w:tc>"
              f"<w:tcPr>{_CNF}</w:tcPr><w:p/></w:tc></w:tr></w:tbl>")
@@ -282,7 +283,7 @@ def _styled_table(nested: bool = False) -> str:
     def cell(k: int) -> str:
         return (f"<w:tc><w:tcPr>{_CNF}<w:tcW w:w='1000' w:type='dxa'/>"
                 f"</w:tcPr><w:p><w:r><w:t>v{k}</w:t></w:r></w:p>"
-                + (inner if nested and k == 0 else "") + "</w:tc>")
+                + (inner if k < nested else "") + "</w:tc>")
     rows = "".join(
         f"<w:tr><w:trPr>{_CNF}</w:trPr>{cell(k)}</w:tr>" if k < 2 else
         f"<w:tr>{cell(k)}</w:tr>" for k in range(7))
@@ -295,21 +296,24 @@ def _styled_table(nested: bool = False) -> str:
         "<w:gridCol w:w='1000'/></w:tblGrid>" + rows + "</w:tbl>")
 
 
-def test_booktabs_switches_a_theme_styles_CONDITIONAL_formats_off():
+@pytest.mark.parametrize("nested", [0, 3], ids=["no-nested", "3-nested"])
+def test_booktabs_switches_a_theme_styles_CONDITIONAL_formats_off(nested):
     """Header fill, banding and a bold first column all survived the
-    rules on ep3_sc (2026-11-03); only a render showed them."""
+    rules on ep3_sc (2026-11-03); only a render showed them. ep3_sc's
+    table holds NO nested table, and with exactly one the guard's any()
+    and all() agree — hence 0 and 3."""
     from lxml import etree
 
     from docxkit.tables import booktabs
 
-    xml = _styled_table(nested=True)
-    assert xml.count("<w:cnfStyle") == 7 + 2 + 1
+    xml = _styled_table(nested)
+    assert xml.count("<w:cnfStyle") == 7 + 2 + nested
 
     ruled, _ = booktabs(xml, read_all(xml)[0])
 
     assert 'w:firstRow="0"' in ruled and 'w:noHBand="1"' in ruled
     assert 'w:firstColumn="0"' in ruled and 'w:firstRow="1"' not in ruled
-    assert ruled.count("<w:cnfStyle") == 1       # the nested table's own
+    assert ruled.count("<w:cnfStyle") == nested  # the nested tables' own
     assert '<w:tblStyle w:val="GridTable4-Accent1"/>' in ruled
     etree.fromstring(ruled.encode())
 
