@@ -44,7 +44,11 @@ malformed XML, and a new note that rejecting a co-author emptied.
   when a setter failed; a `^` reached Find unescaped. The real-Word test passes with a bookmarked caption.
 - **BiH** `make_corrected.py`: the colour-strip loop walked stale offsets (latent at 4 tables); it walks last first.
 
-Not done, and why: the two survivors on fixtures counted 1 and 2 were not identified by name in the review; LFP_Inflows'
+- **Tests** (`6058200`): the two mutants surviving on fixtures counted 1 and 2 — `target // len(moved)` in
+  `expected_after_move` (blocks of 1-2 paragraphs) and `all(` for `any(` in the conditional-format strip (exactly one
+  nested table) — are killed by blocks of 3 and 5 and by tables with 0 and 3 nested tables.
+
+Not done, and why: LFP_Inflows'
 handover still names the old `word_move_figure.py`, which has the deletion-takeover bug — that repo is another
 session's, and its next move should use `tracked_move`.
 
