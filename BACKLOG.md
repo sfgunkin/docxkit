@@ -913,6 +913,42 @@ the input.
 
 **Workaround in use.** `LFP_Inflows/code/50_export/docx_tracked.py` (+ `revision_count.py` for the intact check).
 
+**Deferred by the author, 2026-11-09**: it would hand-author `w:ins`/`w:del` for a deliverable, which CONTRIBUTING's
+non-negotiables forbid; `moves.tracked_move` (fce83cc) covers the MOVE half through Word instead. One finding from that
+work bears on this one: Word's `Range.Delete()` over another author's pending deletion takes it over (measured
+2026-11-09), so a layered round has to step over existing deletions, as `moves._delete_live` does.
+
+### S4 `tools/sweep.py` does not run `house.audit`, so an audit change cannot be measured on the corpus
+<!-- status: open -->
+
+Found 2026-11-09 while fixing the `house.NOTE` and MERGEFORMAT entries (e020e1e).
+
+**Measured.** The sweep's `routines()` lists lint, citations, refstyle, crossrefs, compare.self, footnotes and hygiene,
+and not `house.audit` or `house.scope`. So `--findings before.json` / `--diff` — the documented way to measure an audit
+change — reported nothing for a change that added 93 `house.audit` findings in 22 of 300 sampled documents.
+
+**Suggested fix.** Add `"house.audit": lambda: len(house.audit(dict(raw)))` (and `house.scope`) to `routines()`, and
+let `--findings` record the findings' text, not only the count, for this one, so `--diff` can say which kind moved.
+
+**Workaround in use.** Scratch `house_audit_sample.py` + `house_audit_diff.py` (this session's scratchpad, not in a
+repo): 300 shuffled `Papers/**/*.docx`, `house.audit` at the HEAD worktree and at the working tree, diffed by kind.
+
+### S4 No command diffs two renders page by page; a byte-identical-render check was hand-rolled
+<!-- status: open -->
+
+Found 2026-11-09 verifying that dropping the BiH paper's workarounds (bih `598ade6`) left its output unchanged.
+
+**Measured.** `docxkit compare` reports no difference on any layer, but it does not read table properties, and the
+change kept a theme `tblStyle` the old build removed — only a render could say whether the page moved. `docxkit pdf`
+renders, `pages.render_anchors` rasterises around anchors, and nothing compares two PDFs. The check took a 20-line
+PyMuPDF script: page count, then per page the 60 dpi pixmap bytes, saving both sides of each page that differs.
+
+**Suggested fix.** `docxkit render-diff A.docx B.docx [--dpi 60] [--out DIR]`: export both through Word, compare page
+counts and per-page pixmaps, write side-by-side PNGs of the pages that differ, exit 0 only when every page matches.
+It is the missing half of "verify a rebuild that should change nothing".
+
+**Workaround in use.** Scratch `pdf_diff.py` (this session's scratchpad, not in a repo).
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
