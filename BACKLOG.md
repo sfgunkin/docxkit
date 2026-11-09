@@ -913,27 +913,6 @@ the input.
 
 **Workaround in use.** `LFP_Inflows/code/50_export/docx_tracked.py` (+ `revision_count.py` for the intact check).
 
-### S4 Word automation traps for a tracked MOVE: author name and flattened pending revisions
-<!-- status: open -->
-
-Found 2026-11-08 on LFP_Inflows (moving Figure 2 with Track Changes on, through `docxkit.word.open_doc(read_only=False)`).
-
-**Measured.**
-(1) `word.UserName = "Claude (replication C)"` was ignored: all 14 new revisions came out under the signed-in Office
-account name. The real author name was also written to `word/people.xml` and `docProps/core.xml`.
-(2) `dest.FormattedText = block.FormattedText` copied the caption "Figure [del 1][ins 2]." as the live text
-"Figure 12.". The pending deletion became visible text inside the new tracked insertion. Word opened the file without
-complaint.
-
-**Suggested fix.** A `word.tracked_move(doc, block, after, author)` that sets
-`Options.UseLocalUserInfo = True` (or reassigns authors afterwards via `authors.set_author(only=...)`) and restores the
-core properties. It should accept the revisions inside the source range in a scratch copy before taking FormattedText,
-and assert the copy's accepted text equals the source's. See also the S4 above on layered tracked rounds.
-
-**Workaround in use.** `LFP_Inflows/code/50_export/word_move_figure.py` + `finalize_word_move.py`: caption text
-restored from the pre-move accepted text and asserted; authors reassigned with `set_author(only={account})`; core and
-app properties restored.
-
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
