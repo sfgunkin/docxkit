@@ -14,6 +14,40 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 — the 2026.11.9 fixes, reviewed: fifteen defects in what they shipped~~ — FIXED 09.11, `cde6a74`, `f2a6e88`
+
+<!-- status: fixed -->
+
+Found 2026-11-09 by a `/code-review max` of `fea41a6..489ae9d` (the 2026.11.9 release) and BiH `598ade6`, the same
+day the release went out. Recorded as ONE entry because it is one finding: the eleven fixes below were each tested
+on the shape their own entry named and on nothing beside it. S1 for the worst of them — a reported success that wrote
+malformed XML, and a new note that rejecting a co-author emptied.
+
+- **crossrefs** (`cde6a74`): the split-mention fallback wrapped across a tracked `w:ins`/`w:del`, `w:fldSimple`,
+  `w:smartTag` or run-level `w:sdt`, so a renumbered mention became malformed XML reported as linked
+  (`_safe_wrap` refuses it now); a split mention whose caption refused its back-link raised out of `link` and aborted
+  every exhibit after it (asked first now, reported in `notes`); a split caption label raised (linked now); Emphasis
+  runs kept their style inside the link (Hyperlink replaces it).
+- **footnotes.add** (`f2a6e88`): cloned the sibling's revision records — paragraph-mark `w:ins`, `pPrChange`,
+  `rPrChange` — giving duplicate ids credited to another author (measured on a Life_Expectancy redline); took the face
+  from Word's bare `" "` run, so the LFP_Inflows defect it was filed for still happened in Word's usual shape.
+- **house** (`f2a6e88`): `_with_mark` missed a mark `rPr` behind `w:spacing` and dropped a pending mark revision; a
+  block note above an equation was re-spaced as its lead-in, so audit never came back clean; `_span_notes` missed a
+  note holding OMML and one between body and caption.
+- **repack** (`f2a6e88`): `_first_data_row` was a copy of `plan_booktabs`' header rule that skipped one row too many
+  after an empty-stub header; it asks `plan_booktabs` now.
+- **moves.tracked_move** (`f2a6e88`): the copy carries the block's ACCEPTED text, so "accept the move, reject the
+  co-author" gave wrong words — a block holding another author's revisions is refused unless `accept_pending=True`, and
+  a gate checks that verdict; a target before a table put the block in its first cell (refused, and gated); no gate saw
+  a lost bookmark, link target or note reference (gated); reassignment rewrote `dc:creator` and kept the account's
+  `presenceInfo`; a second move by the same author failed the reject gate; Word's persisted settings were not restored
+  when a setter failed; a `^` reached Find unescaped. The real-Word test passes with a bookmarked caption.
+- **BiH** `make_corrected.py`: the colour-strip loop walked stale offsets (latent at 4 tables); it walks last first.
+
+Not done, and why: the two survivors on fixtures counted 1 and 2 were not identified by name in the review; LFP_Inflows'
+handover still names the old `word_move_figure.py`, which has the deletion-takeover bug — that repo is another
+session's, and its next move should use `tracked_move`.
+
 ### ~~S4 Word automation traps for a tracked MOVE: author name and flattened pending revisions~~ — FIXED 09.11, `fce83cc`
 
 <!-- status: fixed -->
