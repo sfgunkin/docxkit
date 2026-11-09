@@ -56,16 +56,25 @@ writes them, and Word keeps direct run formatting.
 """
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 
+from lxml import etree
+
+from . import exhibits as _exhibits
 from ._xml import (
     DOCUMENT,
+    FLDCHAR_RE,
+    INSTR_RE,
+    PARA_OPEN_RE,
     PARA_RE,
     RUN_RE,
     Parts,
     element_spans,
+    fields,
     live_properties,
+    matching_close,
     own_properties,
     set_para_property,
     set_run_property,
@@ -98,9 +107,72 @@ __all__ = [
 #: A note to an exhibit opens on its label. Narrower than
 #: `exhibits.NOTE`, which also takes a bare `*` or `1)` line — right for
 #: deciding what belongs to an exhibit's block, wrong for restyling every
-#: paragraph in a document that happens to open that way.
+#: paragraph in a document that happens to open that way. INSIDE a block
+#: the wide one decides (:func:`_span_notes`): ep3_sc's Table 3 note opens
+#: "* The monthly costs…", moved with its table, and kept the body face
+#: because this pattern refused it (2026-11-03).
 NOTE = re.compile(r"^\s*(?:Notes?|Sources?|Примечани[ея]|Источник[иа]?)\s*:",
                   re.IGNORECASE)
+#: Body-level containers whose paragraphs are not body children.
+_CONTAINERS = ("tbl", "sdt", "customXml")
+_WS_RE = re.compile(r"\s+")
+
+
+def _span_notes(xml: str) -> set[int]:
+    """Start offsets of the body-level paragraphs an exhibit's block owns
+    as NOTES — :data:`docxkit.exhibits.NOTE`, the definition that decided
+    they travel with the exhibit, so the two can no longer disagree.
+
+    Located by body-level paragraph ORDINAL, then checked by text: if the
+    string walk and the tree disagree on either, the paragraph is left to
+    :data:`NOTE` alone rather than guessed at.
+    """
+    try:
+        root = etree.fromstring(xml.encode("utf-8"))
+    except etree.XMLSyntaxError:
+        return set()
+    body = root.find(_exhibits.W + "body")
+    if body is None:
+        return set()
+    kids = list(body)
+    owned: dict[int, str] = {}              # paragraph ordinal -> its text
+    ordinal = {i: n for n, i in enumerate(
+        i for i, el in enumerate(kids) if el.tag == _exhibits.W + "p")}
+    for x in _exhibits.exhibits(body):
+        if x.body_at is None:
+            continue
+        for i in range(max(x.body_at, x.caption_at) + 1, x.stop):
+            text = _exhibits.text_of(kids[i]).strip()
+            if (i in ordinal and text and _exhibits.NOTE.match(text)
+                    and not caption_re().match(text)):
+                owned[ordinal[i]] = text
+    if not owned:
+        return set()
+    bodies = element_spans(xml, "body")
+    if not bodies:
+        return set()
+    base, top = bodies[0]
+    inner = xml[base:top]
+    held = [sp for tag in _CONTAINERS for sp in element_spans(inner, tag)]
+    paras: list[tuple[int, int]] = []
+    pos = 0
+    # an EMPTY <w:p/> is a body child too, and `element_spans` skips one
+    # (it has no content to span): ep3_sc has one, and the ordinals were
+    # off by one from it on (2026-11-09)
+    while (m := PARA_OPEN_RE.search(inner, pos)) is not None:
+        end = (m.end() if m.group(1) else
+               matching_close(inner, m.end(), "p"))
+        if not any(c <= m.start() < d for c, d in held):
+            paras.append((m.start() + base, end + base))
+        pos = end
+    if len(paras) != len(ordinal):
+        return set()
+    out = set()
+    for n, text in owned.items():
+        a, b = paras[n]
+        if _WS_RE.sub("", visible_text(xml[a:b])) == _WS_RE.sub("", text):
+            out.add(a)
+    return out
 #: The Abstract's label: alone as a heading, or opening its paragraph.
 _ABSTRACT_RE = re.compile(r"^\s*(Abstract)\b\s*[:.\u2014\u2013-]?\s*",
                           re.IGNORECASE)
@@ -214,8 +286,67 @@ def _spacing(para: str, after: int) -> str:
         'w:lineRule="auto"/>')
 
 
+#: The fields a caption numbers itself with: Insert Caption writes SEQ,
+#: chapter numbering adds STYLEREF.
+_NUMBERING_RE = re.compile(r"^\s*(?:SEQ|STYLEREF)\b", re.IGNORECASE)
+#: Either switch keeps the face a result was given across an update.
+_KEEPS_FACE_RE = re.compile(r"\\\*\s*(?:MERGEFORMAT|CHARFORMAT)\b",
+                            re.IGNORECASE)
+_FLDSIMPLE_RE = re.compile(
+    r'(<w:fldSimple\b[^>]*?\bw:instr=")([^"]*)("[^>]*?)(/?)>')
+_SWITCH = r" \* MERGEFORMAT "
+
+
+def _numbering_fields(para: str) -> list[tuple[int, int, str]]:
+    """``(start, end, instruction)`` of the place each caption-number
+    field's instruction is WRITTEN — the `w:instr` value of a
+    `w:fldSimple`, or the last `w:instrText` of a fldChar field — for
+    every one that SHOWS a result. Only the field's own instruction: a
+    field nested inside another's is its own entry."""
+    out = []
+    for m in _FLDSIMPLE_RE.finditer(para):
+        if not m.group(4) and _NUMBERING_RE.match(html.unescape(m.group(2))):
+            out.append((m.start(2), m.end(2), html.unescape(m.group(2))))
+    for f in fields(para):
+        if f.result is None or f.at < 0 or not _NUMBERING_RE.match(f.instr):
+            continue
+        depth, last = 0, None
+        marks = sorted([*FLDCHAR_RE.finditer(para, f.start, f.end),
+                        *INSTR_RE.finditer(para, f.start, f.end)],
+                       key=lambda x: x.start())
+        for x in marks:
+            if x.re is INSTR_RE:
+                if depth == 1:
+                    last = x
+            elif x.group(1) == "begin":
+                depth += 1
+            elif x.group(1) == "end":
+                depth -= 1
+            elif depth == 1:                 # this field's `separate`
+                break
+        if last is not None:
+            out.append((last.start(1), last.end(1), f.instr))
+    return sorted(out)
+
+
+def _keep_number_face(para: str) -> str:
+    r"""`para` with ``\* MERGEFORMAT`` on each caption-number field that
+    lacks a face-keeping switch. Without it Word regenerates the result
+    in the PARAGRAPH style on its next field update — which printing and
+    PDF export both run — and the face just written to the result runs
+    is thrown away: ep3_sc's "1" printed 9 pt accent-blue under a caption
+    whose XML said Times 12 black (2026-11-03)."""
+    for a, b, instr in reversed(_numbering_fields(para)):
+        if _KEEPS_FACE_RE.search(instr):
+            continue
+        written = para[a:b]
+        para = para[:a] + written.rstrip() + _SWITCH + para[b:]
+    return para
+
+
 def _styled(para: str, face: Face, after: int) -> tuple[str, int]:
     para, runs = set_run_properties(para, face.props())
+    para = _keep_number_face(para)
     para = _with_mark(para, face)
     para = set_para_property(para, "jc", '<w:jc w:val="left"/>')
     return _spacing(para, after), runs
@@ -315,6 +446,7 @@ def apply(parts: Parts, rules: Rules = HOUSE) -> HouseReport:
     captions = notes = figure_notes = runs = 0
     cap_re = caption_re()
     paras = list(PARA_RE.finditer(xml))
+    in_block = _span_notes(xml)
     for i in range(len(paras) - 1, -1, -1):
         m = paras[i]
         text = visible_text(m.group(0)).strip()
@@ -322,7 +454,7 @@ def apply(parts: Parts, rules: Rules = HOUSE) -> HouseReport:
             para, n = _styled(m.group(0), rules.caption, rules.caption_after)
             para = set_para_property(para, "keepNext", "<w:keepNext/>")
             captions += 1
-        elif NOTE.match(text):
+        elif NOTE.match(text) or m.start() in in_block:
             para, n = _styled(m.group(0), rules.note, rules.note_after)
             notes += 1
             if i and _PICTURE_RE.search(paras[i - 1].group(0)):
@@ -412,6 +544,19 @@ def _face_findings(para: str, face: Face, cascade: Cascade, *,
     return []
 
 
+def _style_gives(cascade: Cascade, pstyle: str | None, face: Face,
+                 themes: dict[str, str]) -> bool:
+    """Does the paragraph STYLE alone set `face`? Then a field result
+    Word regenerates in that style comes back in the house face, and a
+    missing ``\\* MERGEFORMAT`` costs nothing."""
+    font = cascade.font(rpr="", rstyle=None, pstyle=pstyle)
+    size = cascade.resolve("sz", rpr="", rstyle=None, pstyle=pstyle).value
+    italic = cascade.toggle("i", rpr="", rstyle=None, pstyle=pstyle)
+    return (themes.get(font or "", font) == face.font
+            and size == face.half_points
+            and not (face.italic is False and italic))
+
+
 def _para_findings(para: str, cascade: Cascade, pstyle: str | None,
                    what: str, after: int) -> list[str]:
     ppr = own_properties(para, "pPr")
@@ -449,13 +594,17 @@ def scope(parts: Parts) -> Scope:
     — in a grid or not — for the rules to apply to."""
     xml = parts[DOCUMENT].decode("utf-8")
     cap_re = caption_re()
-    texts = [visible_text(m.group(0)).strip() for m in PARA_RE.finditer(xml)]
+    in_block = _span_notes(xml)
+    found = [(m.start(), visible_text(m.group(0)).strip())
+             for m in PARA_RE.finditer(xml)]
+    texts = [t for _, t in found]
     numbered = sum(
         1 for m in display_equations(xml)
         if EQ_NUMBER_RE.search(visible_text(OMATH_RE.sub("", m.group(0))))
         or any(lo <= m.start() < hi for lo, hi in element_spans(xml, "tbl")))
     return Scope(captions=sum(1 for t in texts if cap_re.match(t)),
-                 notes=sum(1 for t in texts if NOTE.match(t)),
+                 notes=sum(1 for at, t in found
+                           if NOTE.match(t) or at in in_block),
                  numbered_equations=numbered)
 
 
@@ -474,6 +623,7 @@ def audit(parts: Parts, rules: Rules = HOUSE) -> list[str]:
     cap_re = caption_re()
     out: list[str] = []
     paras = list(PARA_RE.finditer(xml))
+    in_block = _span_notes(xml)
     for i, m in enumerate(paras):
         para = m.group(0)
         text = visible_text(para).strip()
@@ -490,7 +640,13 @@ def audit(parts: Parts, rules: Rules = HOUSE) -> list[str]:
             if keep is None or re.search(r'w:val="(?:0|false|off)"', keep):
                 out.append(f"{what}: no keepNext — it can be left alone "
                            f"at the foot of a page")
-        elif NOTE.match(text):
+            if (_keep_number_face(para) != para
+                    and not _style_gives(cascade, pstyle, rules.caption,
+                                         themes)):
+                out.append(f"{what}: its number is a field without "
+                           r"\* MERGEFORMAT — Word's next field update "
+                           f"redraws it in the caption style")
+        elif NOTE.match(text) or m.start() in in_block:
             what = f"note {text[:30]!r}"
             out += _face_findings(para, rules.note, cascade,
                                   pstyle=pstyle, what=what, themes=themes)

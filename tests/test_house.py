@@ -94,6 +94,102 @@ def test_NOTES_are_10pt_single_8pt_after_and_indented_only_under_a_figure():
     assert "<w:ind" not in note
 
 
+TABLE = ("<w:tbl><w:tblPr/><w:tr><w:tc><w:p><w:r><w:t>1.5</w:t></w:r></w:p>"
+         "</w:tc></w:tr></w:tbl>")
+
+
+def starred_tables(n: int) -> list[str]:
+    """`n` tables, each captioned above and noted below with a "*" line —
+    ep3_sc's Table 3, whose note stayed in the body face (2026-11-03)."""
+    out = []
+    for k in range(1, n + 1):
+        out += [para(run(f"Table {k}. Monthly costs {k}")), TABLE,
+                para(run(f"* The monthly costs of item {k}."))]
+    return out
+
+
+def test_a_STAR_LED_note_inside_a_table_block_is_styled_and_audited():
+    # 3 tables, and a "*" paragraph in the prose that belongs to none
+    # an EMPTY <w:p/> ahead of them, as ep3_sc has: it is a body child,
+    # and a walk that skipped it located every note one paragraph early
+    parts = paper("<w:p/>", *starred_tables(3), para(run("Prose follows.")),
+                  para(run("* An aside in the prose, not a note.")))
+    before = house.audit(parts)
+
+    got = house.apply(parts)
+
+    assert got.notes == 3
+    assert house.scope(parts).notes == 3
+    for k in (1, 2, 3):
+        note = holding(parts, f"costs of item {k}")
+        assert '<w:sz w:val="20"/>' in note
+        assert 'w:after="160" w:line="240" w:lineRule="auto"' in note
+    assert "<w:sz" not in holding(parts, "An aside")
+    assert len({f.split(":")[0] for f in before
+                if f.startswith("note '* The monthly")}) == 3
+    assert house.audit(parts) == []
+    well_formed(parts)
+
+
+CAPTION_STYLE = ('<w:style w:type="paragraph" w:styleId="Caption">'
+                 '<w:rPr><w:rFonts w:ascii="Aptos" w:hAnsi="Aptos"/>'
+                 '<w:color w:val="0E2841"/><w:sz w:val="18"/></w:rPr>'
+                 "</w:style>")
+CAP_PPR = '<w:pPr><w:pStyle w:val="Caption"/></w:pPr>'
+
+
+def simple_caption(k: int) -> str:
+    """Insert Caption's form: the number is a `w:fldSimple` result."""
+    return (f"<w:p>{CAP_PPR}{run('Table ', preserve=True)}"
+            r'<w:fldSimple w:instr=" SEQ Table \* ARABIC ">'
+            f"{run(str(k))}</w:fldSimple>{run(f': Costs {k}')}</w:p>")
+
+
+def complex_caption(k: int) -> str:
+    """The fldChar form, its instruction split across two runs."""
+    return (f"<w:p>{CAP_PPR}{run('Figure ', preserve=True)}"
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText xml:space="preserve"> SEQ Figure'
+            '</w:instrText></w:r>'
+            r'<w:r><w:instrText xml:space="preserve"> \* ARABIC '
+            "</w:instrText></w:r>"
+            '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+            f"{run(str(k))}"
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+            f"{run(f'. Wages {k}')}</w:p>")
+
+
+def test_a_caption_NUMBER_field_gets_MERGEFORMAT_so_an_update_keeps_the_face():
+    """ep3_sc, 2026-11-03: the XML said Times 12 black and the PDF drew
+    the "1" in the Caption style, because Word regenerates a field result
+    on print and only `\\* MERGEFORMAT` keeps the face it was given."""
+    caps = [simple_caption(k) for k in (1, 2, 3)] + [
+        complex_caption(k) for k in (1, 2, 3, 4, 5)]
+    parts = paper(*caps, styles=CAPTION_STYLE)
+    said = [f for f in house.audit(parts) if "MERGEFORMAT" in f]
+
+    got = house.apply(parts)
+    once = parts[DOCUMENT]
+    house.apply(parts)
+
+    xml = parts[DOCUMENT].decode()
+    assert got.captions == 8 and len(said) == 8
+    assert xml.count(r'w:instr=" SEQ Table \* ARABIC \* MERGEFORMAT "') == 3
+    assert xml.count(r"> \* ARABIC \* MERGEFORMAT </w:instrText>") == 5
+    assert parts[DOCUMENT] == once                      # idempotent
+    assert not [f for f in house.audit(parts) if "MERGEFORMAT" in f]
+    well_formed(parts)
+
+
+def test_a_caption_style_that_IS_the_house_face_needs_no_switch():
+    house_face = ('<w:style w:type="paragraph" w:styleId="Caption"><w:rPr>'
+                  '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New '
+                  'Roman"/><w:sz w:val="24"/></w:rPr></w:style>')
+    parts = paper(*[simple_caption(k) for k in (1, 2, 3)], styles=house_face)
+
+    assert not [f for f in house.audit(parts) if "MERGEFORMAT" in f]
+
+
 def test_a_notes_own_space_BEFORE_is_kept():
     parts = paper(f'<w:p><w:pPr><w:spacing w:before="120" w:after="400"/>'
                   f"</w:pPr>{run('Source: Kept gap.')}</w:p>")
