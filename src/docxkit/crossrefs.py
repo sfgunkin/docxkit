@@ -450,6 +450,60 @@ def _link_mention(para_xml: str, cap: Caption, bid: int,
 #: a placeholder anchor no document carries, so the link just written
 #: can be found again without guessing which one it was
 _PENDING = "docxkit-pending-mention"
+#: any prefixed element tag: open, close or empty
+_ANY_TAG_RE = re.compile(r"<(/?)([A-Za-z][\w.-]*:[\w.-]+)\b[^>]*?(/?)>")
+
+
+def _open_elements(xml: str, stop: int) -> list[str] | None:
+    """The elements still open at `stop`, outermost first; None if the
+    markup before it does not nest."""
+    stack: list[str] = []
+    for m in _ANY_TAG_RE.finditer(xml, 0, stop):
+        if m.group(3):
+            continue
+        if not m.group(1):
+            stack.append(m.group(2))
+        elif not stack or stack.pop() != m.group(2):
+            return None
+    return stack
+
+
+def _safe_wrap(para_xml: str, at: int, end: int,
+               anchor: str) -> tuple[str, int, int] | None:
+    """`para_xml` with the visible span ``[at, end)`` linked to `anchor`,
+    and where the link sits — or None when the link would not be a
+    well-formed child of the paragraph itself.
+
+    `wrap_visible_span` slices between the first and last run it covers,
+    and a span that starts or ends inside a container — a tracked
+    `w:ins`/`w:del` (a co-author renumbering "Table [del 2][ins 3]"), a
+    `w:fldSimple`, a `w:smartTag`, a run-level `w:sdt` — came back as
+    malformed XML that `link` reported as linked and `write_docx` then
+    refused, losing every link in the write (review, 2026-11-09). Such a
+    span is left alone: reported, as it was before the fallback existed.
+
+    Every run in the link wears the Hyperlink character style, replacing
+    any other: `wrap_visible_span` keeps a style a run already has, so a
+    split mention in Emphasis runs was linked looking like plain text.
+    """
+    from ._xml import matching_close
+    from .citations import wrap_visible_span
+
+    try:
+        out = wrap_visible_span(para_xml, at, end, _PENDING)
+    except AnchorError:
+        return None
+    open_tag = f'<w:hyperlink w:anchor="{_PENDING}">'
+    lo = out.index(open_tag)
+    hi = matching_close(out, lo + len(open_tag), "hyperlink")
+    outside = _open_elements(out, lo)
+    inside = _open_elements(out[lo:hi], hi - lo)
+    if outside is None or len(outside) != 1 or inside != []:
+        return None
+    link = RUN_RE.sub(lambda r: _as_link_run(r.group(0)), out[lo:hi])
+    link = link.replace(open_tag, f'<w:hyperlink w:anchor="{anchor}">', 1)
+    out = out[:lo] + link + out[hi:]
+    return out, lo, lo + len(link)
 
 
 def _link_split_mention(para_xml: str, pattern: re.Pattern[str],
@@ -464,21 +518,16 @@ def _link_split_mention(para_xml: str, pattern: re.Pattern[str],
     could link it. Already-linked characters are masked, so a label that
     is already a link is never wrapped a second time.
     """
-    from ._xml import matching_close
-    from .citations import masked_visible_text, wrap_visible_span
+    from .citations import masked_visible_text
 
     m = pattern.search(masked_visible_text(para_xml))
     if m is None:
         return para_xml, "NOT-FOUND"
-    try:
-        out = wrap_visible_span(para_xml, m.start(), m.end(), _PENDING)
-    except AnchorError:
+    wrapped = _safe_wrap(para_xml, m.start(), m.end(), anchor)
+    if wrapped is None:
         return para_xml, "NOT-FOUND"
-    open_tag = f'<w:hyperlink w:anchor="{_PENDING}">'
-    at = out.index(open_tag)
-    end = matching_close(out, at + len(open_tag), "hyperlink")
-    link = out[at:end].replace(open_tag, f'<w:hyperlink w:anchor="{anchor}">',
-                               1)
+    out, at, end = wrapped
+    link = out[at:end]
     if mark:
         link = (f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>' + link
                 + f'<w:bookmarkEnd w:id="{bid}"/>')
@@ -582,9 +631,39 @@ def _wrap_label(para_xml: str, cap: Caption, anchor: str) -> str:
     numbered = _wrap_numbered_label(para_xml, cap, anchor)
     if numbered is not None:
         return numbered
+    split = _wrap_split_label(para_xml, cap, anchor)
+    if split is not None:
+        return split
     raise AnchorError(
         f"{cap.prefix}: caption label is split across runs and could not be "
         f"wrapped in a back-link ({visible_text(para_xml)[:60]!r})")
+
+
+def _backlink_refusal(para_xml: str, cap: Caption) -> str | None:
+    """Why the caption could not take its back-link, or None: the label
+    is already a link home, or one of the wraps can make it one."""
+    if f'w:anchor="{cap.mention_name}"' in para_xml:
+        return None
+    try:
+        _wrap_label(para_xml, cap, cap.mention_name)
+    except AnchorError as exc:
+        return str(exc)
+    return None
+
+
+def _wrap_split_label(para_xml: str, cap: Caption,
+                      anchor: str) -> str | None:
+    """A caption label Word cut across runs (``Table`` | `` 3. Costs``),
+    linked through its visible-text span when that is safe."""
+    from .citations import masked_visible_text
+
+    text = masked_visible_text(para_xml)
+    lead = len(text) - len(text.lstrip())
+    for label in (cap.prefix, cap.prefix.replace(" ", " ")):
+        if text[lead:].startswith(label):
+            wrapped = _safe_wrap(para_xml, lead, lead + len(label), anchor)
+            return wrapped[0] if wrapped is not None else None
+    return None
 
 
 #: what may stand between a caption's label run and its number field
@@ -770,6 +849,18 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
                         if c.name == cap.name), None)
         if current is None:                     # pragma: no cover - defensive
             continue
+
+        # Can the caption take its back-link? Asked BEFORE the forward
+        # step: a mention linked to a caption that then refuses its
+        # bookmark is a dangling link, and the refusal used to escape
+        # `link` whole, aborting every exhibit after it (review,
+        # 2026-11-09). Report it and leave this exhibit as it is.
+        if cap.mention_name not in reaches or not have_cap:
+            refused = _backlink_refusal(xml[current.start:current.end],
+                                        current)
+            if refused is not None:
+                report.notes[cap.name] = f"not linked: {refused}"
+                continue
 
         # The forward step has two jobs — make the mention a link, and
         # MARK it — and either can be the one missing.

@@ -6,7 +6,6 @@ import re
 import pytest
 
 from docxkit import crossrefs
-from docxkit.errors import AnchorError
 
 
 def para(*runs: str, ppr: str = "") -> str:
@@ -147,6 +146,70 @@ def test_a_MENTION_split_across_runs_is_linked_and_bookmarked():
             rf'<w:hyperlink w:anchor="Table{k}">.*?</w:hyperlink>'
             r'<w:bookmarkEnd w:id="\d+"/>', prose, re.DOTALL)
         assert crossrefs._PENDING not in out
+
+
+def _renumbered(k: int) -> str:
+    """A co-author renumbered the mention with Track Changes on."""
+    return para(run("As Table "),
+                f'<w:del w:id="{900 + k}" w:author="Co" '
+                'w:date="2026-11-01T00:00:00Z"><w:r><w:delText>9'
+                "</w:delText></w:r></w:del>",
+                f'<w:ins w:id="{950 + k}" w:author="Co" '
+                f'w:date="2026-11-01T00:00:00Z">{run(str(k))}</w:ins>',
+                run(" shows."))
+
+
+def test_a_mention_straddling_a_TRACKED_change_is_reported_not_broken():
+    """Review, 2026-11-09: the visible-span wrap sliced across the
+    `w:ins`, `link` said linked, and the part was malformed — so
+    `write_docx` refused it and every other table's links were lost."""
+    from lxml import etree
+
+    xml = doc(*[_renumbered(k) for k in (3, 5, 7)],
+              para(run("Table 4 shows more.")),
+              *[para(run(f"Table {k}. Costs {k}")) for k in (3, 4, 5, 7)])
+
+    out, report = crossrefs.link(xml)
+
+    ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    etree.fromstring(out.replace("<w:document>", f"<w:document {ns}>", 1)
+                     .encode())
+    assert report.linked == ["Table4"]
+    assert sorted(report.no_mention) == ["Table3", "Table5", "Table7"]
+
+
+def test_a_split_mention_whose_CAPTION_cannot_be_wrapped_stops_nothing():
+    """The mention now links, so the back step is reached — and a caption
+    no wrap can take used to raise out of `link`, losing Table 4 too."""
+    xml = doc(para(run("As "), run("T"), run("able "), run("3 shows.")),
+              para(run("And Table 4 shows more.")),
+              para('<w:t xml:space="preserve">Table 3. Costs</w:t>'),
+              para(run("Table 4. Rates")))
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table4"]
+    assert "not linked" in report.notes["Table3"]
+    assert 'w:anchor="Table3"' not in out, "no link to a caption left bare"
+
+
+def test_a_split_mention_in_STYLED_runs_wears_the_Hyperlink_style():
+    """`wrap_visible_span` keeps a character style a run already has, so
+    Emphasis runs came out linked and looking like plain text."""
+    emph = '<w:rPr><w:rStyle w:val="Emphasis"/></w:rPr>'
+    xml = doc(para(run("As "), run("Tab", emph), run("le 3", emph),
+                   run(" shows.")),
+              para(run("Table 3. Costs")))
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table3"]
+    prose = paragraph_holding(out, "shows")
+    link = re.search(r'<w:hyperlink w:anchor="Table3">(.*?)</w:hyperlink>',
+                     prose, re.DOTALL)
+    assert link is not None
+    assert re.findall(r'w:rStyle w:val="(\w+)"', link.group(1)) == [
+        "Hyperlink", "Hyperlink"]
 
 
 # --- the core behaviour -----------------------------------------------
@@ -396,13 +459,23 @@ def test_caption_label_with_a_non_breaking_space_is_linked():
     assert 'w:anchor="Table1txt"' in out
 
 
-def test_a_label_split_across_runs_is_reported_not_silently_skipped():
+def test_a_label_split_across_runs_is_LINKED_through_its_visible_span():
+    """It used to raise "split across runs" and stop the whole call; the
+    visible-span wrap links it, both runs in the Hyperlink style."""
     xml = doc(
         para(run("As Table 1 shows.")),
         para(run("Table"), run(" 1. Employment")),      # Word rsid split
     )
-    with pytest.raises(AnchorError, match="split across runs"):
-        crossrefs.link(xml)
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Table1"] and not report.notes
+    cap = paragraph_holding(out, "Employment")
+    link = re.search(r'<w:hyperlink w:anchor="Table1txt">(.*?)</w:hyperlink>',
+                     cap, re.DOTALL)
+    assert link is not None
+    assert "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", link.group(1))) \
+        == "Table 1"
+    assert link.group(1).count('<w:rStyle w:val="Hyperlink"/>') == 2
 
 
 def test_unlink_reports_NOTHING_removed_from_a_document_with_no_exhibits():
@@ -430,14 +503,14 @@ def test_the_split_label_refusal_quotes_SIXTY_characters_of_the_caption():
     assert len(long_caption) > 60
     xml = doc(
         para(run("As Table 1 shows.")),
-        para(run("Table"), run(long_caption[len("Table"):])),  # rsid split
+        # no run at all: nothing can wrap it, so it is refused by name
+        para(f'<w:t xml:space="preserve">{long_caption}</w:t>'),
     )
 
-    with pytest.raises(AnchorError) as exc:
-        crossrefs.link(xml)
+    out, report = crossrefs.link(xml)
 
-    message = str(exc.value)
-    assert "split across runs" in message
+    message = report.notes["Table1"]
+    assert "split across runs" in message and out == xml
     quoted = message.split("(", 1)[1].rsplit(")", 1)[0]
     assert quoted == repr(long_caption[:60]), quoted
 
@@ -1956,8 +2029,12 @@ def test_a_caption_LABEL_outside_any_run_is_refused_not_spliced():
         para('<w:t xml:space="preserve">Table 7. Employment</w:t>'),
     )
 
-    with pytest.raises(AnchorError, match="split across runs"):
-        crossrefs.link(xml)
+    out, report = crossrefs.link(xml)
+
+    # refused by name — in the report now, not as an exception that
+    # stopped every exhibit after it — and nothing written for it
+    assert "split across runs" in report.notes["Table7"]
+    assert report.linked == [] and out == xml
 
 
 def test_ONE_malformed_text_node_does_not_cost_the_whole_paragraph():
