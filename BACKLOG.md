@@ -978,6 +978,32 @@ occurrence of its label; otherwise report it under the text the author deleted, 
 
 **Workaround in use.** Checked each one by hand against the content diff, then `baseline --accept-loss Table1,Table2`.
 
+### S4 `tools/writer_oracle.py` probes two writers; a change to any other writer has no old-vs-new oracle
+<!-- status: open -->
+
+**Found.** 2026-11-14, closing the batch in e84596f. CONTRIBUTING says a change to a writer is measured with
+`writer_oracle.py --base HEAD`, but its `PROBES` table holds only `set_cell` and `insert_before`. The batch changed
+three other writers: `tables.house`, `crossrefs.link` and `citations.link_all`. For those the oracle measures nothing,
+and running it would have printed a clean result about writers the batch never touched.
+
+**Measured by hand instead.** A HEAD worktree plus `PYTHONPATH` per side, and a scratch probe run over a strided sample
+of 170 manuscripts from `Papers/`. For each table it recorded `house`'s output hash, visible text and its counts of
+italic, bold, `jc`, `keepNext` and `vertAlign`; for each document, `crossrefs.link`'s output hash and the audit's
+`misplaced_anchor` count before and after; and `link_all`'s linked/skipped counts and output hash. It earned its keep
+twice. It measured the old `house` damage (72,484 `jc` and 35,337 italics lost on 911 tables) against zero for the new
+code. And it caught a false positive in the first `crossrefs` fix before commit: 32 new `misplaced_anchor` findings,
+all on `w:lastRenderedPageBreak`.
+
+**Suggested fix.** Add `house`, `crossrefs.link` and `link_all` to `PROBES`. The answers to compare are: the output hash;
+whether the visible text is unchanged; property counts for `house`; the audit counts for `crossrefs`; and the
+report's counts for `link_all`. `link_all` takes parts, not the document XML that `worker` reads, so `worker` needs to
+hand probes the package. Better still, make a writer with no probe a gate failure. A test can list the public writers
+(anything that returns changed XML or parts) and fail on one absent from `PROBES`. A gap like this one is otherwise
+found only by the person it happens to.
+
+**Workaround in use.** Scratch `writer_probe.py` and `probe_diff.py` in that session's scratchpad. They are not in a
+repo and will be gone; the shape is the paragraph above.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
