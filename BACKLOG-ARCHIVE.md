@@ -14,6 +14,193 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 `renumber` reads "Table 23, 0.217" as a list and skips the mention~~ — FIXED 14.11, `e84596f`
+
+<!-- status: fixed -->
+
+**Found.** Month_of_birth R12, 2026-11-12. `_CONTINUATION` (`\s*(?:[-–—,]|\band\b|\bи\b)\s*[A-Za-z]?\d`) matches a
+comma followed by ANY digit, so in "… is the estimate of Table 23, 0.217: …" the mention is treated as the head of a
+"Tables 23, 0…" list. `shift`/`remap` leave it unshifted and only FLAG it. Prose that puts a number after an exhibit
+mention, as in "(Table 9, 0.171)", is common in results text.
+
+**Suggested fix.** A comma before a decimal is not a list: `,(?!\s*\d+[.,]\d)`. Better still, require the label's
+plural ("Tables") for a comma or "and" continuation, as a list of exhibits always uses the plural.
+
+**Fixed 2026-11-14.** The decimal look-ahead, `,(?!\s*\d+[.,]\d)`. The plural-label
+alternative was not taken. `test_a_comma_before_a_DECIMAL_is_not_a_list` (three forms, incl. "1,5"),
+`test_a_comma_before_a_WHOLE_number_is_still_a_list`.
+
+**Workaround in use.** The paper's script patches `renumber._CONTINUATION` with the decimal look-ahead.
+
+Fixed in e84596f; the entry's "Fixed 2026-11-14" paragraph has the measurement and the tests.
+
+### ~~S4 `link_all` will not wrap a first mention when the same citation occurs twice in its paragraph~~ — FIXED 14.11, `e84596f`
+
+<!-- status: fixed -->
+
+**Found.** LFP_Inflows_ECA, 2026-11-12. After a rewording, "Lokshin (2026)" appeared twice in the introduction
+paragraph; `link --write` reported `SKIPPED: 'Lokshin (2026)' ¶9: occurs twice in paragraph` and then removed the
+entry's back-link ("Lokshin2026txt does not exist"). The citations audit caught the missing back-link. For
+first-mention linking, the first occurrence in document order is not ambiguous.
+
+**Suggested fix.** In `link_all`, wrap the FIRST occurrence when a citation repeats within its paragraph (leave the
+repeat to `link_rest`), and say so in the report instead of skipping.
+
+**Fixed 2026-11-14.** `_link_first_plain` wraps the first PLAIN occurrence and the
+report says "(the first of N in the paragraph)". On 170 corpus documents: 10 such skips before, 0 after, 10 more first
+mentions linked. Six tests had used "cited twice in one paragraph" as their way to make the wrap refuse; they now
+inject the refusal at `_link_first_plain`, since what they pin is the report and the back-link undo, not the cause.
+Test: `test_a_work_cited_TWICE_in_its_first_paragraph_links_the_first`.
+
+**Workaround in use.** The generator words the second mention as "That paper" (one citation per paragraph).
+
+Fixed in e84596f; the entry's "Fixed 2026-11-14" paragraph has the measurement and the tests.
+
+### ~~S2 `crossrefs --write` opens a caption's bookmark BEFORE a leading page-break run, so the link lands on the previous page — and `crossrefs --audit` passes it~~ — FIXED 14.11, `e84596f`
+
+<!-- status: fixed -->
+
+**Found.** LFP_Inflows_ECA country notes, 2026-11-12. The author: "Link from the text to Figure 2 points to the wrong
+page." The generator started each exhibit page with a `<w:r><w:br w:type="page"/></w:r>` as the caption's first run;
+`crossrefs --write` put `<w:bookmarkStart w:name="Figure2"/>` at the start of the paragraph, ahead of that run. Word
+resolves the bookmark to the position before the break, i.e. the foot of the previous page. Measured on the Word PDF
+of the Georgia note (pypdf link destinations against the page each caption is on): 5 of 6 body links to Figure 2-4
+and Tables 1-2 one page early. `crossrefs --audit` reported `misplaced_anchor 0`; `lint` clean.
+
+**Fix.** In `crossrefs` write: start the caption bookmark after any leading run that holds only `w:br w:type="page"`
+(or `w:lastRenderedPageBreak`). In audit: report such a bookmark as `misplaced_anchor`. Test: a caption paragraph
+whose first run is a page break; the bookmark must follow the run, and the audit must flag the old placement.
+
+**Fixed 2026-11-14.** `_past_leading_breaks`: the caption bookmark starts after a
+leading run of hard page breaks, and a run that opens on a break and goes on to its text is split there (both halves
+keep the rPr), done BEFORE the label is wrapped, which would otherwise take the break into the link. `audit` reports a
+caption bookmark opening ahead of a hard break as `misplaced_anchor`. A first cut also counted
+`w:lastRenderedPageBreak` and raised the audit's findings on 170 corpus documents from 6 to 38, all 32 new ones the
+cached marker, none a hard break; the marker is now stepped over only on the way to a hard break. With that, `link`'s
+output is byte-identical to HEAD on all 170 documents. Tests: `test_a_caption_bookmark_starts_AFTER_…`,
+`test_audit_flags_…`, `test_a_cached_SOFT_break_marker_alone_neither_moves_nor_flags`.
+
+**Workaround in use.** The notes' generator now breaks with the caption's own `w:pageBreakBefore`
+(`LFP_Inflows_ECA/code/write_note.py` `caption`); `tests/test_notes.py::test_caption_links_land_on_the_caption_page`.
+
+Fixed in e84596f; the entry's "Fixed 2026-11-14" paragraph has the measurement and the tests.
+
+### ~~S2 `tables.house` replaces each cell run's rPr and each cell paragraph's pPr WHOLESALE — italics, bold below row 0, alignment and keepNext all go~~ — FIXED 14.11, `e84596f`
+
+<!-- status: fixed -->
+
+**Found.** Month_of_birth, 2026-11-11, before rebuilding 27 flextable-exported tables "so they could be edited".
+`_house_cell` calls `_set_properties(run, "rPr", house_rpr(...))`, which swaps the whole element whenever its
+inner text differs from the house set. Measured on the author's file (`build/rescue/mb2_keep_20261111_author_as_handed.docx`):
+
+    table 0 (Table 1): italic 8 -> 0, bold 15 -> 1, jc 218 -> 41, keepNext 217 -> 0
+    table 3 (Table 7): italic 8 -> 0, bold 15 -> 1, jc 146 -> 0,  keepNext 92 -> 0
+
+The italic group labels ("Pupils", "Annual marks"), the bold multi-row header (only row 0 gets `header_bold`),
+superscripts, every centred/right-aligned column and the keep-together chain are erased. No gate sees it:
+`compare` reports FORMAT entries, but a styling pass is EXPECTED to produce FORMAT entries, so they get dismissed.
+
+**Fix.** Merge, don't replace: set `rFonts`/`sz`/`szCs` inside the existing rPr (CT_RPr order) and keep every
+other child; in the cell pPr set `spacing` and the mark's rPr, keep `jc`/`keepNext`/`pStyle`. `header_bold`
+should ADD `w:b` to the header rows (all `tblHeader` rows, not only row 0), never strip it elsewhere.
+Test: a fixture with an italic stub cell, a bold second header row, a superscript star and a right-aligned
+column must survive `house` with only face and size changed.
+
+**Fixed 2026-11-14.** `_house_run` / `_house_para` merge through
+`set_run_property` / `set_para_property`: `rFonts`, `sz`, `szCs`, the cell `spacing` and the mark's face, nothing
+else; `header_bold` ADDS `w:b` to every row marked `tblHeader` (row 0 when none is). `house_rpr` also had `w:b` ahead
+of `w:rFonts`, out of EG_RPrBase order; fixed. Measured old vs new on 911 tables in a 170-document strided corpus
+sample: the old pass dropped 72,484 `jc`, 35,337 italics, 6,144 `vertAlign`, 5,739 `keepNext` and 2,132 bolds; the new
+one drops none, visible text identical everywhere. Tests: `test_house_changes_ONLY_face_and_size_and_keeps_the_rest`,
+`test_house_does_not_strip_bold_from_a_body_row_with_header_bold_off`.
+
+**Workaround in use.** The paper's own normalizer, `revision/scripts/applied/r10_tables_links.py` (`_rpr`, `_cell_ppr`),
+which merges and asserts on any child it does not know; `fit_columns` still does the widths.
+
+Fixed in e84596f; the entry's "Fixed 2026-11-14" paragraph has the measurement and the tests.
+
+### ~~S3 `citations.link_all` presents first-mention-only linking as "the papers' convention"; an author wanted every mention linked~~ — FIXED 14.11, `e84596f`
+
+<!-- status: fixed -->
+
+**Found.** LFP_Inflows, 2026-11-09. On 11-08 the paper's 25 citations were wired with `link_all`, and the handover
+repeated its docstring: "later mentions stay plain, the papers' convention". The author then reported missing links:
+the second Toossi (2013) on page 2, World Bank (2022) on page 13, and the citations in the footnotes. None of these
+was a defect in `link_all`; it had done exactly what its docstring says. The docstring states a house convention that
+this author does not hold, and the agent took it as settled. `link_rest` linked all 30 remaining mentions, in the
+body, the tables and the footnotes, with 0 broken links.
+
+**Why it matters.** `docxkit link --write` runs `link_all` only. Nothing in the CLI output says that later mentions
+were left plain, so the round reads as "citations linked" when 30 of 58 mentions are not.
+
+**Suggested fix.** Make the CLI ask or report. Either:
+- `docxkit link --write` reports "N later mentions left plain (run with --all to link them)", with `--all` running
+  `link_rest` after `link_all`; or
+- the paper's choice is recorded once in `paper.toml` (`citations.link = "first" | "all"`).
+
+Reword the docstring from "the papers' convention" to "one convention".
+
+**Fixed 2026-11-14.** `docxkit link` prints "N later mention(s) left plain — pass
+--all to link them as well", counted by running `link_rest` on a copy, so the number is what `--all` links;
+`--all` runs `link_rest` after `link_all` and refuses `--only`. The docstring now says "ONE convention". Tests in
+`test_cli.py` (`test_link_SAYS_how_many…`, `test_link_ALL_…`).
+
+**Workaround in use.** The paper calls `link_rest` after `link_all`
+(`LFP_Inflows/code/50_export/layout_links_notes_tables.py`).
+
+Fixed in e84596f; the entry's "Fixed 2026-11-14" paragraph has the measurement and the tests.
+
+### ~~S3 `refstyle` reports only the first double initial in each reference entry~~ — FIXED 14.11, `e84596f`
+
+<!-- status: fixed -->
+
+Found on LFP_Inflows, 2026-11-13. `_check_entry` uses `_DOUBLE_INITIAL_RE.search(authors)`, so one entry yields at
+most one `initials` issue. "Cusolito, A. P., …, Lokshin, M. M., and I. Torre" reported "A. P." only, and
+"Heckman, J. J., and R. J. Willis" reported "J. J." only. Lokshin and Willis came to light only through a
+paper-side regex.
+- **Fix:** `finditer`, one issue per match, or one issue listing every match.
+- **Pin it:** a test entry with two doubled authors, expecting both.
+- **Wording:** the skill's rule 1 now reads "one initial per author, the first given name only" (the author,
+  2026-11-13). The message "one initial per author" already matches it.
+- **Fixed 2026-11-14:** `finditer`, one issue per doubled author.
+  `test_EVERY_doubled_author_in_an_entry_flags_not_only_the_first` (three doubled, one single between them).
+
+Fixed in e84596f; the entry's "Fixed 2026-11-14" paragraph has the measurement and the tests.
+
+### ~~S3 `compare`'s PARAGRAPH layer reports `align left` / `line 240` -> ∅ where nothing on the page moved~~ — FIXED 14.11, `e84596f`
+
+<!-- status: fixed -->
+
+**Re-diagnosed 2026-11-14.** Filed 2026-11-13 as "`house.audit` reports 0 after Word's Accept All dropped the
+caption/note paragraph properties". The audit was RIGHT and the compare was wrong.
+
+**Found.** Month_of_birth, 2026-11-13. The author accepted R13 (which ran `house.apply` on 40 captions and 40 notes) in
+Word. `compare edited_r13 <accepted>` showed PARAGRAPH: 80 entries, `['align left', 'spacing line 240'] -> ∅`, every
+other layer none, and `--expect-clean` failed. The entry said they "fell back to the style's justified, 1.5-line
+setting", and `house.audit` returning 0 was filed as the defect. That was never measured. Measured 2026-11-14 on
+`rescue/mb2_keep_20261113_1104_author_R13accepted.docx` against `edited_r13.docx`:
+
+- In the accepted file, every one of the 80 paragraphs has NO `jc` or `line` at any level: none direct, none in its
+  style (ImageCaption, TableNote's notes kept their direct `left`, unstyled ones have Normal, which is empty), and an
+  empty `w:pPrDefault`. Unstated means left and single.
+- Word COM, `Paragraph.Format` on both files: all 40 captions and all 40 notes are `Alignment 0` (left),
+  `LineSpacingRule 0` (single), in BOTH. Identical.
+
+So Accept All deleted values equal to the built-in default (the `word-drops-redundant-ppr` behaviour), and the
+layer, which already treated unstated and `0` as the same page, had no such rule for the two properties whose default
+is NOT zero. The `house.apply` re-run after the verdict was unnecessary, though harmless.
+
+**Fixed 2026-11-14.** `_compare_read._builtin_default`: an unstated `jc` resolves to
+`left` (and `start` reads as `left`), an unstated `line` under an auto rule to `240`, so stated and unstated cancel
+while a real change still reads `align both -> align left`. The R13 pair: 80 entries -> none, `--expect-clean` exit 0.
+Tests in `test_compare_paragraph.py`: left/single stated vs unstated is no entry; `both`, `line 360` and an EXACT
+`240` still fail; `left` over a justified STYLE is still a difference.
+
+**Workaround in use.** After each verdict, compare the accepted file against the round's clean edit and re-run
+`house.apply` (paper script `scripts/applied/r13_after_verdict.py`). It can stay; it is no longer needed for this.
+
+Fixed in e84596f; the entry's "Fixed 2026-11-14" paragraph has the measurement and the tests.
+
 ### ~~S1 — the 2026.11.9 fixes, reviewed: fifteen defects in what they shipped~~ — FIXED 09.11, `cde6a74`, `f2a6e88`
 
 <!-- status: fixed -->
