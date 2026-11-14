@@ -58,8 +58,12 @@ __all__ = [
 ]
 
 # a mention number engaged in a range or list — the continuation the
-# labelled match must not have after it
-_CONTINUATION = r"\s*(?:[-–—,]|\band\b|\bи\b)\s*[A-Za-z]?\d"
+# labelled match must not have after it. A comma before a DECIMAL is not
+# a list: "the estimate of Table 23, 0.217" read as "Tables 23, 0…" and
+# was left unshifted (Month_of_birth R12), and results prose puts a
+# number after an exhibit mention all the time — "(Table 9, 0.171)".
+_CONTINUATION = (r"\s*(?:[-–—]|,(?!\s*\d+[.,]\d)|\band\b|\bи\b)"
+                 r"\s*[A-Za-z]?\d")
 
 
 @dataclass

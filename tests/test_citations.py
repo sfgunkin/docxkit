@@ -2244,18 +2244,24 @@ def test_an_entrys_own_bookmark_is_still_reused():
 # --------------------------------- a back-link whose target never landed -
 
 
-def test_no_backlink_survives_a_refused_in_text_wrap():
+def test_no_backlink_survives_a_refused_in_text_wrap(monkeypatch):
     """The back-link is decided while PLANNING, but the wrap that creates
-    its <name>txt target runs later and can refuse — a citation occurring
-    twice in one paragraph is ambiguous, so link_in_para raises. Entries
+    its <name>txt target runs later and can refuse — injected here, since
+    a citation occurring twice in one paragraph, which used to be the
+    refusal, now links its first occurrence. Entries
     are rebuilt bottom-up and the reference list sits below the prose, so
     the back-link is already written by then. Shipping it leaves a
     dangling anchor that only an audit finds (Parental Style: Bhalotra
     and Clarke, welded by hand).
     """
+    from docxkit import _cite_build
     from docxkit.citations import audit_links, link_all
+
+    def refusing(para: str, cite: str, name: str) -> tuple[str, int]:
+        raise AnchorError(f"{cite!r} cannot be wrapped here")
+    monkeypatch.setattr(_cite_build, "_link_first_plain", refusing)
     parts = _parts(
-        "Smith (2020) shows one thing, and Smith (2020) shows another.",
+        "Smith (2020) shows one thing.",
         "References",
         "Smith, A. (2020). A title. Journal.")
     rep = link_all(parts)

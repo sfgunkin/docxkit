@@ -339,6 +339,53 @@ def test_link_dry_run_reports_without_writing(monkeypatch, paper, capsys):
     assert Path(paper).read_bytes() == before
 
 
+def _three_mentions(tmp_path):
+    """Two works; Smith mentioned three times in three paragraphs, so
+    first-mention linking leaves two plain and `--all` links both."""
+    parts = make_parts(
+        para(run("Smith (2020) argues the point."))
+        + para(run("Jones (2019) disagrees with it."))
+        + para(run("Later, Smith (2020) returns to it."))
+        + para(run("And Smith (2020) concludes."))
+        + para(run("References"))
+        + para(run("Jones, B. (2019). Another title. Journal."))
+        + para(run("Smith, A. (2020). A title. Journal.")))
+    return write(tmp_path / "three.docx", parts)
+
+
+def test_link_SAYS_how_many_later_mentions_it_left_plain(
+        monkeypatch, tmp_path, capsys):
+    """LFP_Inflows: `link --write` linked first mentions only, and the
+    report read as "citations linked" with 30 of 58 mentions plain."""
+    path = _three_mentions(tmp_path)
+    code, _ = run_cli(monkeypatch, "link", str(path))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2 later mention(s) left plain — pass --all" in out, out
+
+
+def test_link_ALL_links_the_later_mentions_too(monkeypatch, tmp_path, capsys):
+    from docxkit import read_parts
+    from docxkit._xml import internal_links
+
+    path = _three_mentions(tmp_path)
+    code, _ = run_cli(monkeypatch, "link", str(path), "--all", "--write")
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "further mentions linked 2" in out, out
+    assert "left plain" not in out
+    doc = read_parts(path)["word/document.xml"].decode("utf-8")
+    anchors = [a for a, _ in internal_links(doc)]
+    assert anchors.count("Smith2020") == 3, anchors
+
+
+def test_link_ALL_refuses_to_be_scoped_with_ONLY(monkeypatch, tmp_path):
+    path = _three_mentions(tmp_path)
+    code, _ = run_cli(monkeypatch, "link", str(path), "--all",
+                      "--only", "Smith")
+    assert code != 0
+
+
 def _tracked(tmp_path, name="round.docx"):
     """A document with revisions and a comment by two people."""
     from conftest import comment, dele, ins

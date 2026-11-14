@@ -724,6 +724,67 @@ def test_the_marker_on_the_first_mention_is_reported_clean():
     assert crossrefs.audit(xml)["misplaced_anchor"] == []
 
 
+_BREAK_RUN = '<w:r><w:rPr><w:b/></w:rPr><w:br w:type="page"/></w:r>'
+
+
+_MARKER_RUN = "<w:r><w:lastRenderedPageBreak/></w:r>"
+
+
+@pytest.mark.parametrize("caption_runs", [
+    # a run of breaks only (the LFP_Inflows_ECA generator), reached past
+    # a cached soft-break marker
+    _MARKER_RUN + _BREAK_RUN + run("Figure 2. Employment"),
+    # a run that opens on the break and goes on to its text
+    '<w:r><w:rPr><w:b/></w:rPr><w:br w:type="page"/>'
+    '<w:t xml:space="preserve">Figure 2. Employment</w:t></w:r>',
+])
+def test_a_caption_bookmark_starts_AFTER_a_leading_page_break(caption_runs):
+    # Word resolves a bookmark before the break to the previous page:
+    # 5 of 6 links in a country note landed one page early, audit clean.
+    xml = doc(para(run("As Figure 2 shows, employment fell.")),
+              para(caption_runs))
+    out, _ = crossrefs.link(xml)
+    cap = paragraph_holding(out, "Figure 2. Employment")
+    start = cap.index('w:name="Figure2"')
+    assert cap.rfind('w:type="page"') < start
+    assert cap.rfind("lastRenderedPageBreak") < start
+    assert cap.index("<w:t") > start          # the label is linked, split
+    assert _BREAK_RUN in cap[:start]          # a split keeps its rPr
+    assert "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", cap)) == (
+        "Figure 2. Employment")
+    assert crossrefs.audit(out)["misplaced_anchor"] == []
+
+
+def test_a_cached_SOFT_break_marker_alone_neither_moves_nor_flags():
+    """`w:lastRenderedPageBreak` records where Word last laid a soft break;
+    a caption that opens on one starts the new page whichever side of it
+    the bookmark is. Counting it flagged 32 captions on 170 corpus
+    documents, none of them a link that landed early."""
+    xml = doc(para(run("As Figure 2 shows, employment fell.")),
+              para(_MARKER_RUN + run("Figure 2. Employment")))
+    out, _ = crossrefs.link(xml)
+    cap = paragraph_holding(out, "Figure 2. Employment")
+    assert cap.index('w:name="Figure2"') < cap.index("lastRenderedPageBreak")
+    assert crossrefs.audit(out)["misplaced_anchor"] == []
+
+
+def test_audit_flags_a_caption_bookmark_opened_BEFORE_its_page_break():
+    xml = doc(
+        para(run("As ") + '<w:bookmarkStart w:id="2" w:name="Figure2txt"/>'
+             '<w:hyperlink w:anchor="Figure2">' + run("Figure 2")
+             + '</w:hyperlink><w:bookmarkEnd w:id="2"/>' + run(" shows.")),
+        para('<w:bookmarkStart w:id="1" w:name="Figure2"/>' + _BREAK_RUN
+             + '<w:hyperlink w:anchor="Figure2txt">' + run("Figure 2")
+             + "</w:hyperlink>" + run(". Employment")
+             + '<w:bookmarkEnd w:id="1"/>'))
+    (line,) = crossrefs.audit(xml)["misplaced_anchor"]
+    assert line.startswith("Figure2 opens before the page break"), line
+    # the same paragraph with the break AFTER the text is not a finding
+    late = xml.replace(_BREAK_RUN, "").replace(
+        '<w:bookmarkEnd w:id="1"/>', _BREAK_RUN + '<w:bookmarkEnd w:id="1"/>')
+    assert crossrefs.audit(late)["misplaced_anchor"] == []
+
+
 def test_a_marker_inside_its_own_link_is_not_misplaced():
     """Whether the marker wraps the link or sits INSIDE it is a linker's
     choice that means nothing to a reader. Comparing raw offsets called

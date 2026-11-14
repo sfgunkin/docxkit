@@ -27,11 +27,12 @@ from docxkit._table_layout import (
     _cell_extents,
     _check_rule,
     _divide_pinned,
+    _Face,
+    _house_run,
     _keep_with_table,
     _own_tblpr,
     _round_to,
     _set_jc,
-    _set_properties,
     _set_span,
     _set_tbl_pr,
     _set_tc_w,
@@ -589,28 +590,21 @@ def test_a_border_size_of_ZERO_is_the_nil_rule_not_a_mistake():
         _check_rule("single", 97, "booktabs")
 
 
-def test_a_property_that_sorts_ABOVE_the_house_one_is_still_replaced():
-    """`existing == inner` decides whether the run is already in house
-    style, and the two sides are XML strings. Read as `>=` it answers
-    "already right" for every run whose properties happen to sort after
-    the house ones — `w:sz` after `w:rFonts`, which is the ordinary
-    case, since a table out of a paper states its size and nothing
-    else. The pass then rewrites nothing and reports 0 runs set.
+def test_a_run_s_own_size_is_REPLACED_and_the_face_put_in_its_slot():
+    """The house pass merges into a run's properties (BACKLOG, 2026-11-11:
+    replacing them wholesale erased italics, bold and superscripts). A
+    size the run states is replaced, not doubled; the face goes in AHEAD
+    of it, in EG_RPrBase order; a property the house does not own stays."""
+    run_xml = ('<w:r><w:rPr><w:i/><w:sz w:val="24"/><w:vertAlign '
+               'w:val="superscript"/></w:rPr><w:t>x</w:t></w:r>')
+    face = _Face('<w:rFonts w:ascii="Times New Roman"/>', 20)
 
-    The second half is the write: the span ends at the CLOSE of the
-    existing element, and cut at its start instead the replacement
-    leaves the old properties standing beside the new ones."""
-    run_xml = '<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t>x</w:t></w:r>'
-    wanted = ('<w:rPr><w:rFonts w:ascii="Times New Roman"/>'
-              '<w:sz w:val="20"/></w:rPr>')
-    inner = wanted[wanted.index(">") + 1:wanted.rindex("</")]
-    assert inner <= '<w:sz w:val="24"/>', (
-        "the fixture has to sort the wrong way round to pin the reading")
+    out = _house_run(run_xml, face, bold=False)
 
-    out, changed = _set_properties(run_xml, "rPr", wanted)
-
-    assert changed is True
-    assert out == f'<w:r>{wanted}<w:t>x</w:t></w:r>'
+    assert out == ('<w:r><w:rPr><w:rFonts w:ascii="Times New Roman"/><w:i/>'
+                   '<w:sz w:val="20"/><w:szCs w:val="20"/><w:vertAlign '
+                   'w:val="superscript"/></w:rPr><w:t>x</w:t></w:r>')
+    assert _house_run(out, face, bold=False) == out          # idempotent
 
 
 def test_a_caption_that_matches_NOTHING_names_the_count():

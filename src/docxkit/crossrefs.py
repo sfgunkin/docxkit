@@ -582,6 +582,11 @@ def _backlink_caption(para_xml: str, cap: Caption, bid: int) -> str:
     """
     anchor = cap.mention_name
     if f'w:anchor="{anchor}"' not in para_xml:
+        # Split a break off the label's run FIRST: wrapping the label takes
+        # its whole run into the link, break and all, and the bookmark then
+        # has nowhere to start but ahead of it.
+        para_xml, _ = _past_leading_breaks(
+            para_xml, _content_start(para_xml, cap.name))
         para_xml = _wrap_label(para_xml, cap, anchor)
     return _wrap_paragraph_in_bookmark(para_xml, cap.name, bid)
 
@@ -744,18 +749,88 @@ def _wrap_paragraph_in_bookmark(para_xml: str, name: str, bid: int) -> str:
     # "already bookmarked" and the caption silently got none.
     if _named_bookmark(name).search(para_xml):
         return para_xml
-    if (mpp := own_properties(para_xml, "pPr")) is not None:
-        at = mpp[1]
-    elif (popen := _P_OPEN_RE.match(para_xml)) is not None:
-        at = popen.end()
-    else:
-        raise AnchorError(f"{name}: caption block is not a <w:p>")
+    para_xml, at = _past_leading_breaks(para_xml,
+                                        _content_start(para_xml, name))
     close = para_xml.rfind("</w:p>")
     return (para_xml[:at]
             + f'<w:bookmarkStart w:id="{bid}" w:name="{name}"/>'
             + para_xml[at:close]
             + f'<w:bookmarkEnd w:id="{bid}"/>'
             + para_xml[close:])
+
+
+def _content_start(para_xml: str, name: str) -> int:
+    """Offset of a paragraph's content: after its ``w:pPr``, if any."""
+    if (mpp := own_properties(para_xml, "pPr")) is not None:
+        return mpp[1]
+    if (popen := _P_OPEN_RE.match(para_xml)) is not None:
+        return popen.end()
+    raise AnchorError(f"{name}: caption block is not a <w:p>")
+
+
+#: a page break, or Word's cached marker of one — what a caption that opens
+#: a fresh page with a break RUN (rather than `w:pageBreakBefore`) starts on
+#: Only the HARD break moves a bookmark to the previous page. The cached
+#: marker says where Word last laid a SOFT break, which falls at the
+#: paragraph's start on the new page whichever side of it the bookmark
+#: sits — counting it gave 32 findings on 170 corpus documents, none of
+#: them a link landing early (2026-11-14). It is stepped over only on the
+#: way to a hard break.
+_PAGE_BREAK = r'<w:br\b[^>]*w:type="page"[^>]*/>'
+_LEADING_BREAKS_RE = re.compile(
+    rf"(?:\s*(?:{_PAGE_BREAK}|<w:lastRenderedPageBreak\s*/>))+")
+_RUN_AT_RE = re.compile(r"\s*(<w:r\b[^>]*(?<!/)>)(.*?)</w:r>", re.DOTALL)
+
+
+def _past_leading_breaks(para_xml: str, at: int) -> tuple[str, int]:
+    """Step `at` past the page breaks that open a paragraph's content.
+
+    Word resolves a bookmark that starts BEFORE a page break to the foot of
+    the previous page, so a link to a caption that opens on
+    ``<w:r><w:br w:type="page"/></w:r>`` landed one page early — 5 of 6
+    links in an LFP_Inflows_ECA country note, with ``audit`` clean
+    (2026-11-12). A run holding only breaks is stepped over whole; a run
+    that opens on breaks and goes on to its text is split in two at the
+    last break, both halves keeping its properties, so the bookmark can
+    sit between them.
+    """
+    probe = at                  # how far the breaks reach; `at` = committed
+    while (m := _RUN_AT_RE.match(para_xml, probe)) is not None:
+        open_tag, body = m.group(1), m.group(2)
+        rpr = own_properties(m.group(0).lstrip(), "rPr")
+        props = body[:rpr[1] - len(open_tag)] if rpr is not None else ""
+        rest = body[len(props):]
+        breaks = _LEADING_BREAKS_RE.match(rest)
+        if breaks is None:
+            break
+        hard = re.search(_PAGE_BREAK, breaks.group(0)) is not None
+        if not rest[breaks.end():].strip():
+            probe = m.end()                 # a run of breaks only
+            at = probe if hard else at
+            continue
+        if not hard:
+            break
+        split = (open_tag + props + rest[:breaks.end()] + "</w:r>")
+        para_xml = (para_xml[:m.start(1)] + split
+                    + open_tag + props + rest[breaks.end():] + "</w:r>"
+                    + para_xml[m.end():])
+        at = m.start(1) + len(split)
+        break
+    return para_xml, at
+
+
+def _bookmark_before_break(para_xml: str, name: str) -> bool:
+    """Does `name`'s bookmark open ahead of a page break, before any text?
+
+    The ``audit`` half of :func:`_past_leading_breaks`: such a bookmark
+    resolves to the previous page, and every link to it with it.
+    """
+    if (m := _named_bookmark(name).search(para_xml)) is None:
+        return False
+    tail = para_xml[m.end():]
+    first_text = next((t.start() for t in WT_RE.finditer(tail)
+                       if t.group(1).strip()), len(tail))
+    return re.search(_PAGE_BREAK, tail[:first_text]) is not None
 
 
 def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
@@ -1052,6 +1127,10 @@ def audit(xml: str, *,
             if em and (em.group(1) != cap.label
                        or em.group(2) != cap.number):
                 misnamed.append(f"{nm} on the '{cap.prefix}' caption")
+        if _bookmark_before_break(xml[cap.start:cap.end], cap.name):
+            misplaced.append(
+                f"{cap.name} opens before the page break that starts "
+                f"'{cap.prefix}', so every link to it lands a page early")
         if (at := marks.get(cap.mention_name)) is not None:
             # PARAGRAPHS, not offsets. Whether the marker wraps its own
             # link or sits inside it is a linker's choice and means

@@ -264,6 +264,28 @@ def test_lists_are_flagged_not_half_shifted():
     assert report.flagged
 
 
+@pytest.mark.parametrize("phrase, shifted", [
+    ("the estimate of Table 23, 0.217: larger.",
+     "the estimate of Table 26, 0.217: larger."),
+    ("as before (Table 23, 0.171).", "as before (Table 26, 0.171)."),
+    ("as before (Table 23, 1,5 in Russian prose).",
+     "as before (Table 26, 1,5 in Russian prose)."),
+])
+def test_a_comma_before_a_DECIMAL_is_not_a_list(phrase, shifted):
+    # Month_of_birth R12: "Table 23, 0.217" was left unshifted and flagged
+    xml = doc(para(run(phrase)))
+    out, report = shift(xml, "Table", frm=23, by=3)
+    assert shifted in text_of_doc(out)
+    assert report.mentions == 1 and not report.flagged
+
+
+def test_a_comma_before_a_WHOLE_number_is_still_a_list():
+    xml = doc(para(run("Tables 23, 24 agree.")))
+    out, report = shift(xml, "Table", frm=23, by=3)
+    assert "Tables 23, 24 agree." in text_of_doc(out)
+    assert report.mentions == 0 and report.flagged
+
+
 def test_negative_shift_closes_a_gap():
     xml = doc(caption(4) + caption(5) + para(run("see Table 4 and then "
                                                  "read Table 5")))

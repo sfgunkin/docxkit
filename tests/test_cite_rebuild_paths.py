@@ -22,6 +22,7 @@ from __future__ import annotations
 from conftest import make_parts, note, notes, para, run
 
 from docxkit.citations import link_all
+from docxkit.errors import AnchorError
 
 LEAD = (para(run("Ageing raises the risk of isolation."))
         + para(run("The gradient is steeper in the eastern countries."))
@@ -32,32 +33,52 @@ def _note(text: str, nid: int = 2) -> str:
     return notes("footnotes", note(text, nid))
 
 
-def test_a_citation_that_cannot_be_WRAPPED_is_reported_with_its_paragraph():
-    """A work cited twice in ONE paragraph is ambiguous — the wrap
-    refuses rather than pick an occurrence. That refusal is the only
-    trace: the sentence reads normally and the entry is still there.
+def _refuse_kanbur(monkeypatch) -> None:
+    """Make the in-text wrap REFUSE for Kanbur and only Kanbur.
+
+    These tests are about what a refusal SAYS and what it undoes, not
+    about why the wrap refused. They used to get one from a work cited
+    twice in one paragraph; that case links its first occurrence now
+    (LFP_Inflows_ECA, 2026-11-12), and no other real refusal is cheap to
+    build, so the refusal is injected at the seam the wrap goes through.
     """
+    from docxkit import _cite_build
+    real = _cite_build._link_first_plain
+
+    def refusing(para: str, cite: str, name: str) -> tuple[str, int]:
+        if cite.startswith("Kanbur"):
+            raise AnchorError(f"{cite!r} cannot be wrapped here")
+        return real(para, cite, name)
+    monkeypatch.setattr(_cite_build, "_link_first_plain", refusing)
+
+
+def test_a_citation_that_cannot_be_WRAPPED_is_reported_with_its_paragraph(
+        monkeypatch):
+    """The refusal is the only trace: the sentence reads normally and
+    the entry is still there."""
+    _refuse_kanbur(monkeypatch)
     parts = make_parts(
         LEAD
-        + para(run("As Kanbur (2007) says, and again Kanbur (2007) says."))
+        + para(run("As Kanbur (2007) says."))
         + para(run("References"))
         + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")))
 
     report = link_all(parts)
 
     assert report.skipped[0].startswith("'Kanbur (2007)' ¶4: "), report.skipped
-    assert "occurs twice" in report.skipped[0]
+    assert "cannot be wrapped" in report.skipped[0]
 
 
-def test_the_same_refusal_in_a_FOOTNOTE_says_so():
+def test_the_same_refusal_in_a_FOOTNOTE_says_so(monkeypatch):
     """Body and footnote paragraphs are numbered separately, so a line
     naming ¶2 when it means the footnote's second paragraph sends the
     author to the wrong part of the document entirely."""
+    _refuse_kanbur(monkeypatch)
     parts = make_parts(
         LEAD + para(run("A point on poverty."))
         + para(run("References"))
         + para(run("Kanbur, R. (2007). Poverty and distribution. Journal.")),
-        footnotes=_note("See Kanbur (2007), and again Kanbur (2007)."))
+        footnotes=_note("See Kanbur (2007)."))
 
     report = link_all(parts)
 
@@ -150,21 +171,22 @@ def test_the_back_link_wraps_the_HEAD_and_not_the_whole_entry():
 # --- the whole sweep of 2026-09-15 ------------------------------------
 
 
-def test_a_citation_that_cannot_be_WRAPPED_does_not_stop_the_paragraph():
-    """The refusal is per mention. Kanbur is cited twice in the sentence
-    and refused; Ravallion is cited once, after it, in the same sentence,
-    and has nothing wrong with it. Ending the paragraph's wiring at the
-    first refusal leaves Ravallion plain AND undoes its back-link, while
-    the report explains only the Kanbur half.
+def test_a_citation_that_cannot_be_WRAPPED_does_not_stop_the_paragraph(
+        monkeypatch):
+    """The refusal is per mention. Kanbur is refused; Ravallion is cited
+    once, after it, in the same sentence, and has nothing wrong with it.
+    Ending the paragraph's wiring at the first refusal leaves Ravallion
+    plain AND undoes its back-link, while the report explains only the
+    Kanbur half.
 
     The two works share a paragraph on purpose: the undo test in
     `test_cite_build_paths.py` puts them in two, where stopping inside
     one paragraph cannot reach the other.
     """
+    _refuse_kanbur(monkeypatch)
     parts = make_parts(
         LEAD
-        + para(run("Kanbur (2007) and again Kanbur (2007), with "
-                   "Ravallion (2016)."))
+        + para(run("Kanbur (2007), with Ravallion (2016)."))
         + para(run("References"))
         + para(run("Kanbur, R. (2007). Poverty and distribution. Journal."))
         + para(run("Ravallion, M. (2016). The Economics of Poverty. OUP.")))

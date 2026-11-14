@@ -225,6 +225,59 @@ def test_a_property_stated_as_ZERO_and_one_not_stated_are_the_same_page(
     assert report["paragraph"] == []
 
 
+BARE_STYLES = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+               '<w:styles xmlns:w="http://schemas.openxmlformats.org/'
+               'wordprocessingml/2006/main"><w:docDefaults><w:pPrDefault/>'
+               "</w:docDefaults>"
+               '<w:style w:type="paragraph" w:default="1" '
+               'w:styleId="Normal"><w:name w:val="Normal"/></w:style>'
+               "</w:styles>")
+
+
+def test_LEFT_and_SINGLE_stated_and_not_stated_at_all_are_the_same_page(
+        tmp_path):
+    """Month_of_birth R13: Word's Accept All deleted `jc left` and
+    `line 240` from 80 captions and notes whose styles state neither,
+    and this layer reported all 80 — while Word read every one as left
+    and single in both files. With nothing stated anywhere, those ARE
+    the layout, as zero is for `before`."""
+    stated = _para('<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>'
+                   '<w:jc w:val="left"/>')
+    report = compare(*_pair(tmp_path, stated, _para(), styles=BARE_STYLES))
+
+    assert report["paragraph"] == []
+
+
+@pytest.mark.parametrize("ppr, claim, other", [
+    ('<w:jc w:val="both"/>', "align both", ["align left"]),
+    # twelve points EXACT, not single: the rule is what moved
+    ('<w:spacing w:line="240" w:lineRule="exact"/>',
+     "spacing lineRule exact", []),
+    ('<w:spacing w:line="360"/>', "spacing line 360", ["spacing line 240"]),
+])
+def test_a_layout_that_is_NOT_the_default_still_fails_the_gate(
+        tmp_path, ppr, claim, other):
+    report = compare(*_pair(tmp_path, _para(ppr), _para(),
+                            styles=BARE_STYLES))
+
+    (entry,) = report["paragraph"]
+    assert claim in entry["from"] and entry["to"] == other
+
+
+def test_LEFT_over_a_JUSTIFIED_style_is_still_a_difference(tmp_path):
+    """Dropping `left` is only harmless when nothing else is stated: over
+    a style saying `both`, the paragraph that lost it is justified."""
+    styles = BARE_STYLES.replace(
+        "</w:styles>", '<w:style w:type="paragraph" w:styleId="Note">'
+        '<w:pPr><w:jc w:val="both"/></w:pPr></w:style></w:styles>')
+    note = '<w:pStyle w:val="Note"/>'
+    report = compare(*_pair(tmp_path, _para(note + '<w:jc w:val="left"/>'),
+                            _para(note), styles=styles))
+
+    (entry,) = report["paragraph"]
+    assert entry["from"] == ["align left"] and entry["to"] == ["align both"]
+
+
 def test_a_toggle_turned_OFF_is_not_a_toggle_turned_on(tmp_path):
     """`<w:keepNext w:val="0"/>` is Word switching an inherited one off.
     Read as presence-means-yes it makes the paragraph that switched it

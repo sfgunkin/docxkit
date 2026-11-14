@@ -191,7 +191,7 @@ def cmd_link(args: argparse.Namespace) -> int:
     Dry by default: reports what it WOULD do. ``--write`` applies, with
     a numbered backup beside the manuscript.
     """
-    from .citations import link_all
+    from .citations import link_all, link_rest
     # `read_only` follows the FLAG, as it does in `authors` and `tasks`:
     # the dry run is a report and answers from a snapshot, and only the
     # writing form needs the file to itself. It was an unconditional
@@ -203,8 +203,25 @@ def cmd_link(args: argparse.Namespace) -> int:
     # builder took one paper's audit from 26 findings to 56, so "wire
     # these six" has to be sayable.
     only = [t.strip() for t in (args.only or "").split(",") if t.strip()]
+    if only and args.all:
+        raise DocxKitError("--all links every later mention of every work; "
+                           "it cannot be scoped with --only")
     report = link_all(parts, aliases=_aliases(args), only=only or None)
     print(report.format())
+    if not only:
+        # SAY what first-mention linking left plain. Whether later
+        # mentions link is the paper's house style, and the summary above
+        # read as "citations linked" on LFP_Inflows with 30 of 58 mentions
+        # plain — the author found them one at a time (2026-11-09). The
+        # count is `link_rest` run on a copy, so it is what --all links.
+        if args.all:
+            rest = link_rest(parts, aliases=_aliases(args))
+            print(rest.format())
+        else:
+            later = link_rest(dict(parts), aliases=_aliases(args))
+            if later.linked:
+                print(f"  {len(later.linked)} later mention(s) left plain "
+                      f"— pass --all to link them as well")
     if not args.write:
         print("(dry run — nothing written; pass --write to apply)")
         return 0
@@ -2522,6 +2539,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="wire these works only — key, surname or bookmark "
                         "name. A repair is usually six citations, not a "
                         "document")
+    p.add_argument("--all", action="store_true",
+                   help="link EVERY later mention too (forward links, "
+                        "`citations.link_rest`), not only each work's "
+                        "first; whether later mentions link is the "
+                        "paper's house style")
     _writes_the_file(p)
     p.set_defaults(fn=cmd_link)
 

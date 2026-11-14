@@ -284,6 +284,7 @@ def _para_props(p_xml: str, cascade: Cascade) -> frozenset[str]:
     ppr = live_properties(own[2]) if own else None
     pstyle = Cascade.paragraph_style(p_xml)
     out: set[str] = set()
+    rule = cascade.para_attr("spacing", "lineRule", ppr=ppr, pstyle=pstyle)
     for tag, label, attrs in _PARA_PROPS:
         if not attrs:
             # Presence is the property — but `<w:keepNext w:val="0"/>`
@@ -299,6 +300,7 @@ def _para_props(p_xml: str, cascade: Cascade) -> frozenset[str]:
             # paragraph stating `<w:spacing w:before="0"/>` keeps its
             # style's `after` and `line`. See `Cascade.para_attr`.
             value = cascade.para_attr(tag, attr, ppr=ppr, pstyle=pstyle)
+            value = _builtin_default(tag, attr, value, rule)
             if value is None or value in ("0", "auto"):
                 # A property stated as zero and one not stated at all
                 # are the same page. Reporting the difference would fire
@@ -308,6 +310,29 @@ def _para_props(p_xml: str, cascade: Cascade) -> frozenset[str]:
             out.add(f"{label} {value}" if attr == "val"
                     else f"{label} {_ATTR_ALIAS.get(attr, attr)} {value}")
     return frozenset(out)
+
+
+def _builtin_default(tag: str, attr: str, value: str | None,
+                     rule: str | None) -> str | None:
+    """`value`, or what Word lays out when NOTHING states the property.
+
+    The zero rule in :func:`_para_props`, for the two properties whose
+    default is not zero: an unstated `w:jc` is left and an unstated
+    `w:line` under an auto rule is single, 240. Word's Accept All deletes
+    them when they say only that, and on Month_of_birth R13 this layer
+    reported `['align left', 'spacing line 240'] -> ∅` for 80 captions and
+    notes; `--expect-clean` failed and a house pass was re-run, while Word
+    itself read all 80 as left and single in both files (2026-11-14).
+    Filled in rather than dropped, so a real change still reads
+    `align both -> align left`. `start` is the same alignment as `left`.
+    Under an exact or at-least rule an unstated line is no number at all.
+    """
+    if tag == "jc":
+        return "left" if value in (None, "start") else value
+    if (tag, attr) == ("spacing", "line") and value is None and (
+            rule in (None, "auto")):
+        return "240"
+    return value
 
 
 def _char_fmt(p_xml: str, cascade: Cascade | None = None

@@ -27,6 +27,7 @@ from conftest import make_parts, note, notes, para, run
 
 from docxkit._xml import BOOKMARK_NAME_RE, internal_links
 from docxkit.citations import link_all, unlink_by_anchor
+from docxkit.errors import AnchorError
 
 
 def _anchors(parts: dict[str, bytes], part: str) -> list[str]:
@@ -246,14 +247,14 @@ def test_two_entries_with_the_SAME_surname_and_year_get_distinct_names():
         f"the second should be a suffixed form of the first: {entries}")
 
 
-def test_a_back_link_whose_target_never_appeared_is_UNDONE():
-    """The undo path, never run before. A citation occurring twice in
-    ONE paragraph is ambiguous, so the in-text wrap refuses — and
+def test_a_back_link_whose_target_never_appeared_is_UNDONE(monkeypatch):
+    """The undo path, never run before. The in-text wrap refuses — and
     shipping the entry's back-link anyway leaves `Kanbur2007txt`
     pointing at nothing. Silent: the anchor resolves nowhere, the words
     read correctly, and only an audit finds it."""
+    _refuse_kanbur(monkeypatch)
     parts = make_parts(
-        para(run("As Kanbur (2007) says, and again Kanbur (2007) says."))
+        para(run("As Kanbur (2007) says."))
         + REFERENCES)
 
     report = link_all(parts)
@@ -311,18 +312,61 @@ def test_the_summary_counts_SUSPECT_entries_only_when_there_ARE_any():
     assert ", suspect 1" in loud.format(), loud.format()
 
 
-def test_the_back_link_undo_walks_PAST_the_ones_that_are_sound():
+def test_a_work_cited_TWICE_in_its_first_paragraph_links_the_first():
+    """LFP_Inflows_ECA, 2026-11-12: a reworded introduction named
+    "Lokshin (2026)" twice, `link_all` refused the paragraph as ambiguous
+    and then removed the entry's back-link as dangling. The first in
+    document order IS the first mention; the repeat is `link_rest`'s."""
+    parts = make_parts(
+        para(run("Lokshin (2026) shows it, and Lokshin (2026) also finds "
+                 "the gap; Lokshin (2026) is the source."))
+        + para(run("References"))
+        + para(run("Lokshin, M. (2026). Inflows. Journal.")))
+
+    report = link_all(parts)
+
+    doc = parts["word/document.xml"].decode("utf-8")
+    first = doc[:doc.index("</w:p>")]
+    assert [a for a, _ in internal_links(first)] == ["Lokshin2026"]
+    assert first.index("Lokshin2026txt") < first.index("shows it")
+    assert report.backlinked == ["Lokshin2026"], report.format()
+    assert report.linked == [
+        "Lokshin2026 @ ¶1 (the first of 3 in the paragraph)"], report.linked
+    assert not report.skipped, report.skipped
+
+
+def _refuse_kanbur(monkeypatch) -> None:
+    """Make the in-text wrap REFUSE for Kanbur and only Kanbur.
+
+    These tests are about what a refusal SAYS and what it undoes, not
+    about why the wrap refused. They used to get one from a work cited
+    twice in one paragraph; that case links its first occurrence now
+    (LFP_Inflows_ECA, 2026-11-12), and no other real refusal is cheap to
+    build, so the refusal is injected at the seam the wrap goes through.
+    """
+    from docxkit import _cite_build
+    real = _cite_build._link_first_plain
+
+    def refusing(para: str, cite: str, name: str) -> tuple[str, int]:
+        if cite.startswith("Kanbur"):
+            raise AnchorError(f"{cite!r} cannot be wrapped here")
+        return real(para, cite, name)
+    monkeypatch.setattr(_cite_build, "_link_first_plain", refusing)
+
+
+def test_the_back_link_undo_walks_PAST_the_ones_that_are_sound(monkeypatch):
     """A back-link whose in-text end was never wrapped is undone, and
     the sound one before it in the list must not stop the walk. Entries
     are rebuilt bottom-up, so "before it" is the entry FURTHEST down the
     reference list — here Ravallion, whose single mention wrapped, while
-    Kanbur's mention occurs twice in one paragraph and is refused.
+    Kanbur's mention is refused.
 
     Stopping at the first sound back-link leaves the dangling one in
     place: an anchor pointing at a bookmark that does not exist, which
     only an audit finds."""
+    _refuse_kanbur(monkeypatch)
     parts = make_parts(
-        para(run("Kanbur (2007) and Kanbur (2007) both say so."))
+        para(run("Kanbur (2007) says so."))
         + para(run("Ravallion (2016) says so too."))
         + para(run("References"))
         + para(run("Kanbur, R. (2007). Poverty. Journal."))

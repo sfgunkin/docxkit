@@ -42,6 +42,7 @@ from ._xml import (
     matching_close,
     own_properties,
     set_para_property,
+    set_run_property,
     set_run_text,
     visible_text,
 )
@@ -1904,10 +1905,16 @@ def house_rpr(font: str, size: float, *, bold: bool = False) -> str:
     face for exactly that character otherwise, which reads as a stray
     glyph in one cell of an otherwise uniform table.
     """
-    fonts = " ".join(f'{a}="{escape_attr(font)}"' for a in _HOUSE_FONT_ATTRS)
     half = round(size * 2)
-    return (f"<w:rPr>{'<w:b/>' if bold else ''}<w:rFonts {fonts}/>"
+    # `w:rFonts` BEFORE `w:b`: EG_RPrBase order, which the bold variant
+    # had the wrong way round.
+    return (f"<w:rPr>{_house_fonts(font)}{'<w:b/>' if bold else ''}"
             f'<w:sz w:val="{half}"/><w:szCs w:val="{half}"/></w:rPr>')
+
+
+def _house_fonts(font: str) -> str:
+    fonts = " ".join(f'{a}="{escape_attr(font)}"' for a in _HOUSE_FONT_ATTRS)
+    return f"<w:rFonts {fonts}/>"
 
 
 def house_ppr(font: str, size: float) -> str:
@@ -1950,17 +1957,17 @@ def house(xml: str, table: Table, *, font: str = "Arial Narrow",
             f"table {table.index} contains tracked changes — style the "
             f"clean build and rebuild the redline from it")
     report = HouseReport()
-    cell_ppr = house_ppr(font, size)
-    head_rpr = house_rpr(font, size, bold=True)
-    cell_rpr = house_rpr(font, size)
+    face = _Face(_house_fonts(font), round(size * 2))
 
     edits: list[tuple[int, int, str]] = []
-    for i, tr in enumerate(rows_of(body)):
+    trs = list(rows_of(body))
+    heads = _header_rows([tr.group(0) for tr in trs])
+    for i, tr in enumerate(trs):
         row = tr.group(0)
-        rpr = head_rpr if (i == 0 and header_bold) else cell_rpr
+        bold = header_bold and i in heads
         new_row = row
         for tc in reversed(cells_of(row)):
-            cell, runs, paras = _house_cell(tc.group(0), rpr, cell_ppr)
+            cell, runs, paras = _house_cell(tc.group(0), face, bold=bold)
             report.runs += runs
             report.paragraphs += paras
             new_row = new_row[:tc.start()] + cell + new_row[tc.end():]
@@ -1990,36 +1997,96 @@ def house(xml: str, table: Table, *, font: str = "Arial Narrow",
     return out, report
 
 
-def _set_properties(element: str, tag: str, wanted: str) -> tuple[str, bool]:
-    """Give `element` exactly `wanted` as its own ``w:tag``. Idempotent.
+class _Face(NamedTuple):
+    """The house face: its `w:rFonts` element and the size in half-points."""
 
-    `own_properties` answers with the INNER text and a span covering the
-    whole element, so the comparison and the write read different halves
-    of it — comparing against the wrapped form never matches, and this
-    would report every run as changed on every run of the pass.
+    fonts: str
+    half: int
+
+
+#: a row marked to repeat as a header — on, not `w:val="0"`/`"false"`
+_TBL_HEADER_ON_RE = re.compile(
+    r'<w:tblHeader(?![^>]*w:val="(?:0|false|off)")\b[^>]*/>')
+
+
+def _header_rows(rows: Sequence[str]) -> set[int]:
+    """The rows `header_bold` applies to: every row marked ``tblHeader``.
+
+    A multi-row header is ordinary (a group row over a column row), and
+    bolding row 0 alone left the second header row plain — while the
+    old pass also STRIPPED the bold that row already had (Month_of_birth
+    Table 1: bold 15 -> 1). A table that marks no header row has row 0.
     """
-    inner = wanted[wanted.index(">") + 1:wanted.rindex("</")]
-    existing = own_properties(element, tag)
-    if existing is not None:
-        if existing[2] == inner:
-            return element, False
-        return element[:existing[0]] + wanted + element[existing[1]:], True
-    at = element.index(">") + 1
-    return element[:at] + wanted + element[at:], True
+    marked = set()
+    for i, row in enumerate(rows):
+        at = _row_properties_at(row)
+        m = _TRPR_RE.match(row, at)
+        if m is not None and not m.group(1):
+            own = row[m.end():row.index("</w:trPr>", m.end())]
+            if _TBL_HEADER_ON_RE.search(own):
+                marked.add(i)
+    return marked or ({0} if rows else set())
 
 
-def _house_cell(tc: str, rpr: str, ppr: str) -> tuple[str, int, int]:
+def _house_run(run: str, face: _Face, *, bold: bool) -> str:
+    """`run` in the house face and size, every OTHER property kept.
+
+    Merged, never replaced: the old pass swapped the whole `w:rPr`, which
+    erased the italic group labels, the bold below row 0 and the
+    superscript stars of 27 flextable tables on Month_of_birth (italic
+    8 -> 0 in Table 1), and a styling pass is expected to produce FORMAT
+    entries in `compare`, so nothing flagged it.
+    """
+    out = set_run_property(run, "rFonts", face.fonts)
+    if bold:
+        out = set_run_property(out, "b", "<w:b/>")
+    out = set_run_property(out, "sz", f'<w:sz w:val="{face.half}"/>')
+    return set_run_property(out, "szCs", f'<w:szCs w:val="{face.half}"/>')
+
+
+_HOUSE_SPACING = '<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>'
+_MARK_RPR_RE = re.compile(r"<w:rPr\b[^>]*?(/?)>")
+
+
+def _house_para(para: str, face: _Face) -> str:
+    """A cell paragraph's default — spacing and the MARK's face — merged.
+
+    The face belongs on the mark as well as on the runs, because an empty
+    cell has no run to carry it. Alignment, ``keepNext``, the style and
+    every other paragraph property are the paper's and stay: the old pass
+    replaced the whole `w:pPr` (Table 7: jc 146 -> 0, keepNext 92 -> 0).
+    """
+    out = set_para_property(para, "spacing", _HOUSE_SPACING)
+    own = own_properties(out, "pPr")
+    assert own is not None                  # set_para_property gave it one
+    live = live_properties(own[2])
+    m = _MARK_RPR_RE.search(live)
+    if m is None:
+        mark = "<w:r></w:r>"
+    elif m.group(1) == "/":
+        mark = "<w:r><w:rPr></w:rPr></w:r>"
+    else:
+        close = matching_close(live, m.end(), "rPr")
+        mark = f"<w:r>{live[m.start():close]}</w:r>"
+    new_mark = _house_run(mark, face, bold=False)
+    rpr = own_properties(new_mark, "rPr")
+    assert rpr is not None                  # _house_run always writes one
+    return set_para_property(out, "rPr", new_mark[rpr[0]:rpr[1]])
+
+
+def _house_cell(tc: str, face: _Face, *, bold: bool) -> tuple[str, int, int]:
     """One cell's runs and paragraph defaults, set to the house face."""
     runs = paragraphs = 0
     out = tc
     for para in reversed(list(PARA_RE.finditer(tc))):
         new = para.group(0)
         for run in reversed(list(RUN_RE.finditer(new))):
-            body, changed = _set_properties(run.group(0), "rPr", rpr)
-            runs += changed
+            body = _house_run(run.group(0), face, bold=bold)
+            runs += body != run.group(0)
             new = new[:run.start()] + body + new[run.end():]
-        new, changed = _set_properties(new, "pPr", ppr)
-        paragraphs += changed
+        before = new
+        new = _house_para(new, face)
+        paragraphs += new != before
         out = out[:para.start()] + new + out[para.end():]
     return out, runs, paragraphs
 

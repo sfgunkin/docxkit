@@ -57,6 +57,66 @@ def test_the_header_row_is_bold_and_the_body_is_not():
     assert not any("<w:b/>" in r for r in rows[1:]), "a data row was bolded"
 
 
+def _cell(text: str, rpr: str = "", ppr: str = "") -> str:
+    return (f"<w:tc><w:p>{ppr}<w:r>"
+            f"{f'<w:rPr>{rpr}</w:rPr>' if rpr else ''}<w:t>{text}</w:t>"
+            "</w:r></w:p></w:tc>")
+
+
+_RIGHT = '<w:pPr><w:keepNext/><w:jc w:val="right"/></w:pPr>'
+_HEAD = "<w:trPr><w:tblHeader/></w:trPr>"
+
+
+def _flextable() -> str:
+    """Month_of_birth's Table 1 in miniature: a TWO-row header, both rows
+    bold and marked tblHeader; an italic group label; a superscript star;
+    right-aligned numbers held together with keepNext."""
+    return document(
+        para(run("Table 1: Pupils"))
+        + "<w:tbl>"
+        + f"<w:tr>{_HEAD}{_cell('', '<w:b/>')}"
+          f"{_cell('Marks', '<w:b/>')}</w:tr>"
+        + f"<w:tr>{_HEAD}{_cell('Group', '<w:b/>')}"
+          f"{_cell('Mean', '<w:b/>', _RIGHT)}</w:tr>"
+        + f"<w:tr>{_cell('Pupils', '<w:i/>')}{_cell('', '', _RIGHT)}</w:tr>"
+        + f"<w:tr>{_cell('Girls')}{_cell('0.21', '', _RIGHT)}</w:tr>"
+        + "<w:tr><w:tc><w:p><w:r><w:t>Boys</w:t></w:r></w:p></w:tc><w:tc><w:p>"
+          f'{_RIGHT}<w:r><w:t>0.17</w:t></w:r><w:r><w:rPr><w:vertAlign '
+          'w:val="superscript"/></w:rPr><w:t>***</w:t></w:r></w:p></w:tc></w:tr>'
+        + "</w:tbl>")
+
+
+def test_house_changes_ONLY_face_and_size_and_keeps_the_rest():
+    """It replaced every run's rPr and every cell pPr WHOLESALE. On
+    Month_of_birth's Table 1: italic 8 -> 0, bold 15 -> 1, jc 218 -> 41,
+    keepNext 217 -> 0 — and `compare` shows a styling pass as FORMAT
+    entries, which is what the pass is expected to produce."""
+    xml = _flextable()
+    out, _ = house(xml, read_all(xml)[0])
+    body = out[out.index("<w:tbl"):out.index("</w:tbl>")]
+    from docxkit.tables import rows_of
+    rows = [m.group(0) for m in rows_of(body)]
+
+    assert body.count("<w:i/>") == 1                  # the group label
+    assert '<w:vertAlign w:val="superscript"/>' in rows[4]
+    assert body.count('<w:jc w:val="right"/>') == 4
+    assert body.count("<w:keepNext/>") == 4
+    # both header rows bold in every cell, once each; the body untouched
+    assert [r.count("<w:b/>") for r in rows] == [2, 2, 0, 0, 0]
+    # ...and the face everywhere: 11 runs and 10 paragraph marks
+    assert body.count('w:ascii="Arial Narrow"') == 21
+    assert body.count('<w:sz w:val="20"/>') == 21
+    from lxml import etree
+    etree.fromstring(out.encode())
+
+
+def test_house_does_not_strip_bold_from_a_body_row_with_header_bold_off():
+    xml = _flextable()
+    out, _ = house(xml, read_all(xml)[0], header_bold=False)
+    body = out[out.index("<w:tbl"):]
+    assert body.count("<w:b/>") == 4                   # as the paper had it
+
+
 def test_every_row_gets_cantSplit_and_never_a_SECOND_trPr():
     """A row may carry only one `w:trPr`, and `body.table` gives the
     header row one for `tblHeader` — a second is invalid, and `lint`

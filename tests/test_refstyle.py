@@ -148,6 +148,20 @@ def test_two_initials_for_one_author_flag():
     assert "initials" in _codes(issues)
 
 
+def test_EVERY_doubled_author_in_an_entry_flags_not_only_the_first():
+    # LFP_Inflows: "Willis, R. J." went unreported behind "Heckman, J. J."
+    # Three doubled authors with a single-initial one between them, so a
+    # count of 1 (the old `search`) or 2 (stopping early) is told apart.
+    issues = check_entry(
+        "Heckman, J. J., S. Kluth, R. J. Willis, and A. P. Cusolito. "
+        "(1974). “Title.” Journal, 1(1): 1–2.")
+    doubled = [i.message for i in issues
+               if i.code == "initials" and "one initial" in i.message]
+    assert doubled == ['one initial per author: "J. J."',
+                       'one initial per author: "R. J."',
+                       'one initial per author: "A. P."']
+
+
 def test_a_missing_comma_before_and_flags():
     issues = check_entry("Angrist, J. and J. Pischke. (2009). “Title.” "
                          "Journal, 1(1): 1–2.")

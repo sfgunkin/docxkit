@@ -794,17 +794,39 @@ def _wire_mentions(para: str, items: list[tuple[str, str]], *, at: str,
     again.
     """
     for cite, name in items:
+        repeats = 0
         try:
             if cite:
-                para = link_in_para(para, cite, name)
-            para = wrap_link_in_bookmark(para, name, twin_name[name],
-                                         next(bids))
+                para, repeats = _link_first_plain(para, cite, name)
+            para = wrap_link_in_bookmark(
+                para, name, twin_name[name], next(bids),
+                which="first" if repeats else "only")
         except AnchorError as exc:
             report.skipped.append(f"{cite!r} {at}: {exc}")
             continue
         where = report.linked if cite else report.repaired
-        where.append(f"{name} @ {at}")
+        where.append(f"{name} @ {at}" + (
+            f" (the first of {repeats + 1} in the paragraph)"
+            if repeats else ""))
     return para
+
+
+def _link_first_plain(para: str, cite: str, name: str) -> tuple[str, int]:
+    """Link the FIRST plain occurrence of `cite`; say how many follow it.
+
+    A first mention is not ambiguous because the paragraph repeats it:
+    the first in document order is the first mention. Refusing it, as a
+    unique-anchor locate must, skipped the work, and the back-link built
+    for it was then removed as dangling — a reworded introduction that
+    named "Lokshin (2026)" twice lost its link both ways
+    (LFP_Inflows_ECA, 2026-11-12). The repeats are `link_rest`'s.
+    """
+    plain = masked_visible_text(para)
+    first = plain.find(cite)
+    if first < 0:
+        return link_in_para(para, cite, name), 0    # says why it cannot
+    return (wrap_visible_span(para, first, first + len(cite), name),
+            plain.count(cite) - 1)
 
 
 def link_all(parts: Parts, *,
@@ -821,14 +843,19 @@ def link_all(parts: Parts, *,
     bookmark is REUSED, so an existing convention wins) and a back-link
     from its author-year head; for every work's FIRST in-text mention
     (body first, then footnotes), a hyperlink to the entry wrapped in
-    the ``<name>txt`` bookmark. Later mentions stay unlinked — the
-    papers' convention — and anything already linked is left exactly as
+    the ``<name>txt`` bookmark. Later mentions stay unlinked — ONE
+    convention, not every paper's: an LFP_Inflows author wanted every
+    mention linked and found the 30 plain ones by reading (2026-11-09),
+    so follow with :func:`link_rest` when the paper links them all
+    (`docxkit link --all`). Anything already linked is left exactly as
     found, so a partially-linked paper is topped up, not rebuilt, and a
     second run is a no-op.
 
-    Anchors that cannot be resolved safely (a citation repeated inside
-    one paragraph, an unfindable head) are REPORTED and skipped, never
-    guessed at. Exhibits are :func:`docxkit.crossrefs.link`'s job.
+    Anchors that cannot be resolved safely (an unfindable head) are
+    REPORTED and skipped, never guessed at. A citation repeated inside
+    its first paragraph is not one of them: its first occurrence is the
+    first mention, and the report says how many follow it. Exhibits
+    are :func:`docxkit.crossrefs.link`'s job.
 
     `naming` is the paper's own CONVENTION: ``(surname, year) ->
     bookmark name``. The names minted here are this module's —

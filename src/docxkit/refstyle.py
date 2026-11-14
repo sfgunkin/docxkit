@@ -318,7 +318,10 @@ def check_entry(text: str, style: Style = HOUSE) -> list[Issue]:
                 "initials",
                 f"given names as single initials — {shown} spelled out",
                 snippet=authors[:70]))
-        if (d := _DOUBLE_INITIAL_RE.search(authors)) is not None:
+        # EVERY doubled author, not the first: `search` reported "A. P."
+        # and stopped, so "Lokshin, M. M." later in the same entry came
+        # to light only through a paper-side regex (LFP_Inflows).
+        for d in _DOUBLE_INITIAL_RE.finditer(authors):
             issues.append(Issue(
                 "initials", f'one initial per author: "{d.group(0)}"',
                 snippet=_snippet(authors, d.start(), d.end())))
