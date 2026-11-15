@@ -209,6 +209,20 @@ def test_a_nested_snapshot_does_not_end_the_properties_early():
     assert live_properties(got[2]) == "<w:i/>"
 
 
+def test_the_MARK_s_tracked_change_is_not_the_paragraph_s():
+    """A pPr holds the paragraph mark's rPr, which can carry its own
+    rPrChange. Cut there, the live part ended inside an unclosed rPr and
+    `house.apply` raised on a corpus manuscript (2026-11-15). Only the
+    pPr's OWN pPrChange, a direct child, ends what is live."""
+    mark = ("<w:rPr><w:sz w:val='24'/><w:rPrChange w:id='3'><w:rPr/>"
+            "</w:rPrChange></w:rPr>")
+    sect = "<w:sectPr><w:pgSz w:w='12240'/></w:sectPr>"
+    change = "<w:pPrChange w:id='4'><w:pPr><w:jc w:val='left'/></w:pPr>"
+    inner = "<w:jc w:val='center'/>" + mark + sect
+    assert live_properties(inner) == inner
+    assert live_properties(inner + change + "</w:pPrChange>") == inner
+
+
 def test_a_string_that_is_not_an_element_has_no_properties():
     """`open_tag is None or ...` — with `and` there, this raises
     AttributeError instead of answering."""

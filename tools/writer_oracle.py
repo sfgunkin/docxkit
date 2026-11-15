@@ -18,7 +18,7 @@ The base (default ``HEAD``) is extracted with ``git archive`` into a
 temporary directory and the working tree's ``src`` is the other side;
 each side runs the same PROBES in its own interpreter, over the same
 strided sample (`sweep.sample`, ``DOCXKIT_CORPUS`` / ``--limit``), and
-the answers are diffed key by key. Every probe is an IDEMPOTENT write
+the answers are diffed key by key. Every probe is a deterministic write
 whose answer should not change unless the writer did:
 
 * ``set_cell`` — every cell rewritten with its own text: the refusal, or
@@ -26,6 +26,19 @@ whose answer should not change unless the writer did:
 * ``insert_before`` — a probe paragraph inserted before every paragraph
   that a run of body-level markers precedes: which bookmark names end up
   in front of the probe (stranded) rather than behind it.
+* ``house`` — `tables.house` on every table: whether the visible text
+  survived, the count of each property the pass must not drop (italic,
+  bold, alignment, keep-with-next, sub/superscript) before -> after, and
+  the table's hash.
+* ``crossrefs`` — `crossrefs.link` on the document: each caption
+  paragraph's hash afterwards, and the audit's buckets before and after.
+* ``link_all`` — `citations.link_all` on the package: every mention it
+  linked and every one it skipped, one key each, and the body's hash.
+
+The last three were added 2026-11-14 (BACKLOG S4: "probes two writers").
+The batch that changed those writers had to measure them with a scratch
+probe, and that probe caught a false positive before commit — 32 new
+`misplaced_anchor` findings, all on a cached soft-break marker.
 
 Read-only: every manuscript is read into memory, nothing is written.
 Differences are REPORTED, not judged — a fix is supposed to change
@@ -36,6 +49,7 @@ as `sweep.py` has it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -43,9 +57,11 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -53,6 +69,8 @@ SKIPPED = 3
 PROBE_PARA = "<w:p><w:r><w:t>WRITER ORACLE PROBE</w:t></w:r></w:p>"
 
 Answers = dict[str, str]
+Package = dict[str, bytes]
+DOCUMENT = "word/document.xml"
 
 
 # ---------------------------------------------------------------- probes --
@@ -136,28 +154,392 @@ def probe_insert_before(xml: str) -> Answers:
     return out
 
 
-PROBES: dict[str, Callable[[str], Answers]] = {
-    "set_cell": probe_set_cell,
-    "insert_before": probe_insert_before,
+def _sha(text: str | bytes) -> str:
+    data = text.encode("utf-8") if isinstance(text, str) else text
+    return hashlib.sha1(data).hexdigest()[:12]
+
+
+#: What `tables.house` must leave alone: it sets face, size and spacing,
+#: and on 911 corpus tables its old wholesale replace dropped 72,484
+#: alignments and 35,337 italics with every unit test green.
+_KEPT_PROPS = {
+    "italic": r'<w:i(?:\s+w:val="(?:1|true|on)")?\s*/>',
+    "bold": r'<w:b(?:\s+w:val="(?:1|true|on)")?\s*/>',
+    "jc": r"<w:jc\b",
+    "keepNext": r"<w:keepNext\b",
+    "vertAlign": r"<w:vertAlign\b",
 }
+
+
+def _prop_counts(xml: str) -> dict[str, int]:
+    return {k: len(re.findall(p, xml)) for k, p in _KEPT_PROPS.items()}
+
+
+def probe_house(parts: Package) -> Answers:
+    """`tables.house` on every table: text kept, properties kept, hash."""
+    from docxkit import tables  # noqa: PLC0415
+    from docxkit._xml import visible_text  # noqa: PLC0415
+    xml = parts[DOCUMENT].decode("utf-8")
+    out: Answers = {}
+    for t in tables.read_all(xml):
+        key = f"table {t.index}"
+        body = xml[t.start:t.end]
+        try:
+            new, _ = tables.house(xml, t)
+        except Exception as exc:
+            out[key] = f"refused: {type(exc).__name__}: {str(exc)[:60]}"
+            continue
+        seg = new[t.start:t.end + len(new) - len(xml)]
+        before, after = _prop_counts(body), _prop_counts(seg)
+        props = " ".join(f"{k} {before[k]}->{after[k]}" for k in before)
+        text = "same" if visible_text(seg) == visible_text(body) else "CHANGED"
+        out[key] = f"text {text}; {props}; sha {_sha(seg)}"
+    return out
+
+
+#: The audit buckets a link pass is meant to move, or must not.
+_XREF_BUCKETS = ("linked", "unlinked", "dangling", "misplaced_anchor")
+
+
+def probe_crossrefs(parts: Package) -> Answers:
+    """`crossrefs.link`: each caption afterwards, the audit both sides."""
+    from docxkit import crossrefs  # noqa: PLC0415
+    xml = parts[DOCUMENT].decode("utf-8")
+    new, _ = crossrefs.link(xml)
+    out: Answers = {}
+    for cap in crossrefs.find_captions(new):
+        out[f"caption {cap.name}"] = _sha(new[cap.start:cap.end])
+    for side, doc in (("before", xml), ("after", new)):
+        found = crossrefs.audit(doc)
+        for bucket in _XREF_BUCKETS:
+            out[f"audit {side} {bucket}"] = str(len(found.get(bucket, ())))
+    return out
+
+
+def probe_link_all(parts: Package) -> Answers:
+    """`citations.link_all`: one key per mention linked or skipped."""
+    from docxkit.citations import link_all  # noqa: PLC0415
+    copy = dict(parts)
+    report = link_all(copy)
+    out: Answers = {"body": _sha(copy[DOCUMENT])}
+    for item in report.linked:
+        out[f"linked {item}"[:120]] = "yes"
+    for item in report.backlinked:
+        out[f"back-linked {item}"[:120]] = "yes"
+    for item in report.skipped:
+        out[f"skipped {item}"[:120]] = "yes"
+    return out
+
+
+def probe_link_more(parts: Package) -> Answers:
+    """`crossrefs.link_more` after `link`: the mentions it linked, each
+    marker it re-homed, and the same with the markers held in place."""
+    from docxkit import crossrefs  # noqa: PLC0415
+    from docxkit.lint import lint_parts  # noqa: PLC0415
+    xml, _ = crossrefs.link(parts[DOCUMENT].decode("utf-8"))
+    new, counts = crossrefs.link_more(xml)
+    out: Answers = {"body": _sha(new)}
+    out.update({f"count {k}"[:120]: str(n) for k, n in counts.items()})
+    # Held in place, only where holding CHANGED something: a base older
+    # than `rehome=` has no such switch, and a key on one side only is a
+    # difference that is not one.
+    try:
+        held, held_counts = crossrefs.link_more(xml, rehome=False)
+    except TypeError:
+        held, held_counts = new, counts
+    if held != new:
+        out["held body"] = _sha(held)
+    out.update({f"held {k}"[:120]: str(n) for k, n in held_counts.items()
+                if counts.get(k) != n})
+    for finding in lint_parts({**parts, DOCUMENT: new.encode("utf-8")}):
+        out[f"lint {finding}"[:120]] = "yes"
+    return out
+
+
+def probe_link_rest(parts: Package) -> Answers:
+    """`citations.link_rest` after `link_all`: one key per mention."""
+    from docxkit.citations import link_all, link_rest  # noqa: PLC0415
+    copy = dict(parts)
+    link_all(copy)
+    report = link_rest(copy)
+    out: Answers = {"body": _sha(copy[DOCUMENT])}
+    for item in report.linked:
+        out[f"linked {item}"[:120]] = "yes"
+    for item in report.unmatched:
+        out[f"unmatched {item}"[:120]] = "yes"
+    for item in report.skipped:
+        out[f"skipped {item}"[:120]] = "yes"
+    return out
+
+
+def probe_renumber(parts: Package) -> Answers:
+    """`renumber.shift` of every Table and Figure from 1 by one.
+
+    The renumbering a revision does when it inserts Table 1: what moved,
+    and every mention it refused as a range or a list rather than
+    half-shifting it. That refusal is where "Table 23, 0.217" used to be
+    left behind (Month_of_birth R12).
+    """
+    from docxkit import renumber  # noqa: PLC0415
+    xml = parts[DOCUMENT].decode("utf-8")
+    out: Answers = {}
+    for label in ("Table", "Figure"):
+        new, report = renumber.shift(xml, label, frm=1, by=1)
+        out[f"{label} counts"] = (
+            f"mentions {report.mentions} bookmarks {report.bookmarks} "
+            f"anchors {report.anchors} fields {report.fields}")
+        out[f"{label} body"] = _sha(new)
+        for snippet in report.flagged:
+            out[f"{label} flagged {snippet}"[:120]] = "yes"
+    return out
+
+
+def probe_builders(parts: Package) -> Answers:
+    """The property elements the writers stamp into a document.
+
+    `tables.house_rpr` is public and papers build cells with it, but no
+    document writer above calls it any more, so a change to it — the
+    bold that sat ahead of `w:rFonts`, out of schema order — reached no
+    probe. Constant per side, so it answers once, on the first document.
+    """
+    from docxkit import tables  # noqa: PLC0415
+    del parts
+    return {f"house_rpr {bold=}": tables.house_rpr("Arial Narrow", 10,
+                                                   bold=bold)
+            for bold in (False, True)}
+
+
+def probe_house_apply(parts: Package) -> Answers:
+    """`house.apply` on the package: what it set, and the audit after."""
+    from docxkit import house  # noqa: PLC0415
+    copy = dict(parts)
+    # The figure rule is opt-in, so the probe opts in; a base older than
+    # the rule has no such field and runs the house it had.
+    # spelled as an attribute, not getattr(…, "FIGURE_SIZE"): a string is
+    # invisible to `oracle_reach`, which would call the constant unreached
+    size = (house.FIGURE_SIZE if hasattr(house, "FIGURE_SIZE")
+            else (6.0, 4.0))
+    try:
+        rules = house.Rules(figure_size=size)
+    except TypeError:
+        rules = house.HOUSE
+    report = house.apply(copy, rules)
+    out: Answers = {
+        "report": (f"captions {report.captions} notes {report.notes} "
+                   f"figure_notes {report.figure_notes} runs {report.runs}"),
+        "body": _sha(copy[DOCUMENT]),
+    }
+    # Only when some were: a base older than the figure rule has no count
+    # at all, and "n/a" against "0" is a difference that is not one.
+    if hasattr(report, "figures") and report.figures:
+        out["figures resized"] = str(report.figures)
+    for finding in house.audit(copy, rules):
+        out[f"after {finding}"[:120]] = "yes"
+    return out
+
+
+def probe_table_layout(parts: Package) -> Answers:
+    """`booktabs`, `fit_columns` and `clone_row` on every table."""
+    from docxkit import tables  # noqa: PLC0415
+    xml = parts[DOCUMENT].decode("utf-8")
+    out: Answers = {}
+    writers: tuple[tuple[str, Callable[[Any], str]], ...] = (
+        ("booktabs", lambda t: tables.booktabs(xml, t)[0]),
+        ("fit_columns", lambda t: tables.fit_columns(xml, t)[0]),
+        ("clone_row", lambda t: tables.clone_row(xml, t, 0)),
+        ("keep_together", lambda t: tables.keep_together(xml, t)[0]))
+    for t in tables.read_all(xml)[:12]:
+        for name, write in writers:
+            key = f"table {t.index} {name}"
+            try:
+                new = write(t)
+            except Exception as exc:
+                out[key] = f"refused: {type(exc).__name__}: {str(exc)[:60]}"
+                continue
+            out[key] = _sha(new[t.start:t.end + len(new) - len(xml)])
+    return out
+
+
+def probe_footnotes(parts: Package) -> Answers:
+    """`footnotes.prune_orphans`, then `renumber.footnotes`."""
+    from docxkit import footnotes, renumber  # noqa: PLC0415
+    copy = dict(parts)
+    out: Answers = {}
+    for orphan in footnotes.prune_orphans(copy):
+        out[f"pruned {orphan}"[:120]] = "yes"
+    moved = renumber.footnotes(copy)
+    out["renumbered"] = str(sorted(moved.items()))[:200]
+    for part in ("word/document.xml", "word/footnotes.xml",
+                 "word/endnotes.xml"):
+        if part in copy:
+            out[f"sha {part}"] = _sha(copy[part])
+    return out
+
+
+#: A comment's timestamp is the clock's, so the two sides never agree on
+#: it; everything else a comment writer puts down must.
+_DATE_RE = re.compile(r'\bw:date="[^"]*"')
+_COMMENT_PARTS = ("word/document.xml", "word/comments.xml",
+                  "word/commentsExtended.xml")
+
+
+def _stamped(parts: Package, out: Answers, label: str) -> None:
+    for part in _COMMENT_PARTS:
+        if part in parts:
+            text = _DATE_RE.sub("", parts[part].decode("utf-8"))
+            out[f"{label} sha {part}"] = _sha(text)
+
+
+def _refusal(exc: Exception) -> str:
+    return f"refused: {type(exc).__name__}: {str(exc)[:60]}"
+
+
+def probe_comments(parts: Package) -> Answers:
+    """The comment writers: annotate, annotate_blocks, reclassify, add_at,
+    and `hygiene.dedupe_comments`. Each on its own copy."""
+    from docxkit import comments, hygiene, revisions  # noqa: PLC0415
+    out: Answers = {}
+    xml = parts[DOCUMENT].decode("utf-8")
+
+    def attempt(label: str, write: Callable[[Package], object]) -> None:
+        copy = dict(parts)
+        try:
+            out[label] = str(write(copy))[:200]
+        except Exception as exc:
+            out[label] = _refusal(exc)
+            return
+        _stamped(copy, out, label)
+
+    attempt("annotate", lambda p: comments.annotate(p, lambda ctx: "probe"))
+    attempt("reclassify",
+            lambda p: comments.reclassify(p, lambda ctx: "probe"))
+    attempt("dedupe_comments", hygiene.dedupe_comments)
+    spans = revisions.spans(xml)
+    attempt("annotate_blocks", lambda p: comments.annotate_blocks(
+        p, [(range(len(spans)), "probe")], author="Oracle", initials="O",
+        date="2026-01-01T00:00:00Z", partial=True))
+    def add_at(anchor: str) -> Callable[[Package], object]:
+        return lambda p: comments.add_at(p, anchor, "probe")
+
+    for i, anchor in enumerate(_anchors(xml, 3)):
+        attempt(f"add_at {i}", add_at(anchor))
+    return out
+
+
+def _anchors(xml: str, n: int) -> list[str]:
+    """Up to `n` body paragraphs' opening words, each unique in the body."""
+    from docxkit._xml import PARA_RE, visible_text  # noqa: PLC0415
+    texts = [visible_text(m.group(0)) for m in PARA_RE.finditer(xml)]
+    body = "\n".join(texts)
+    picked: list[str] = []
+    step = max(1, len(texts) // (n * 3 or 1))
+    for text in texts[::step]:
+        sig = text.strip()[:30]
+        if len(text.strip()) >= 60 and body.count(sig) == 1:
+            picked.append(sig)
+        if len(picked) == n:
+            break
+    return picked
+
+
+def probe_paragraphs(parts: Package) -> Answers:
+    """`paragraph.split`, `merge`, `drop` and `footnotes.add` on a few
+    body paragraphs, each on its own copy."""
+    from docxkit import footnotes, paragraph  # noqa: PLC0415
+    from docxkit._xml import PARA_RE, visible_text  # noqa: PLC0415
+    xml = parts[DOCUMENT].decode("utf-8")
+    texts = [visible_text(m.group(0)).strip()
+             for m in PARA_RE.finditer(xml)]
+    out: Answers = {}
+    for i, sig in enumerate(_anchors(xml, 3)):
+        text = next(t for t in texts if t.startswith(sig))
+        mid = text[len(text) // 2:len(text) // 2 + 12]
+        after = texts[texts.index(text) + 1] if text != texts[-1] else ""
+        # attribute calls, never getattr(paragraph, name): `oracle_reach`
+        # reads which writers this probe names off the source
+        ops: tuple[tuple[str, Callable[[str, str, str], str]], ...] = (
+            ("split", lambda s, m, _a: paragraph.split(xml, s, m)),
+            ("merge", lambda s, _m, a: paragraph.merge(xml, s, a)),
+            ("drop", lambda s, _m, _a: paragraph.drop(xml, s)))
+        for name, op in ops:
+            try:
+                out[f"{name} {i}"] = _sha(op(sig, mid, after[:20]))
+            except Exception as exc:
+                out[f"{name} {i}"] = _refusal(exc)
+        copy = dict(parts)
+        try:
+            nid = footnotes.add(copy, after=sig, text="probe")
+            out[f"footnotes.add {i}"] = f"id {nid}"
+            for part in ("word/document.xml", "word/footnotes.xml"):
+                out[f"footnotes.add {i} sha {part}"] = _sha(copy[part])
+        except Exception as exc:
+            out[f"footnotes.add {i}"] = _refusal(exc)
+    return out
+
+
+def _on_document(probe: Callable[[str], Answers]
+                 ) -> Callable[[Package], Answers]:
+    """A probe of the body XML alone, given the package."""
+    def run(parts: Package) -> Answers:
+        return probe(parts[DOCUMENT].decode("utf-8"))
+    return run
+
+
+PROBES: dict[str, Callable[[Package], Answers]] = {
+    "set_cell": _on_document(probe_set_cell),
+    "insert_before": _on_document(probe_insert_before),
+    "house": probe_house,
+    "crossrefs": probe_crossrefs,
+    "link_all": probe_link_all,
+    "link_more": probe_link_more,
+    "link_rest": probe_link_rest,
+    "renumber": probe_renumber,
+    "builders": probe_builders,
+    "house_apply": probe_house_apply,
+    "table_layout": probe_table_layout,
+    "footnotes": probe_footnotes,
+    "comments": probe_comments,
+    "paragraphs": probe_paragraphs,
+}
+
+
+def _read_package(path: str) -> Package:
+    """The package's XML parts, and its PNG and JPEG media.
+
+    The images are what the figure rule reads: without them every
+    picture's own size is unknown, `house_apply` skipped every figure on
+    both sides, and a broken resize printed "0 differ" while
+    `oracle_reach` counted `_resize_figures` as measured (review,
+    2026-11-15). Other media (EMF, WMF, embedded workbooks) nothing
+    reads, and they can run to megabytes."""
+    with zipfile.ZipFile(path) as z:
+        return {n: z.read(n) for n in z.namelist()
+                if n.endswith((".xml", ".rels"))
+                or (n.startswith("word/media/")
+                    and n.lower().endswith((".png", ".jpg", ".jpeg")))}
 
 
 def worker(src: str, out: str, probes: list[str], files: list[str]) -> int:
     """One side: run the probes over the files with `src` first on path."""
     sys.path.insert(0, src)
     result: dict[str, dict[str, Answers]] = {}
+    spent: dict[str, float] = {}
     for f in files:
         try:
-            xml = zipfile.ZipFile(f).read("word/document.xml").decode("utf-8")
+            parts = _read_package(f)
+            parts[DOCUMENT].decode("utf-8")
         except Exception as exc:
             result[f] = {"_": {"unreadable": type(exc).__name__}}
             continue
         result[f] = {}
         for name in probes:
+            t0 = time.perf_counter()
             try:
-                result[f][name] = PROBES[name](xml)
+                result[f][name] = PROBES[name](parts)
             except Exception as exc:
                 result[f][name] = {"_probe": f"crashed: {exc!r}"[:200]}
+            spent[name] = spent.get(name, 0.0) + time.perf_counter() - t0
+    result["_seconds"] = {k: {"total": f"{v:.1f}"} for k, v in spent.items()}
     Path(out).write_bytes(json.dumps(result, ensure_ascii=False).encode())
     return 0
 
@@ -194,9 +576,14 @@ def _extract(rev: str, into: Path) -> Path:
 
 def _side(src: Path, probes: list[str], files: list[str],
           out: Path) -> dict[str, dict[str, Answers]]:
+    # The paths go in a FILE: on argv, 1,813 manuscript paths are 183,290
+    # characters, and Windows refuses a command line past 32,767 with
+    # WinError 206 before the worker starts (2026-11-14).
+    listing = out.with_suffix(".files.json")
+    listing.write_text(json.dumps(files), encoding="utf-8")
     subprocess.run([sys.executable, str(Path(__file__).resolve()),
                     "--worker", str(src), str(out), ",".join(probes),
-                    *files], check=True)
+                    str(listing)], check=True)
     loaded: dict[str, dict[str, Answers]] = json.loads(out.read_bytes())
     return loaded
 
@@ -204,7 +591,8 @@ def _side(src: Path, probes: list[str], files: list[str],
 def main(argv: list[str] | None = None) -> int:
     args_in = sys.argv[1:] if argv is None else argv
     if args_in[:1] == ["--worker"]:
-        src, out, names, *files = args_in[1:]
+        src, out, names, listing = args_in[1:]
+        files = json.loads(Path(listing).read_text(encoding="utf-8"))
         return worker(src, out, names.split(","), files)
 
     sys.path.insert(0, str(HERE))
@@ -227,7 +615,9 @@ def main(argv: list[str] | None = None) -> int:
     if not roots:
         print(f"SKIPPED: no corpus — set {sweep.CORPUS_ENV} or pass roots")
         return SKIPPED
-    limit = args.limit or int(os.environ.get(sweep.LIMIT_ENV, "0") or 40)
+    # `get(…, "0") or 40` never reached the 40: "0" is a truthy string, so
+    # an unset variable meant NO limit and the whole corpus (2026-11-14).
+    limit = args.limit or int(os.environ.get(sweep.LIMIT_ENV) or 40)
     paths = sorted(p for root in roots for p in Path(root).rglob("*.docx")
                    if not sweep.SKIP.search(str(p)))
     chosen = [str(p) for p in sweep.sample(paths, limit)]
@@ -239,13 +629,21 @@ def main(argv: list[str] | None = None) -> int:
         base_src = _extract(args.base, Path(tmp))
         base = _side(base_src, probes, chosen, Path(tmp) / "base.json")
         head = _side(ROOT / "src", probes, chosen, Path(tmp) / "head.json")
+    seconds = head.pop("_seconds", {})
+    base.pop("_seconds", None)
     found = diff(base, head)
     print(f"{len(chosen)} of {len(paths)} documents; base {args.base} vs "
           f"the working tree")
     for probe in probes:
         answers = sum(len(v.get(probe, {})) for v in head.values())
         rows = found.get(probe, [])
-        print(f"  {probe}: {answers} answers, {len(rows)} differ")
+        # A probe that crashes on every document answers ONE key per
+        # document, the same on both sides, and reads "0 differ".
+        crashed = sum(1 for v in head.values() if "_probe" in v.get(probe, {}))
+        spent = seconds.get(probe, {}).get("total", "?")
+        print(f"  {probe}: {answers} answers, {len(rows)} differ"
+              + (f", CRASHED on {crashed}" if crashed else "")
+              + f" ({spent} s)")
         for f, key, b, h in rows[:args.show]:
             print(f"    {Path(f).name} {key}\n      base: {b}\n      "
                   f"head: {h}")

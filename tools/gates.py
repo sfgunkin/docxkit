@@ -204,6 +204,13 @@ GATES: list[Gate] = [
     # eleven breakage kinds that break a CALL fail it — the twelfth,
     # a constant's value, is reported. See the tool for the measurement.
     ("api", [sys.executable, "tools/api_check.py"], False),
+    # Does an ORACLE reach what this change changed? The corpus gates
+    # below run only what they name, and a batch that rewrote three
+    # writers on 2026-11-14 would have read "0 differ" from a writer
+    # oracle that probed two others. Static, against HEAD, so it gates the
+    # work in hand and is silent once that is committed. Replayed over
+    # the 30 commits before it, it fails one: a change to dead code.
+    ("reach", [sys.executable, "tools/oracle_reach.py"], False),
     # Does anything in this repository import what it does not declare?
     # The one question `pyproject.toml` has been wrong about four times
     # — latex2mathml, pymupdf, pandas and cosmic-ray — and every time it

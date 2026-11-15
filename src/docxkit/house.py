@@ -26,6 +26,9 @@ one", its header said, and it lived in that paper's scripts.
   line-height rule, not licence to close the gap between two exhibits.
 * **The Abstract**: only the word "Abstract" bold, single spaced, 0.5"
   indents on both sides.
+* **Figures**, when a paper opts in with ``Rules(figure_size=FIGURE_SIZE)``:
+  every inline body figure at 6 x 4 in, where the image already is 3:2;
+  one that is not is reported for re-export, never stretched.
 * **Numbered display equations** in the 1x3 grid of
   :func:`docxkit.equations.numbered_grid` — see
   :func:`~docxkit.equations.number_displays` for why a tab stop is not
@@ -63,6 +66,7 @@ from dataclasses import dataclass
 from lxml import etree
 
 from . import exhibits as _exhibits
+from . import figures as _figures
 from ._xml import (
     DOCUMENT,
     FLDCHAR_RE,
@@ -77,6 +81,7 @@ from ._xml import (
     fields,
     live_properties,
     matching_close,
+    own_child,
     own_properties,
     set_para_property,
     set_run_property,
@@ -91,9 +96,11 @@ from .equations import (
 )
 from .errors import AnchorError
 from .find import caption_re
+from .package import rels_name
 from .styles import Cascade
 
 __all__ = [
+    "FIGURE_SIZE",
     "HOUSE",
     "NOTE",
     "AnchorError",
@@ -234,6 +241,20 @@ class Rules:
     #: twips after the prose paragraph leading into a display equation
     #: (4 pt); None leaves those paragraphs alone.
     equation_lead_after: int | None = 80
+    #: inches (width, height) for every inline figure in the body, or
+    #: None to leave figures alone. `FIGURE_SIZE`, 6 x 4, is the author's
+    #: ("Make figure sizes 4x6, this should be in house style",
+    #: LFP_Inflows_ECA, 2026-11-12). OFF by default, measured: on 170
+    #: corpus documents it reports 448 figures in 92 of them, 404 of
+    #: those images not 3:2 at all, and paper scripts assert the audit
+    #: is EMPTY after a round — on by default, every older paper's next
+    #: run would fail, and resize figures nobody asked it to. A paper
+    #: opts in with `Rules(figure_size=FIGURE_SIZE)`.
+    figure_size: tuple[float, float] | None = None
+
+
+#: The author's figure size, in inches: pass it as `Rules.figure_size`.
+FIGURE_SIZE = (6.0, 4.0)
 
 
 HOUSE = Rules()
@@ -253,13 +274,140 @@ class HouseReport:
     equations: int
     #: prose paragraphs leading into a display equation, spacing set
     lead_ins: int = 0
+    #: figures resized to `Rules.figure_size`
+    figures: int = 0
 
     def format(self) -> str:
         return (f"captions {self.captions}, notes {self.notes} "
                 f"({self.figure_notes} under a figure), runs restyled "
                 f"{self.runs}, abstract {self.abstract or 'not found'}, "
                 f"numbered equations set {self.equations}, equation "
-                f"lead-ins {self.lead_ins}")
+                f"lead-ins {self.lead_ins}, figures resized {self.figures}")
+
+
+# -------------------------------------------------------------- figures --
+
+
+_INLINE_RE = re.compile(r"<wp:inline\b.*?</wp:inline>", re.DOTALL)
+#: How far a drawing may sit from the house size and still be it: a
+#: hundredth of an inch, which is rounding in whatever placed it.
+_SIZE_SLACK = 9144
+#: How far an image's pixel aspect may sit from the house aspect and
+#: still be stretched to it without anyone seeing: one per cent.
+_ASPECT_SLACK = 0.01
+
+
+@dataclass(frozen=True)
+class _Drawing:
+    start: int                  # offsets of the `wp:inline` in the body
+    end: int
+    cx: int
+    cy: int
+    target: str                 # the image part, "word/media/…"
+    #: the VISIBLE pixels: the image's, less Word's crop (`a:srcRect`).
+    #: None: not a PNG/JPEG we can read.
+    pixels: tuple[float, float] | None
+
+    @property
+    def inches(self) -> tuple[float, float]:
+        return self.cx / _figures.EMU_PER_INCH, self.cy / _figures.EMU_PER_INCH
+
+
+def _drawings(parts: Parts) -> list[_Drawing]:
+    """Every inline picture in the body that is not inside a table.
+
+    A drawing in a table cell is a panel of a composite figure, and an
+    anchored (floating) one is placed by hand; neither is the house's
+    6 x 4 block. Nor is an inline picture INSIDE a floating shape: a text
+    box's content is `w:txbxContent`, its paragraphs hold ordinary
+    `wp:inline` drawings, and resizing one to 6 x 4 in overflows the box.
+    """
+    xml = parts[DOCUMENT].decode("utf-8")
+    rels = parts.get(rels_name(DOCUMENT), b"").decode("utf-8")
+    hosted = element_spans(xml, "tbl") + element_spans(xml, "txbxContent")
+    out = []
+    for m in _INLINE_RE.finditer(xml):
+        if any(lo <= m.start() < hi for lo, hi in hosted):
+            continue
+        block = m.group(0)
+        ext, blip = (_figures._EXTENT_RE.search(block),
+                     _figures._EMBED_RE.search(block))
+        if ext is None or blip is None:
+            continue
+        try:
+            target = _figures._relationship_target(rels, blip.group(1))
+        except Exception:
+            continue
+        pixels = None
+        if (blob := parts.get(target)) is not None:
+            try:
+                pixels = _figures._visible_pixels(
+                    block, _figures._image_size(blob)[2:])
+            except Exception:
+                pixels = None
+        out.append(_Drawing(m.start(), m.end(), int(ext.group(1)),
+                            int(ext.group(2)), target, pixels))
+    return out
+
+
+def _house_emu(size: tuple[float, float]) -> tuple[int, int]:
+    return (round(size[0] * _figures.EMU_PER_INCH),
+            round(size[1] * _figures.EMU_PER_INCH))
+
+
+def _at_size(d: _Drawing, size: tuple[float, float]) -> bool:
+    cx, cy = _house_emu(size)
+    return abs(d.cx - cx) <= _SIZE_SLACK and abs(d.cy - cy) <= _SIZE_SLACK
+
+
+def _fits_aspect(d: _Drawing, size: tuple[float, float]) -> bool | None:
+    """Does the IMAGE have the house aspect? None when it cannot be read."""
+    if d.pixels is None:
+        return None
+    w, h = d.pixels
+    if w <= 0 or h <= 0:                # cropped away, or a corrupt header
+        return None
+    return abs((w / h) / (size[0] / size[1]) - 1) <= _ASPECT_SLACK
+
+
+def _resize_figures(parts: Parts, size: tuple[float, float]) -> int:
+    """Set every house-aspect figure to `size`; the count resized.
+
+    Only where the image already has the house aspect: stretching a 4:3
+    chart into a 3:2 box distorts it, and that is a finding for the
+    author (a re-export), never a fix.
+    """
+    xml = parts[DOCUMENT].decode("utf-8")
+    cx, cy = _house_emu(size)
+    resized = 0
+    for d in reversed(_drawings(parts)):
+        if _at_size(d, size) or not _fits_aspect(d, size):
+            continue
+        block = _figures.set_extent(xml[d.start:d.end], cx, cy)
+        xml = xml[:d.start] + block + xml[d.end:]
+        resized += 1
+    parts[DOCUMENT] = xml.encode("utf-8")
+    return resized
+
+
+def _figure_findings(parts: Parts, size: tuple[float, float]) -> list[str]:
+    out = []
+    want = f"{size[0]:g} x {size[1]:g} in"
+    for i, d in enumerate(_drawings(parts), 1):
+        name = f"figure {i} ({d.target.rsplit('/', 1)[-1]})"
+        aspect = _fits_aspect(d, size)
+        if aspect is False and d.pixels is not None:
+            w, h = d.pixels
+            out.append(f"{name}: the image shows {w:.0f} x {h:.0f} px, not "
+                       f"{size[0]:g}:{size[1]:g}, so it cannot be set to "
+                       f"{want} without distorting it — re-export it")
+        elif not _at_size(d, size):
+            w_in, h_in = d.inches
+            out.append(f"{name}: placed at {w_in:.2f} x {h_in:.2f} in, "
+                       f"not {want}"
+                       + (" (the image's own size cannot be read, so "
+                          "`apply` leaves it)" if aspect is None else ""))
+    return out
 
 
 # ---------------------------------------------------------------- apply --
@@ -291,15 +439,21 @@ def _with_mark(para: str, face: Face) -> str:
     return set_para_property(para, "rPr", f"<w:rPr>{revs}{face_inner}</w:rPr>")
 
 
+def _own_spacing(para: str) -> str:
+    """The attributes of the paragraph's OWN `w:spacing`, or "".
+
+    Never the mark's: its `w:rPr` holds a `w:spacing` too, character
+    spacing, and its `w:val` copied up is schema-invalid in a `pPr`."""
+    ppr = own_properties(para, "pPr")
+    child = own_child(ppr[2], "spacing") if ppr is not None else None
+    m = re.match(r"<w:spacing\b([^>]*?)/?>", child or "")
+    return m.group(1) if m else ""
+
+
 def _spacing(para: str, after: int) -> str:
     """Single spaced, `after` twips after, the paragraph's own `before`."""
-    ppr = own_properties(para, "pPr")
-    keep = ""
-    if ppr is not None:
-        m = re.search(r"<w:spacing\b[^>]*/>", live_properties(ppr[2]))
-        if m is not None:
-            keep = " ".join(re.findall(
-                r'\bw:before(?:Lines|Autospacing)?="[^"]*"', m.group(0)))
+    keep = " ".join(re.findall(r'\bw:before(?:Lines|Autospacing)?="[^"]*"',
+                               _own_spacing(para)))
     keep = f" {keep}" if keep else ""
     return set_para_property(
         para, "spacing",
@@ -403,11 +557,8 @@ def _abstract(xml: str, rules: Rules) -> tuple[str, str]:
 
 def _after_of(para: str) -> int:
     """The paragraph's own space-after, in twips, or 0."""
-    ppr = own_properties(para, "pPr")
-    if ppr is not None and (m := re.search(
-            r'<w:spacing\b[^>]*\bw:after="(\d+)"', live_properties(ppr[2]))):
-        return int(m.group(1))
-    return 0
+    m = re.search(r'\bw:after="(\d+)"', _own_spacing(para))
+    return int(m.group(1)) if m else 0
 
 
 #: Between a lead-in and its equation only these may sit: whitespace,
@@ -451,12 +602,8 @@ def _lead_ins(xml: str) -> list[re.Match[str]]:
 def _with_after(para: str, after: int) -> str:
     """`after` twips after; every other spacing attribute kept. `afterLines`
     and `afterAutospacing` go, because Word lets either override `after`."""
-    ppr = own_properties(para, "pPr")
-    keep = ""
-    if ppr is not None and (m := re.search(
-            r"<w:spacing\b([^>]*?)/>", live_properties(ppr[2]))):
-        keep = re.sub(r'\s*\bw:after(?:Lines|Autospacing)?="[^"]*"', "",
-                      m.group(1))
+    keep = re.sub(r'\s*\bw:after(?:Lines|Autospacing)?="[^"]*"', "",
+                  _own_spacing(para))
     return set_para_property(para, "spacing",
                              f'<w:spacing{keep} w:after="{after}"/>')
 
@@ -506,10 +653,12 @@ def apply(parts: Parts, rules: Rules = HOUSE) -> HouseReport:
             xml = xml[:m.start()] + para + xml[m.end():]
             lead_ins += 1
     parts[DOCUMENT] = xml.encode("utf-8")
+    figures = (0 if rules.figure_size is None
+               else _resize_figures(parts, rules.figure_size))
     return HouseReport(captions=captions, notes=notes,
                        figure_notes=figure_notes, runs=runs,
                        abstract=abstract, equations=equations,
-                       lead_ins=lead_ins)
+                       lead_ins=lead_ins, figures=figures)
 
 
 # ---------------------------------------------------------------- audit --
@@ -714,4 +863,6 @@ def audit(parts: Parts, rules: Rules = HOUSE) -> list[str]:
                 text = visible_text(para).strip()
                 out.append(f"equation lead-in {text[:30]!r}: {shown} "
                            f"after, not {lead_after / 20:g} pt")
+    if rules.figure_size is not None:
+        out += _figure_findings(parts, rules.figure_size)
     return out

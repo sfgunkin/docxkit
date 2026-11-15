@@ -14,7 +14,7 @@ from __future__ import annotations
 import html
 import re
 import zipfile
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import NamedTuple
 
 __all__ = [
@@ -1398,6 +1398,108 @@ def element_spans(xml: str, tag: str) -> list[tuple[int, int]]:
     return spans
 
 
+#: A run-level tracked change: CT_RunTrackChange, which holds RUNS.
+_TRACKED_RUN_TAGS = ("ins", "del", "moveTo", "moveFrom")
+#: Every revision that carries a `w:id` the package must not repeat.
+_REVISION_ID_RE = re.compile(
+    r'<w:(?:ins|del|moveTo|moveFrom|rPrChange|pPrChange|sectPrChange|'
+    r'tblPrChange|trPrChange|tcPrChange|tblGridChange|numberingChange)\b'
+    r'[^>]*?\bw:id="(\d+)"')
+#: any prefixed tag, open, close or empty: (closing slash, name, empty slash)
+_PREFIXED_TAG_RE = re.compile(
+    r"<(/?)([A-Za-z][\w.-]*:[\w.-]+)\b[^>]*?(/?)>")
+
+
+def _at_top(inner: str, stop: int) -> bool:
+    """Is `stop` a direct-child position of `inner`, every tag closed?"""
+    return balanced(inner[:stop])
+
+
+def balanced(fragment: str) -> bool:
+    """Does every element `fragment` opens close in it, in order, and
+    nothing close that it did not open? An XML fragment that can stand
+    as one element's content."""
+    stack: list[str] = []
+    for m in _PREFIXED_TAG_RE.finditer(fragment):
+        closing, name, empty = m.groups()
+        if empty:                       # opens and closes nothing
+            continue
+        if not closing:
+            stack.append(name)
+        elif not stack or stack.pop() != name:
+            return False
+    return not stack
+
+
+def hoist_links_out_of_tracked(xml: str,
+                               others: Sequence[str] = ()) -> tuple[str, int]:
+    """Every `w:hyperlink` written INSIDE a tracked change, turned inside
+    out: the link around the change, the way Word writes it.
+
+    CT_RunTrackChange holds runs, not hyperlinks, so
+    ``<w:ins><w:hyperlink><w:r/></w:hyperlink></w:ins>`` is invalid and
+    Word repairs the file. A linker writes exactly that when the mention
+    it finds is tracked text — on LFP_Inflows a paragraph moved as a
+    tracked deletion and insertion got its Figure 5 link that way, and
+    `lint` passed it (backlog S2, 2026-11-15). The change is split at the
+    link: ``<w:ins>before</w:ins> <w:hyperlink><w:ins>link
+    runs</w:ins></w:hyperlink> <w:ins>after</w:ins>``, every piece with
+    the original's author and date. The first piece keeps its `w:id`;
+    each other gets a fresh one, unique across `xml` and `others` (the
+    other parts of the package), since `lint` refuses a repeated id.
+
+    Returns the part and how many links were hoisted.
+    """
+    if "<w:hyperlink" not in xml:
+        return xml, 0
+    ids = [int(i) for part in (xml, *others)
+           for i in _REVISION_ID_RE.findall(part)]
+    fresh = max(ids, default=0)
+    hoisted = 0
+    for tag in _TRACKED_RUN_TAGS:
+        close = f"</w:{tag}>"
+        try:
+            spans = element_spans(xml, tag)
+        except ValueError:              # markup that does not close: not
+            continue                    # this pass's to repair, nor to raise
+        for s, e in reversed(spans):
+            whole = xml[s:e]
+            open_tag = whole[:whole.index(">") + 1]
+            inner = whole[len(open_tag):len(whole) - len(close)]
+            if not balanced(inner):
+                continue
+            links = [(hs, he) for hs, he in element_spans(inner, "hyperlink")
+                     if _at_top(inner, hs)]
+            if not links:
+                continue
+            # (body, is a link's runs) in order; empty stretches dropped
+            pieces: list[tuple[str, bool]] = []
+            pos = 0
+            for hs, he in links:
+                pieces.append((inner[pos:hs], False))
+                pieces.append((inner[hs:he], True))
+                pos = he
+            pieces.append((inner[pos:], False))
+            out: list[str] = []
+            for body, is_link in pieces:
+                if not is_link and not body.strip():
+                    continue
+                if out:                         # every piece after the first
+                    fresh += 1
+                tag_open = (open_tag if not out else re.sub(
+                    r'\bw:id="\d+"', f'w:id="{fresh}"', open_tag, count=1))
+                if is_link:
+                    l_open = body[:body.index(">") + 1]
+                    runs = body[len(l_open):len(body) - len("</w:hyperlink>")]
+                    out.append(f"{l_open}{tag_open}{runs}{close}"
+                               "</w:hyperlink>")
+                    hoisted += 1
+                else:
+                    out.append(f"{tag_open}{body}{close}")
+            xml = xml[:s] + "".join(out) + xml[e:]
+    return xml, hoisted
+
+
 _ELEMENT_OPEN_RE = re.compile(r"<w:\w+\b[^>]*?(/?)>\s*")
 
 
@@ -1479,9 +1581,29 @@ def live_properties(inner: str) -> str:
     snapshot in place instead (see ``_table_layout._set_borders``):
     masking keeps the trailing bytes addressable, and it holds even in a
     document that puts the change element somewhere the schema does not.
+
+    **Only a DIRECT child is the element's own record.** A paragraph's
+    `w:pPr` holds the paragraph mark's `w:rPr`, and that can carry a
+    `w:rPrChange` of its own. Cut at the first change element anywhere,
+    the live part stopped INSIDE the mark's `w:rPr`, unclosed, and every
+    walk over it raised: `house.apply` crashed on a corpus manuscript
+    whose centred caption had a tracked mark (writer oracle, 2026-11-15),
+    and readers lost the `w:sectPr` after it. Markup that does not close
+    falls back to the first match, as before.
     """
-    m = _PROPERTY_CHANGE_RE.search(inner)
-    return inner if m is None else inner[:m.start()]
+    if "PrChange" not in inner:         # the usual case, and a hot path
+        return inner
+    pos = 0
+    try:
+        while (m := _CHILD_OPEN_RE.search(inner, pos)) is not None:
+            if _PROPERTY_CHANGE_RE.match(inner, m.start()):
+                return inner[:m.start()]
+            pos = (m.end() if m.group(2) == "/"
+                   else matching_close(inner, m.end(), m.group(1)))
+    except ValueError:
+        first = _PROPERTY_CHANGE_RE.search(inner)
+        return inner if first is None else inner[:first.start()]
+    return inner
 
 
 #: ``CT_PPr`` in schema order, the paragraph's answer to
@@ -1527,6 +1649,29 @@ def _own_children(inner: str) -> Iterator[tuple[str, int, int]]:
             inner, m.end(), tag)
         yield tag, m.start(), end
         pos = end
+
+
+def own_child(inner: str, tag: str) -> str | None:
+    """The first DIRECT, live ``w:tag`` child of a properties element.
+
+    A flat ``<w:spacing`` search over a ``w:pPr`` also finds the one in
+    the paragraph mark's ``w:rPr``: CHARACTER spacing, ``w:val`` in
+    twentieths of a point, and carried up as the paragraph's it writes a
+    schema-invalid ``<w:spacing w:val=… w:after=…/>`` (review,
+    2026-11-15). ``w:shd`` has the same double life. Markup that does not
+    close falls back to the flat search with the mark's ``w:rPr`` cut.
+    """
+    live = live_properties(inner)
+    try:
+        return next((live[s:e] for name, s, e in _own_children(live)
+                     if name == tag), None)
+    except ValueError:
+        flat = re.sub(r"<w:rPr\b[^>]*(?<!/)>.*?</w:rPr>", "", live,
+                      flags=re.DOTALL)
+        # the slash captured: a property is often empty, `<w:spacing/>`,
+        # and the caller reads the tag itself, never pairing it
+        m = re.search(rf"<w:{tag}\b[^>]*?(/?)>", flat)
+        return None if m is None else m.group(0)
 
 
 def _para_with_properties(para_xml: str, element: str) -> str:

@@ -502,6 +502,9 @@ LOCK_EXEMPT = {
                      "file the author has open",
     "pdf": "renders through Word; a snapshot would answer about a "
            "generation the author cannot see on their screen",
+    "render-diff": "renders BOTH paths through Word, as `pdf` renders one "
+                   "(two paths, like `compare`), and reads no package "
+                   "itself; with --pdfs it reads two PDFs and no docx",
     "pages": "renders through Word, same as `pdf` — but its CAPTION "
              "checks read the package, and that read falls back to a "
              "snapshot like every other: it was a bare `read_parts` on "

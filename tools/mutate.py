@@ -202,9 +202,10 @@ MUTATIONS = [
     Mutation("_xml.py",
              "the historical snapshot answers property questions for "
              "the formatting in force",
-             "    m = _PROPERTY_CHANGE_RE.search(inner)\n"
-             "    return inner if m is None else inner[:m.start()]",
-             "    return inner"),
+             "            if _PROPERTY_CHANGE_RE.match(inner, m.start()):\n"
+             "                return inner[:m.start()]",
+             "            if False:\n"
+             "                return inner[:m.start()]"),
     # --- exhibit mentions -----------------------------------------------
     # in `find` since 2026-09-11, beside the caption grammar; `crossrefs`
     # re-exports and is where the tests that kill these two live

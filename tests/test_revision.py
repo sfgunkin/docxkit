@@ -970,6 +970,71 @@ def test_with_NO_words_surviving_the_refusal_does_not_claim_a_collapse(
     assert "Put back anything Word ate" in said, said
 
 
+def test_a_DELETED_mention_of_a_label_the_paper_repeats_is_not_a_survivor():
+    """Month_of_birth, 2026-11-12: the author deleted a passage holding
+    linked mentions of "Table 1", and the label still occurred elsewhere
+    — LINKED there — so "is the label anywhere?" said the words SURVIVE,
+    and the repair it pointed at linked nothing. Counted on PLAIN text
+    instead: three lost links, one of which Word flattened (one more
+    plain "Table 1" than before) and two whose sentences were cut."""
+    from docxkit.revision._losses import losses
+
+    kept = _linked("Table1", "Table 1")
+    prev = make_parts(
+        para(run("As "), kept, run(" shows, which "),
+             _linked("Table1", "Table 1"), run(" repeats."))
+        + para(run("And "), _linked("Table1", "Table 1"), run(" again."))
+        + para(run("Later "), _linked("Table1", "Table 1"), run(" too."))
+        + para(run("Elsewhere, Table 1 is mentioned plainly.")))
+    working = make_parts(
+        para(run("As "), kept, run(" shows."))          # one cut here
+        + para(run("Later Table 1 too."))                # Word flattened
+        + para(run("Elsewhere, Table 1 is mentioned plainly.")))   # one cut
+
+    lost = [x for x in losses(working, prev) if x.kind == "link"]
+
+    assert len(lost) == 3, lost
+    words = [x.words for x in lost]
+    assert (words.count(True), words.count(False)) == (1, 2), lost
+
+
+def test_a_NEW_mention_of_Table_12_does_not_revive_a_deleted_Table_1():
+    """A substring count read "Table 12" as one more "Table 1": the
+    author cut the linked sentence and added "see Table 12", and the
+    loss was reported as the words SURVIVING (review, 2026-11-15)."""
+    from docxkit.revision._losses import losses
+
+    prev = make_parts(para(run("As "), _linked("Table1", "Table 1"),
+                           run(" shows.")) + para(run("Other text.")))
+    working = make_parts(para(run("Other text; see Table 12 and Table 1a.")))
+
+    (lost,) = [x for x in losses(working, prev) if x.kind == "link"]
+    assert lost.words is False, lost
+
+
+def test_a_label_surviving_inside_a_NON_link_field_is_a_survivor():
+    """`citations.masked_visible_text` masks EVERY field, because it asks
+    where a link may go. Words inside a Zotero field are words a reader
+    sees, and the label Word moved into one has not been deleted."""
+    from docxkit.revision._losses import losses
+
+    def zotero(text: str) -> str:
+        return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+                '<w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM'
+                ' </w:instrText></w:r>'
+                '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+                f"{run(text)}"
+                '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+    prev = make_parts(para(run("As "), _linked("ref_smith", "Smith (2020)"),
+                           run(" argues.")))
+    working = make_parts(para(run("As "), zotero("Smith (2020)"),
+                              run(" argues.")))
+
+    (lost,) = [x for x in losses(working, prev) if x.kind == "link"]
+    assert lost.words is True, lost
+
+
 def test_a_first_baseline_with_no_prev_is_not_blocked(tmp_path):
     """`init` seeds prev from working, but a paper that has lost its
     build/ directory must still be able to record a truth."""

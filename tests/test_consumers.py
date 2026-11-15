@@ -96,6 +96,12 @@ PRIVATE = {
     ("docxkit._xml", "delta_text"),
     ("docxkit._xml", "editable_text"),
     ("docxkit.revision._promote", "rescue_path"),
+    # 2026-11-14, seen when the snapshot was refreshed in e84596f:
+    # LFP_Inflows' `code/50_export/revise_*.py` (three scripts). Public
+    # as `docxkit.tracked.rejected_view` since 2026-09-29, so like
+    # `load_paper` a path to move off. e84596f refreshed the snapshot
+    # without rerunning this test, and master carried it red.
+    ("docxkit._tracked_gates", "rejected_view"),
 }
 
 #: The four promoted on 2026-09-01, with the public path they now have.

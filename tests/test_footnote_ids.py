@@ -190,3 +190,38 @@ def test_an_EMPTY_note_is_an_element_of_its_own_and_moves_whole():
     assert renumber.footnote_order(parts) == ([1, 2], [1, 2])
     assert xml.count('<w:footnote w:id="2"/>') == 1
     assert xml.index("note text 2") < xml.index('<w:footnote w:id="2"/>')
+
+
+def _with_notice(order: list[int]) -> dict[str, bytes]:
+    """Word's three separator notes as ACC1.docx stores them: the
+    continuationNotice takes id 1, so real notes start at 2."""
+    body = "".join(para(run(f"sentence {i}"), _ref(nid))
+                   for i, nid in enumerate(order, 1))
+    seps = ('<w:footnote w:type="separator" w:id="-1"><w:p/></w:footnote>'
+            '<w:footnote w:type="continuationSeparator" w:id="0">'
+            "<w:p/></w:footnote>"
+            '<w:footnote w:type="continuationNotice" w:id="1">'
+            "<w:p/></w:footnote>")
+    items = seps + "".join(note(f"note text {nid}", nid=nid)
+                           for nid in sorted(order))
+    return {"word/document.xml": document(body).encode("utf-8"),
+            "word/footnotes.xml": notes("footnotes", items).encode("utf-8")}
+
+
+def test_a_CONTINUATION_NOTICE_at_id_1_is_a_separator_not_a_note():
+    """3 of 12 corpus manuscripts: renumbering started real notes at 1,
+    onto the notice's id, and refused with "did not settle — notes
+    [1, 1, 2, ...]"; the audit called the notice "note 1 has no
+    reference". `footnotes._reserved` knew the type; this module did not."""
+    tidy = _with_notice([2, 3, 4, 5])
+    assert renumber.footnote_audit(tidy) == []
+    assert renumber.footnotes(tidy) == {}
+
+    parts = _with_notice([2, 3, 7, 4, 5])
+    moved = renumber.footnotes(parts)
+
+    assert moved == {7: 4, 4: 5, 5: 6}
+    assert renumber.footnote_order(parts) == ([2, 3, 4, 5, 6],
+                                              [2, 3, 4, 5, 6])
+    xml = parts["word/footnotes.xml"].decode("utf-8")
+    assert xml.count('w:type="continuationNotice" w:id="1"') == 1

@@ -46,6 +46,7 @@ from ._xml import (
     PARA_RE,
     RUN_RE,
     Parts,
+    hoist_links_out_of_tracked,
     internal_links,
     run_open_before,
     visible_text,
@@ -71,6 +72,18 @@ _NAME_BUDGET = WORD_BOOKMARK_LIMIT - len("txt")
 #: `refstyle` a work and `export` a whole note).
 _NOTE_PARTS: tuple[tuple[str, str], ...] = ((FOOTNOTES, "fn¶"),
                                             (ENDNOTES, "en¶"))
+
+
+def _hoist_tracked_links(parts: Parts) -> None:
+    """Each link a wrap wrote INSIDE a tracked change, put around it
+    (`_xml.hoist_links_out_of_tracked`); ids fresh across all three."""
+    names = [n for n in (DOCUMENT, FOOTNOTES, ENDNOTES) if n in parts]
+    for name in names:
+        xml = parts[name].decode("utf-8")
+        others = [parts[o].decode("utf-8") for o in names if o != name]
+        new, hoisted = hoist_links_out_of_tracked(xml, others)
+        if hoisted:
+            parts[name] = new.encode("utf-8")
 
 
 #: Cyrillic -> Latin, enough for the Russian and Kazakh names these papers
@@ -1029,6 +1042,7 @@ def link_all(parts: Parts, *,
         if note_plans[name]:
             parts[name] = notes[name].encode("utf-8")
     parts[DOCUMENT] = doc.encode("utf-8")
+    _hoist_tracked_links(parts)
     return report
 
 
@@ -1241,6 +1255,7 @@ def link_rest(parts: Parts, *,
             parts[name] = rewrite(
                 xml, list(PARA_RE.finditer(xml)), None, label).encode("utf-8")
     parts[DOCUMENT] = doc.encode("utf-8")
+    _hoist_tracked_links(parts)
     return report
 
 

@@ -1338,6 +1338,32 @@ def test_link_all_builds_the_full_apparatus_and_is_idempotent():
     assert len(again.already) == 2
 
 
+def test_link_all_links_a_TRACKED_citation_around_the_change():
+    """A citation in a tracked insertion was wrapped where it stood, a
+    `w:hyperlink` inside the `w:ins`, which Word repairs (backlog S2,
+    2026-11-15). The link goes around the change, the change split."""
+    from docxkit.citations import link_all
+    from docxkit.lint import lint_parts
+    ins = '<w:ins w:id="3" w:author="A" w:date="2026-11-01T00:00:00Z">'
+    body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"
+                    for i in range(5))
+            + P(ins + R("Robots displace workers (Maestas et al. 2023).")
+                + "</w:ins>")
+            + P(R("References"))
+            + P(R("Maestas, N., Mullen, K., and D. Powell. (2023). "
+                  "The effect of population aging. AEJ, 15(2): 306-32.")))
+    parts = xml_parts(body)
+
+    report = link_all(parts)
+
+    assert len(report.linked) == 1
+    doc = parts["word/document.xml"].decode()
+    assert not re.search(r"<w:ins\b[^>]*>(?:(?!</w:ins>).)*<w:hyperlink",
+                         doc, re.DOTALL), doc
+    assert doc.count('w:author="A"') == 3
+    assert not [f for f in lint_parts(parts) if "hyperlink" in f]
+
+
 def test_link_all_reuses_an_entrys_existing_bookmark_name():
     from docxkit.citations import link_all
     body = ("".join(f"<w:p><w:r><w:t>Filler {i}.</w:t></w:r></w:p>"

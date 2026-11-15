@@ -193,10 +193,14 @@ def test_the_real_list_is_the_eleven_CONTRIBUTING_names():
     `golden` joined the same day: four frozen manuscripts end to end, as
     counts and digests, since real manuscripts find the defects and no
     test held one.
+
+    `reach` joined on 2026-11-15, after `api`: whether an oracle reaches
+    what the change changed. A batch that rewrote three writers would
+    have read "0 differ" from a writer oracle probing two others.
     """
     assert [name for name, _argv, _reads in gates.GATES] == [
         "ruff", "mypy", "pyright", "optionals", "pytest", "floors", "unrun",
-        "claims", "api", "deps", "sweep", "consumers", "golden",
+        "claims", "api", "reach", "deps", "sweep", "consumers", "golden",
         "committed"]
     assert [g for g in gates.GATES if g[2]] == [g for g in gates.GATES
                                                 if g[0] == "mypy"]

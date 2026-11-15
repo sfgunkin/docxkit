@@ -103,6 +103,7 @@ VALUES = [
     "_tracked_gates.Unaccepted",
     "_tracked_gates.Untracked",
     "wordcount.Counts",
+    "house._Drawing",
 ]
 
 # The other kind: filled in during a walk, then read. Listed rather than
@@ -135,6 +136,7 @@ ACCUMULATORS = {
     "revision._doctor.Doubt",
     "revision._validate.ValidateReport",
     "styles.StyleReport",
+    "pages.RenderDiff",
 }
 
 

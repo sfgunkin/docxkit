@@ -300,10 +300,34 @@ def _jpeg_size(blob: bytes) -> tuple[int, int]:
 def _image_size(blob: bytes) -> tuple[str, str, int, int]:
     """``(extension, content type, width, height)`` of a PNG or a JPEG."""
     if blob[:8] == b"\x89PNG\r\n\x1a\n":
-        return ("png", "image/png", *_png_size(blob))
-    if blob[:3] == b"\xff\xd8\xff":
-        return ("jpeg", "image/jpeg", *_jpeg_size(blob))
-    raise PackageError("not a PNG or a JPEG — cannot read its dimensions")
+        ext, ctype, (w, h) = "png", "image/png", _png_size(blob)
+    elif blob[:3] == b"\xff\xd8\xff":
+        ext, ctype, (w, h) = "jpeg", "image/jpeg", _jpeg_size(blob)
+    else:
+        raise PackageError("not a PNG or a JPEG — cannot read its dimensions")
+    # A JPEG may defer its height to a DNL marker and state 0 in the frame
+    # header; every caller divides by one side or the other.
+    if w == 0 or h == 0:
+        raise PackageError(f"the image header says {w} x {h} px")
+    return ext, ctype, w, h
+
+
+_SRC_RECT_RE = re.compile(r"<a:srcRect\b[^>]*/?>")
+_CROP_RE = re.compile(r'\b([ltrb])="(-?\d+)"')
+
+
+def _visible_pixels(block: str,
+                    pixels: tuple[int, int]) -> tuple[float, float]:
+    """The part of a `pixels`-sized image that `block` SHOWS.
+
+    `a:srcRect` crops each edge by a share of the image, in thousandths
+    of a per cent (negative pads). A drawing's aspect is the visible
+    part's, never the file's: a 3:2 image cropped to 4:3 prints 4:3."""
+    m = _SRC_RECT_RE.search(block)
+    crop = {k: int(v) for k, v in _CROP_RE.findall(m.group(0))} if m else {}
+    kept_w = 1 - (crop.get("l", 0) + crop.get("r", 0)) / 100_000
+    kept_h = 1 - (crop.get("t", 0) + crop.get("b", 0)) / 100_000
+    return pixels[0] * kept_w, pixels[1] * kept_h
 
 
 def replace_image(parts: Parts, caption_prefix: str,

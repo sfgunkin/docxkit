@@ -42,6 +42,7 @@ from ._xml import (
 from .crossrefs import LABEL_FORMS, NUMBER_END, find_captions
 from .errors import AnchorError
 from .find import paragraphs
+from .footnotes import _reserved as _reserved_note
 
 __all__ = [
     "AnchorError",
@@ -441,9 +442,17 @@ _FN_NOTE_RE = re.compile(r'(<w:footnote\b[^>]*?w:id=")(-?\d+)(")')
 # counted as stored and moved only as the empty one's tail (2026-09-17).
 _FN_EL_RE = re.compile(r'<w:footnote\b[^>]*?w:id="(-?\d+)"[^>]*?'
                        r"(?:(/)>|(?<!/)>.*?</w:footnote>)", re.DOTALL)
-#: Word's separator and continuation notes. They have no reference, so
-#: they are never renumbered and never sorted into the sequence.
-_RESERVED = {0, -1}
+def _is_reserved(m: re.Match[str]) -> bool:
+    """Word's separator and continuation notes, by TYPE as well as id.
+
+    They have no reference, so they are never renumbered and never sorted
+    into the sequence. This module had its own `{0, -1}` after
+    `footnotes._reserved` learned that a `continuationNotice` takes id 1
+    (Misconceptions, 2026-09-23); read as a real note, that one collided
+    with the first renumbered note, and `footnotes()` refused 3 of 12
+    corpus manuscripts with "did not settle" (writer oracle, 2026-11-15).
+    """
+    return _reserved_note(m.group(1), m.group(0))
 
 
 def footnote_order(parts: Parts) -> tuple[list[int], list[int]]:
@@ -456,7 +465,7 @@ def footnote_order(parts: Parts) -> tuple[list[int], list[int]]:
     notes = parts.get(FOOTNOTES, b"").decode("utf-8", "replace")
     referenced = [int(m.group(2)) for m in _FN_REF_RE.finditer(doc)]
     stored = [int(m.group(1)) for m in _FN_EL_RE.finditer(notes)
-              if int(m.group(1)) not in _RESERVED]
+              if not _is_reserved(m)]
     return referenced, stored
 
 
@@ -512,7 +521,11 @@ def footnotes(parts: Parts) -> dict[int, int]:
         raise AnchorError(
             f"footnotes: reference(s) to {missing}, which no note defines "
             f"— renumbering would point them somewhere else again")
-    mapping = {old: new for new, old in enumerate(referenced, start=1)}
+    # The first id the separators leave free: 1 when they are -1 and 0,
+    # as Word usually numbers them, 2 behind a continuationNotice at 1.
+    first = 1 + max([0] + [int(m.group(1)) for m in _FN_EL_RE.finditer(notes)
+                           if _is_reserved(m)])
+    mapping = {old: new for new, old in enumerate(referenced, start=first)}
     moved = {old: new for old, new in mapping.items() if old != new}
     if not moved:
         return {}
@@ -529,10 +542,8 @@ def footnotes(parts: Parts) -> dict[int, int]:
 
     elements = list(_FN_EL_RE.finditer(notes))
     if elements:
-        reserved = [m.group(0) for m in elements
-                    if int(m.group(1)) in _RESERVED]
-        real = sorted((m for m in elements
-                       if int(m.group(1)) not in _RESERVED),
+        reserved = [m.group(0) for m in elements if _is_reserved(m)]
+        real = sorted((m for m in elements if not _is_reserved(m)),
                       key=lambda m: int(m.group(1)))
         head = notes[:elements[0].start()]
         tail = notes[elements[-1].end():]

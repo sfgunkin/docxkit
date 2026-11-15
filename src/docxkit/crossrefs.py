@@ -60,6 +60,7 @@ from ._xml import (
     T_RE,
     WT_RE,
     field_anchors,
+    hoist_links_out_of_tracked,
     live_properties,
     own_properties,
     run_open_before,
@@ -988,6 +989,9 @@ def link(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     for name in sorted(set(mention_re.findall(xml))):
         if name not in named:
             report.no_caption.append(name)
+    # a mention in tracked text was linked where it stood, inside the
+    # `w:ins`; turn each such link inside out (backlog S2, 2026-11-15)
+    xml, _hoisted = hoist_links_out_of_tracked(xml, other_parts)
     return xml, report
 
 
@@ -1190,7 +1194,7 @@ def _mention_offsets(xml: str) -> dict[str, list[int]]:
 
 
 def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
-              other_parts: Sequence[str] = (),
+              other_parts: Sequence[str] = (), rehome: bool = True,
               ) -> tuple[str, dict[str, int]]:
     """Forward-link every exhibit mention :func:`link` left plain.
 
@@ -1219,6 +1223,12 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     — the earlier mention is a REF the helper cannot wrap — is not made.
     Pass `other_parts` (footnotes, endnotes) so the rebuilt bookmark's
     id is free document-wide.
+
+    ``rehome=False`` is for a paper that PLACED its markers: the move is
+    reported, as ``"<key>txt not moved: placed"``, and not made. On
+    LFP_Inflows the author chose Table 3's back-link on a later mention,
+    and the re-homing took it to a paragraph added afterwards; the paper
+    wrote its own forward-link pass to keep it (backlog S3, 2026-11-15).
 
     Returns ``(xml, {caption name: mentions linked})``, with a
     ``"<key>txt moved"`` entry for each marker re-homed.
@@ -1268,15 +1278,27 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
         if not todo:
             continue
         for at, end, anchor in sorted(todo, reverse=True):
-            para = wrap_visible_span(para, at, end, anchor)
+            # a mention the link cannot wrap — one crossing the edge of a
+            # tracked change, or starting inside an equation — is counted
+            # and left plain, never written half inside an element
+            try:
+                para = wrap_visible_span(para, at, end, anchor)
+            except AnchorError:
+                refused = f"{anchor} not linked"
+                counts[refused] = counts.get(refused, 0) + 1
+                continue
             counts[anchor] = counts.get(anchor, 0) + 1
         xml = xml[:pm.start()] + para + xml[pm.end():]
-    return _rehome_markers(xml, captions, other_parts, counts), counts
+    # before the re-homing: a marker is rebuilt around the first link,
+    # and around a link still inside a `w:ins` it would be inside it too
+    xml, _hoisted = hoist_links_out_of_tracked(xml, other_parts)
+    return (_rehome_markers(xml, captions, other_parts, counts,
+                            move=rehome), counts)
 
 
 def _rehome_markers(xml: str, captions: Sequence[Caption],
                     other_parts: Sequence[str],
-                    counts: dict[str, int]) -> str:
+                    counts: dict[str, int], *, move: bool = True) -> str:
     """Each `<key>txt` marker that sits past an earlier mention, rebuilt
     around the first link to its caption. See :func:`link_more`."""
     for cap in captions:
@@ -1299,6 +1321,9 @@ def _rehome_markers(xml: str, captions: Sequence[Caption],
         landed = _where([m.start() for m in PARA_RE.finditer(trial)],
                         _bookmark_offsets(trial)[cap.mention_name])
         if landed == home:
+            continue
+        if not move:
+            counts[f"{cap.mention_name} not moved: placed"] = 1
             continue
         xml = trial
         key = f"{cap.mention_name} moved"

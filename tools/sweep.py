@@ -70,6 +70,7 @@ from docxkit import (
     equations,
     figures,
     footnotes,
+    house,
     hygiene,
     lint,
     refstyle,
@@ -145,7 +146,30 @@ def routines(blob: bytes) -> dict[str, Routine]:
         # about this number being one.
         "footnotes.fonts": lambda: len(footnotes.fonts(foot)) if foot else 0,
         "hygiene.strip": lambda: len(hygiene.strip_parts(dict(raw))),
+        # The house typography audit, and what it had to read. Absent
+        # until 2026-11-14, so a change to it could not be measured on the
+        # corpus: a fix that ADDED 93 findings in 22 of 300 sampled
+        # documents went through a scratch script (BACKLOG S4).
+        "house.audit": lambda: len(house.audit(dict(raw))),
+        "house.scope": lambda: _scope_size(dict(raw)),
+        # Two readers `tools/oracle_reach.py` found no oracle running
+        # (2026-11-14): whether a redline can be commented, and the
+        # characterisation a batch reads first.
+        "comments.scaffold": lambda: comments.has_scaffold(dict(raw)),
+        "probe": lambda: _probe_size(dict(raw)),
     }
+
+
+def _probe_size(raw: dict[str, bytes]) -> int:
+    from docxkit.probe import probe  # noqa: PLC0415
+    p = probe("sweep.docx", parts=raw)
+    return (len(p.exhibits) + len(p.bookmarks) + len(p.sections)
+            + sum(p.element_links.values()) + sum(p.field_links.values()))
+
+
+def _scope_size(raw: dict[str, bytes]) -> int:
+    s = house.scope(raw)
+    return s.captions + s.notes + s.numbered_equations
 
 
 def sweep(paths: list[Path], slow_ms: float) -> int:
@@ -282,7 +306,7 @@ def report(failures, skipped, anomalies, timings, results, *,
 #: The audits whose findings are recorded. Each returns (kind, subject)
 #: pairs; `subject` is what the finding is ABOUT — a bookmark, a
 #: citation — so the same finding at both versions is the same pair.
-AUDITS = ("citations", "crossrefs", "lint")
+AUDITS = ("citations", "crossrefs", "lint", "house")
 
 
 def findings_of(blob: bytes) -> dict[str, list[list[str]]]:
@@ -312,7 +336,23 @@ def findings_of(blob: bytes) -> dict[str, list[list[str]]]:
                             for kind, subjects in xref.items()
                             if kind != "linked" for subject in subjects),
         "lint": sorted(["LINT", m] for m in lint.lint_parts(dict(raw))),
+        # A house finding names its paragraph first ("caption 'Table 1':
+        # aligned both, not left"), so what follows is the KIND, and
+        # `--diff` can say which kind moved, not only how many.
+        "house": sorted(_house_finding(m) for m in house.audit(dict(raw))),
     }
+
+
+_DIGITS_RE = re.compile(r"[0-9]+(?:[.][0-9]+)?")
+
+
+def _house_finding(message: str) -> list[str]:
+    """``["HOUSE <kind>", "<subject>"]`` for one `house.audit` sentence."""
+    subject, sep, rest = message.partition("': ")
+    if not sep:
+        return ["HOUSE", message]
+    kind = _DIGITS_RE.sub("N", rest.split(" — ")[0])
+    return [f"HOUSE {kind}", subject + "'"]
 
 
 def _findings_job(path: str) -> tuple[str, dict[str, list[list[str]]] | str]:

@@ -1136,6 +1136,13 @@ NOT_EXERCISED: dict[tuple[str, str], str] = {
         "name reader: counts a note's carriers so a note holding one is "
         "never cut as a shell; an empty link or table counted can only "
         "KEEP a note (none is kept so in 2,954 corpus packages)"),
+    ("_xml.py",
+     r'<w:(?:ins|del|moveTo|moveFrom|rPrChange|pPrChange|sectPrChange|'
+     r'tblPrChange|trPrChange|tcPrChange|tblGridChange|numberingChange)\b'
+     r'[^>]*?\bw:id="(\d+)"'): (
+        "attribute reader: `hoist_links_out_of_tracked` takes the highest "
+        "revision id in the package, and a paragraph mark's EMPTY "
+        "`<w:ins w:id=…/>` holds one that a fresh id must not repeat"),
     ("refstyle.py", r"<w:p[\s/]"): (
         "name reader: `refile` names an EMPTY paragraph in the gap above a "
         "reference, and `<w:p/>` is exactly what it is written to find"),

@@ -30,6 +30,7 @@ r"""``docxkit`` command line — the one-off jobs, without a throwaway script.
     docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
     docxkit sections PAPER.docx
     docxkit pages PAPER.docx [--sheets] [--check] [--expect-sheets N]
+    docxkit render-diff A.docx B.docx [--dpi 60] [--out DIR] [--pdfs]
 
 and the single-file revision protocol, which finds its own paths in
 ``revision/paper.toml`` and so takes almost no arguments::
@@ -1404,6 +1405,21 @@ def cmd_fit(args: argparse.Namespace) -> int:
               "one that decays. Aging_Well's Table 1\n  was hand-typed and "
               "dropped in whole, so no build ever styled it.")
     return 2 if not report.ok else 0
+
+
+def cmd_render_diff(args: argparse.Namespace) -> int:
+    """Two renders page by page; exit 0 only when every sheet matches.
+
+    The rebuild that should change nothing: `compare` can be clean while
+    a property it does not read moves a page (bih, 2026-11-09).
+    """
+    from .pages import compare_renders, render_diff
+    if args.pdfs:
+        diff = compare_renders(args.a, args.b, dpi=args.dpi, out=args.out)
+    else:
+        diff = render_diff(args.a, args.b, dpi=args.dpi, out=args.out)
+    print(diff.format())
+    return 0 if diff.same else 1
 
 
 def cmd_pages(args: argparse.Namespace) -> int:
@@ -2846,6 +2862,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-pdf", metavar="PATH",
                    help="keep the render instead of using a temp file")
     p.set_defaults(fn=cmd_pages)
+
+    p = sub.add_parser(
+        "render-diff",
+        help="two documents rendered through Word, compared sheet by "
+             "sheet as pixels; exit 1 on any difference")
+    p.add_argument("a")
+    p.add_argument("b")
+    p.add_argument("--dpi", type=int, default=60,
+                   help="render resolution for the comparison (60)")
+    p.add_argument("--out", metavar="DIR",
+                   help="write both sides of every differing sheet here")
+    p.add_argument("--pdfs", action="store_true",
+                   help="A and B are PDFs already rendered; skip Word")
+    p.set_defaults(fn=cmd_render_diff)
 
     # The defaults are `repack.DEFAULT_THRESHOLD` and
     # `repack.DEFAULT_MAX_CANDIDATES`, restated: importing them here

@@ -20,6 +20,7 @@ from functools import lru_cache
 from ._xml import (
     RUN_OPEN_RE,
     RUN_RE,
+    balanced,
     escape,
     live_properties,
     own_properties,
@@ -959,6 +960,20 @@ def wrap_visible_span(para_xml: str, at: int, end: int, anchor: str, *,
         before = ""
     if end >= le and not run_holds_content(after):
         after = ""
+
+    # A span that crosses the EDGE of a container — into or out of a
+    # tracked `w:ins`, a `w:smartTag`, a field's `w:fldSimple` — carries
+    # half of it into the link: the hyperlink opened in one element and
+    # closed in another, which is not XML. `link_more` and `link_rest`
+    # wrote that on corpus redlines and nothing refused it until a later
+    # pass could not parse the paragraph (writer oracle, 2026-11-15).
+    # A span wholly INSIDE a tracked change is fine here: the writers
+    # turn that link inside out (`_xml.hoist_links_out_of_tracked`).
+    if not balanced(inner):
+        raise AnchorError(
+            f"wrap_visible_span: span [{at}, {end}) crosses the edge of an "
+            f"element — a tracked change, say — and a link cannot "
+            f"({visible_text(para_xml)[at:end]!r})")
 
     linked = f'<w:hyperlink w:anchor="{escape(anchor)}">{inner}</w:hyperlink>'
     return (para_xml[:first.start()] + before + linked + after

@@ -3149,3 +3149,145 @@ def test_a_marker_that_lands_where_it_STARTED_does_not_end_the_walk():
 
     assert counts == {"Table5": 1, "Table5txt moved": 1}, counts
     assert out.count('w:name="Figure2txt"') == 1, "left where it started"
+
+
+# --- a mention in TRACKED text (backlog S2, LFP_Inflows 2026-11-15) -------
+#
+# The paragraph mentioning Figure 5 had been moved as a tracked deletion
+# plus insertion, and `link` wrapped the mention where it stood: inside
+# the `w:ins`, which holds runs and not hyperlinks. Word repairs such a
+# file, and no gate saw it.
+
+_INS = '<w:ins w:id="7" w:author="A" w:date="2026-11-01T00:00:00Z">'
+
+
+def _lint(xml: str) -> list[str]:
+    from lxml import etree
+
+    from docxkit.lint import lint
+    ns = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/'
+          '2006/main"')
+    return lint(etree.fromstring(
+        xml.replace("<w:document>", f"<w:document {ns}>", 1).encode()))
+
+
+def _rejected(xml: str) -> str:
+    """The visible text once every insertion is rejected."""
+    return _visible(re.sub(r"<w:ins\b[^>]*>.*?</w:ins>", "", xml,
+                           flags=re.DOTALL))
+
+
+def test_a_mention_in_a_tracked_INSERTION_is_linked_around_the_change():
+    xml = doc(
+        para(run("Before. "),
+             _INS + run("As Figure 5 shows, it grew.") + "</w:ins>"),
+        para(run("Figure 5. Participation")),
+    )
+
+    out, report = crossrefs.link(xml)
+
+    assert report.linked == ["Figure5"]
+    assert _lint(out) == [], _lint(out)
+    link = re.search(r'<w:hyperlink w:anchor="Figure5">(.*?)</w:hyperlink>',
+                     out, re.DOTALL)
+    assert link is not None and link.group(1).startswith("<w:ins "), out
+    assert out.count('w:author="A"') == 3, "before, the link, after"
+    assert _visible(out) == _visible(xml)
+    assert _rejected(out) == _rejected(xml)
+    _parses(out)
+
+
+def test_the_split_change_takes_ids_free_across_the_PACKAGE():
+    from docxkit._xml import hoist_links_out_of_tracked
+    body = doc(para(
+        _INS + run("one ") + '<w:hyperlink w:anchor="X">' + run("two")
+        + "</w:hyperlink>" + run(" three ") + '<w:hyperlink w:anchor="Y">'
+        + run("four") + "</w:hyperlink>" + run(" five") + "</w:ins>"))
+    notes = '<w:ins w:id="40" w:author="B" w:date="2026-11-01T00:00:00Z"/>'
+
+    out, hoisted = hoist_links_out_of_tracked(body, [notes])
+
+    assert hoisted == 2
+    assert re.findall(r'<w:ins w:id="(\d+)"', out) == [
+        "7", "41", "42", "43", "44"]
+    assert _lint(out) == []
+    assert _visible(out) == "one two three four five"
+    assert hoist_links_out_of_tracked(out, [notes]) == (out, 0), \
+        "a second pass finds nothing"
+
+
+def test_link_more_links_a_tracked_mention_around_the_change_too():
+    xml = doc(
+        _mention("Figure5", "Figure 5", mark="Figure5txt"),
+        para(_INS + run("Again Figure 5 grew.") + "</w:ins>"),
+        para('<w:bookmarkStart w:id="1" w:name="Figure5"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Figure 5. Participation")),
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Figure5": 1}
+    assert _lint(out) == [], _lint(out)
+    assert _rejected(out) == _rejected(xml)
+
+
+def test_lint_FAILS_a_hyperlink_inside_a_tracked_change():
+    xml = doc(para(_INS + '<w:hyperlink w:anchor="X">' + run("x")
+                   + "</w:hyperlink></w:ins>"))
+
+    assert _lint(xml) == ["w:hyperlink inside w:ins — the link must wrap "
+                          "the tracked change, not sit in it"]
+
+
+def test_a_mention_CROSSING_the_edge_of_a_tracked_change_is_left_plain():
+    """"Figure" plain and " 3" inserted: the link would open outside the
+    `w:ins` and close inside it. `link_more` wrote exactly that on a
+    Month_of_birth redline, which no later pass could parse (writer
+    oracle, 2026-11-15). Now the wrap refuses and the count says so."""
+    from docxkit.citations import wrap_visible_span
+    from docxkit.errors import AnchorError
+
+    crossing = para(run("See Figure"), _INS + run(" 3 here.") + "</w:ins>")
+    with pytest.raises(AnchorError, match="crosses the edge"):
+        wrap_visible_span(crossing, 4, 12, "Figure3")
+
+    xml = doc(
+        _mention("Figure3", "Figure 3", mark="Figure3txt"),
+        crossing,
+        para('<w:bookmarkStart w:id="1" w:name="Figure3"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Figure 3. Participation")),
+    )
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Figure3 not linked": 1}
+    assert out == xml
+    assert _lint(out) == []
+
+
+def test_the_hoist_leaves_markup_that_does_not_CLOSE_alone():
+    from docxkit._xml import hoist_links_out_of_tracked
+    broken = ("<w:p><w:hyperlink w:anchor=\"X\">" + run("a") + _INS
+              + run("b") + "</w:hyperlink>" + run("c") + "</w:ins></w:p>")
+
+    assert hoist_links_out_of_tracked(broken) == (broken, 0)
+
+
+# --- a PLACED marker stays where the author put it (backlog S3) ----------
+
+def test_rehome_False_reports_the_move_and_does_not_make_it():
+    """LFP_Inflows: the author chose Table 3's back-link on a later
+    mention, and `link_more` moved it to a paragraph added afterwards."""
+    xml = doc(
+        para(run("Figure 2 shows the framework.")),
+        para(run("Intervening prose.")),
+        _mention("Figure2", "Figure 2", mark="Figure2txt"),
+        CAPTION2,
+    )
+
+    out, counts = crossrefs.link_more(xml, rehome=False)
+
+    assert counts == {"Figure2": 1, "Figure2txt not moved: placed": 1}
+    first = paragraph_holding(out, "shows the framework")
+    assert 'w:anchor="Figure2"' in first, "the mention is still linked"
+    assert 'w:name="Figure2txt"' not in first
+    assert out.count('w:name="Figure2txt"') == 1

@@ -499,3 +499,183 @@ def test_a_paper_that_spaces_its_own_way_turns_the_lead_in_rule_off():
     assert house.apply(parts, rules).lead_ins == 0
     assert house.audit(parts, rules) == []
     assert 'w:after="160"' in holding(parts, "defined as follows")
+
+
+# --- the figure size (BACKLOG S4, 2026-11-12) --------------------------------
+
+_EMU = 914400
+_WP = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/'
+       'wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/'
+       'drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/'
+       'officeDocument/2006/relationships"')
+
+
+def _png(width: int, height: int) -> bytes:
+    """A PNG header: all `figures._png_size` reads."""
+    import struct
+    return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR"
+            + struct.pack(">II", width, height) + b"\x08\x02\x00\x00\x00")
+
+
+def _figure(rid: str, w_in: float, h_in: float) -> str:
+    cx, cy = round(w_in * _EMU), round(h_in * _EMU)
+    return (f'<w:p><w:r><w:drawing><wp:inline {_WP}>'
+            f'<wp:extent cx="{cx}" cy="{cy}"/><a:graphic><a:graphicData>'
+            f'<a:blip r:embed="{rid}"/><a:xfrm><a:ext cx="{cx}" cy="{cy}"/>'
+            "</a:xfrm></a:graphicData></a:graphic></wp:inline></w:drawing>"
+            "</w:r></w:p>")
+
+
+def _figures_paper(*figures: tuple[str, float, float, tuple[int, int]],
+                   in_table: bool = False) -> dict[str, bytes]:
+    """`(rId, placed width, placed height, image pixels)` per figure."""
+    body = "".join(_figure(rid, w, h) for rid, w, h, _px in figures)
+    if in_table:
+        body = f"<w:tbl><w:tr><w:tc>{body}<w:p/></w:tc></w:tr></w:tbl>"
+    parts = paper(body)
+    rels = "".join(
+        f'<Relationship Id="{rid}" Type="image" Target="media/{rid}.png"/>'
+        for rid, *_ in figures)
+    parts["word/_rels/document.xml.rels"] = (
+        f"<Relationships>{rels}</Relationships>").encode()
+    for rid, _w, _h, (pw, ph) in figures:
+        parts[f"word/media/{rid}.png"] = _png(pw, ph)
+    return parts
+
+
+def _extents(parts: dict[str, bytes]) -> list[tuple[int, int]]:
+    xml = parts[DOCUMENT].decode()
+    return [(int(a), int(b)) for a, b in
+            re.findall(r'<wp:extent cx="(\d+)" cy="(\d+)"/>', xml)]
+
+
+#: The paper that opts in: the house figure size is OFF by default.
+ON = house.Rules(figure_size=house.FIGURE_SIZE)
+
+
+def _figure_findings(parts: dict[str, bytes],
+                     rules: house.Rules = ON) -> list[str]:
+    return [f for f in house.audit(parts, rules) if f.startswith("figure ")]
+
+
+def test_a_3_by_2_figure_placed_off_size_is_found_and_set_to_6_by_4():
+    """LFP_Inflows_ECA: "Make figure sizes 4x6, this should be in house
+    style." A figure at 5.5 in passed `house` with 0 findings."""
+    parts = _figures_paper(("rId7", 5.5, 3.67, (1500, 1000)),
+                           ("rId8", 6.0, 4.0, (900, 600)),
+                           ("rId9", 6.5, 4.33, (1800, 1200)))
+
+    assert _figure_findings(parts) == [
+        "figure 1 (rId7.png): placed at 5.50 x 3.67 in, not 6 x 4 in",
+        "figure 3 (rId9.png): placed at 6.50 x 4.33 in, not 6 x 4 in"]
+
+    report = house.apply(parts, ON)
+
+    assert report.figures == 2
+    assert _extents(parts) == [(6 * _EMU, 4 * _EMU)] * 3
+    xml = parts[DOCUMENT].decode()
+    assert xml.count(f'<a:ext cx="{6 * _EMU}" cy="{4 * _EMU}"/>') == 3
+    assert _figure_findings(parts) == []
+    well_formed(parts)
+
+
+def test_an_image_NOT_3_by_2_is_reported_and_never_stretched():
+    parts = _figures_paper(("rId7", 5.0, 3.75, (1600, 1200)))   # 4:3
+
+    (finding,) = _figure_findings(parts)
+    assert "1600 x 1200 px, not 6:4" in finding and "re-export" in finding
+
+    before = _extents(parts)
+    assert house.apply(parts, ON).figures == 0
+    assert _extents(parts) == before
+
+
+def test_a_figure_inside_a_TABLE_is_a_panel_and_left_alone():
+    parts = _figures_paper(("rId7", 3.0, 2.0, (900, 600)), in_table=True)
+
+    assert _figure_findings(parts) == []
+    assert house.apply(parts, ON).figures == 0
+
+
+def test_the_figure_size_is_OFF_unless_a_paper_opts_in():
+    """On 170 corpus documents the rule reports 448 figures, 404 of them
+    images that are not 3:2 at all, and paper scripts assert the audit
+    is empty after a round: on by default, every older paper's next run
+    would fail and have its figures resized."""
+    parts = _figures_paper(("rId7", 5.5, 3.67, (1500, 1000)))
+
+    assert house.HOUSE.figure_size is None
+    assert _figure_findings(parts, house.HOUSE) == []
+    assert house.apply(parts).figures == 0
+    assert house.FIGURE_SIZE == (6.0, 4.0)
+
+
+def _cropped(parts: dict[str, bytes], src_rect: str) -> dict[str, bytes]:
+    xml = parts[DOCUMENT].decode()
+    xml = re.sub(r"(<a:blip [^>]*/>)", rf"\1{src_rect}", xml, count=1)
+    parts[DOCUMENT] = xml.encode()
+    return parts
+
+
+def test_the_aspect_is_the_CROPPED_picture_s_not_the_file_s():
+    """`a:srcRect` crops the picture Word shows. A 3:2 file cropped to
+    2:1 passed the aspect check and was stretched to 6 x 4 in; a 4:3
+    file cropped to 3:2 was told to re-export (review, 2026-11-15)."""
+    shows_2_by_1 = _cropped(_figures_paper(("rId7", 5.0, 2.5, (1500, 1000))),
+                            '<a:srcRect b="25000"/>')
+    (finding,) = _figure_findings(shows_2_by_1)
+    assert "shows 1500 x 750 px" in finding and "re-export" in finding
+    assert house.apply(shows_2_by_1, ON).figures == 0
+
+    shows_3_by_2 = _cropped(_figures_paper(("rId7", 5.0, 3.33, (1600, 1200))),
+                            '<a:srcRect t="5556" b="5555"/>')
+    assert house.apply(shows_3_by_2, ON).figures == 1
+    assert _extents(shows_3_by_2) == [(6 * _EMU, 4 * _EMU)]
+
+
+def test_a_picture_inside_a_floating_TEXT_BOX_is_left_alone():
+    """A text box's content is `w:txbxContent`, and its pictures are
+    ordinary `wp:inline` drawings: resized to 6 x 4 in, one overflows
+    the box it sits in (review, 2026-11-15)."""
+    parts = _figures_paper(("rId7", 3.0, 2.0, (900, 600)))
+    xml = parts[DOCUMENT].decode()
+    fig = _figure("rId7", 3.0, 2.0)
+    box = (f"<w:p><w:r><w:drawing><wp:anchor {_WP}><a:graphic>"
+           f"<a:graphicData><w:txbxContent>{fig}</w:txbxContent>"
+           "</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>")
+    parts[DOCUMENT] = xml.replace(fig, box).encode()
+
+    assert _figure_findings(parts) == []
+    assert house.apply(parts, ON).figures == 0
+
+
+def test_an_image_whose_header_says_ZERO_high_is_a_finding_not_a_crash():
+    """A JPEG may state height 0 and defer it to a DNL marker; dividing
+    by it raised out of `apply` and `audit` for the whole document."""
+    parts = _figures_paper(("rId7", 5.0, 3.0, (1500, 0)))
+
+    (finding,) = _figure_findings(parts)
+    assert "cannot be read" in finding
+    assert house.apply(parts, ON).figures == 0
+
+
+def test_a_lead_in_s_MARK_character_spacing_is_not_its_paragraph_spacing():
+    """The mark's `w:rPr` holds a `w:spacing` too, CHARACTER spacing.
+    Read as the paragraph's, its `w:val` was carried up into
+    `<w:spacing w:val="-2" w:after="80"/>`, which the schema refuses —
+    and the mark's tracked-change snapshot counted as well once
+    `live_properties` stopped cutting inside it (review, 2026-11-15)."""
+    from docxkit._xml import own_child, own_properties
+
+    mark = ('<w:rPr><w:spacing w:val="-2"/><w:rPrChange w:id="9" '
+            'w:author="A" w:date="2026-01-01T00:00:00Z"><w:rPr>'
+            '<w:spacing w:val="4"/></w:rPr></w:rPrChange></w:rPr>')
+    lead = f'<w:p><w:pPr>{mark}</w:pPr>{run("Consider:")}</w:p>'
+    parts = paper(lead, para(M))
+
+    assert house.apply(parts).lead_ins == 1
+    ppr = own_properties(holding(parts, "Consider:"), "pPr")
+    assert ppr is not None
+    assert own_child(ppr[2], "spacing") == '<w:spacing w:after="80"/>'
+    assert mark in ppr[2]                       # the mark is untouched
+    well_formed(parts)

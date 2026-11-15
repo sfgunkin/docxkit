@@ -5,6 +5,7 @@ is part of :mod:`docxkit.revision`; import from there.
 """
 from __future__ import annotations
 
+import html
 import re
 import unicodedata
 from collections import Counter
@@ -288,10 +289,26 @@ def _link_changes(working: Parts, prev: Parts,
     was, now = _links(prev), _links(working)
     gained = Counter(now - was)
     still_linked = {anchor for anchor, _label in now}
-    # Do the link's WORDS survive somewhere in the hand-back? That is
-    # what separates the two causes a lost link has, and the report
-    # asserted one of them for both. See `losses` for the measurement.
-    surviving = _visible(working)
+    # Do the link's WORDS survive in the hand-back? That is what separates
+    # the two causes a lost link has, and the report asserted one of them
+    # for both. See `losses` for the measurement.
+    #
+    # Asked of PLAIN text, by count: a link Word ate leaves its label as
+    # one more unlinked occurrence than the previous round had, and a
+    # mention the author deleted leaves none. "Is the label anywhere?"
+    # answered yes for every "Table 1" a paper mentions more than once:
+    # on Month_of_birth four links whose sentences the author deleted
+    # were listed as "the words SURVIVE", pointing at a repair that
+    # linked nothing (2026-11-12). Each lost link spends one. Counted as a
+    # whole label: a substring count read every "Table 12" as one more
+    # "Table 1", and a new mention of another table revived the loss.
+    plain_was, plain_now = _plain(prev), _plain(working)
+    spare: Counter[str] = Counter()
+    for _anchor, label in (was - now).elements():
+        key = label.strip()
+        if key and key not in spare:
+            spare[key] = (_occurrences(plain_now, key)
+                          - _occurrences(plain_was, key))
     lost: list[Loss] = []
     relabelled: list[Relabelled] = []
     for anchor, label in sorted((was - now).elements()):
@@ -301,21 +318,54 @@ def _link_changes(working: Parts, prev: Parts,
             gained[(anchor, fresh[0])] -= 1
             relabelled.append(Relabelled(anchor, label, fresh[0]))
         else:
+            key = label.strip()
+            kept = bool(key) and spare[key] > 0
+            if kept:
+                spare[key] -= 1
             lost.append(Loss("link", f"{anchor} ({label[:40]})",
-                             words=bool(label.strip())
-                             and label.strip() in surviving))
+                             words=kept))
     return lost, relabelled
 
 
-def _visible(parts: Parts) -> str:
-    """Every word a reader can see, all text parts, one stream.
+def _plain(parts: Parts) -> str:
+    """Every word a reader can see that is NOT inside a link, one stream.
 
-    Read once per hand-back and searched per loss: a manuscript has one
-    or two dozen losses at most and re-reading the body for each was
-    measurable on nothing, but the stream is the honest object — a
-    citation moved from the body into a footnote has not been deleted.
+    All text parts, a paragraph to a line: a citation moved from the
+    body into a footnote has not been deleted. Linked words are masked,
+    because a label that is still linked elsewhere is not the one that
+    lost its link. ONLY links: a REF or a Zotero/EndNote field shows
+    words a reader sees, and `citations.masked_visible_text` masks every
+    field (it is asking where a link may go), so a label surviving in
+    one read as deleted.
     """
-    return "\n".join(visible_text(xml) for _name, xml in text_parts(parts))
+    from .._xml import (
+        _FIELD_RE,
+        _HYPERLINK_EL_RE,
+        INSTR_RE,
+        PARA_RE,
+        T_RE,
+        span_holding,
+    )
+
+    def plain(para: str) -> str:
+        links = [m.span() for m in _HYPERLINK_EL_RE.finditer(para)]
+        links += [m.span() for m in _FIELD_RE.finditer(para)
+                  if "HYPERLINK" in "".join(INSTR_RE.findall(m.group(1)))]
+        return "".join(
+            "\x00" * len(text) if span_holding(t.start(), links) is not None
+            else text
+            for t in T_RE.finditer(para)
+            for text in [html.unescape(t.group(1))])
+
+    return "\n".join(plain(m.group(0))
+                     for _name, xml in text_parts(parts)
+                     for m in PARA_RE.finditer(xml))
+
+
+def _occurrences(text: str, label: str) -> int:
+    """How often `label` stands in `text` as itself, not inside a longer
+    word or number: "Table 1" is not in "Table 12" or "Table 1a"."""
+    return len(re.findall(rf"(?<!\w){re.escape(label)}(?!\w)", text))
 
 
 def relabelled_links(working: Parts,

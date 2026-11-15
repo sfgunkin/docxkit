@@ -45,7 +45,7 @@ import shutil
 import tempfile
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import pairwise
 from os.path import commonprefix
 from pathlib import Path
@@ -54,10 +54,10 @@ from typing import Any, NamedTuple
 from ._xml import Parts
 from .errors import PackageError
 
-__all__ = ["Numbering", "PackageError", "Sheet", "caption_problems",
-           "number", "page_texts", "problems",
-           "read_pdf", "read_texts", "render_anchors", "sheets",
-           "sheets_and_texts"]
+__all__ = ["Numbering", "PackageError", "RenderDiff", "Sheet",
+           "caption_problems", "compare_renders", "number", "page_texts",
+           "problems", "read_pdf", "read_texts", "render_anchors",
+           "render_diff", "sheets", "sheets_and_texts"]
 
 #: How much of a sheet is footer, and how much is header. A page number
 #: printed by Word sits inside the margin band; 12 % of the height is
@@ -275,6 +275,87 @@ def read_texts(pdf: str | Path) -> list[str]:
     pymupdf = _import_pymupdf()
     with pymupdf.open(str(pdf)) as doc:
         return [page.get_text() for page in doc]
+
+
+@dataclass
+class RenderDiff:
+    """Two renders, page by page: what :func:`render_diff` found."""
+
+    pages_a: int
+    pages_b: int
+    #: 1-based sheet numbers whose pixels differ, among the sheets both have
+    differing: list[int] = field(default_factory=list)
+    #: sheet -> the share of its pixel bytes that differ, 0..1
+    share: dict[int, float] = field(default_factory=dict)
+    #: the PNGs written for the differing sheets, both sides of each
+    images: list[Path] = field(default_factory=list)
+
+    @property
+    def same(self) -> bool:
+        return self.pages_a == self.pages_b and not self.differing
+
+    def format(self) -> str:
+        if self.same:
+            return f"SAME: {self.pages_a} sheet(s), every one identical"
+        lines = []
+        if self.pages_a != self.pages_b:
+            lines.append(f"DIFFERENT sheet counts: {self.pages_a} -> "
+                         f"{self.pages_b}")
+        if self.differing:
+            lines.append(f"{len(self.differing)} sheet(s) differ:")
+            lines += [f"  sheet {n}: {self.share[n]:.2%} of its pixels"
+                      for n in self.differing]
+        if self.images:
+            lines.append(f"  written: {self.images[0].parent}"
+                         f" ({len(self.images)} PNG)")
+        return "\n".join(lines)
+
+
+def compare_renders(pdf_a: str | Path, pdf_b: str | Path, *,
+                    dpi: int = 60, out: str | Path | None = None
+                    ) -> RenderDiff:
+    """Two PDFs page by page, as pixels: the sheet count, then each sheet.
+
+    The half of "verify a rebuild that should change nothing" that
+    `compare` cannot give: it does not read table properties, so a kept
+    theme `tblStyle` (bih, 2026-11-09) showed in no layer and only a
+    render could say whether a page moved — which took a hand-rolled
+    20-line script. Byte-identical pixmaps at `dpi` are the pass; a
+    differing sheet is written out as ``sheet-NNN-a.png`` and
+    ``-b.png`` under `out`, when given, for a reader to look at.
+    """
+    pymupdf = _import_pymupdf()
+    target = Path(out) if out is not None else None
+    with pymupdf.open(str(pdf_a)) as a, pymupdf.open(str(pdf_b)) as b:
+        diff = RenderDiff(len(a), len(b))
+        for i in range(min(len(a), len(b))):
+            pa, pb = a[i].get_pixmap(dpi=dpi), b[i].get_pixmap(dpi=dpi)
+            sa, sb = pa.samples, pb.samples
+            if (pa.width, pa.height) == (pb.width, pb.height) and sa == sb:
+                continue
+            n = i + 1
+            diff.differing.append(n)
+            # the SHAPE, not the buffer length: portrait 510x660 and
+            # landscape 660x510 hold the same number of samples, and a
+            # byte overlap between them means nothing
+            same_size = ((pa.width, pa.height, pa.n)
+                         == (pb.width, pb.height, pb.n))
+            diff.share[n] = (sum(x != y for x, y in zip(sa, sb, strict=True))
+                             / len(sa)) if same_size else 1.0
+            if target is not None:
+                target.mkdir(parents=True, exist_ok=True)
+                for side, pix in (("a", pa), ("b", pb)):
+                    path = target / f"sheet-{n:03}-{side}.png"
+                    pix.save(str(path))
+                    diff.images.append(path)
+    return diff
+
+
+def render_diff(docx_a: str | Path, docx_b: str | Path, *, dpi: int = 60,
+                out: str | Path | None = None) -> RenderDiff:
+    """Render both documents through Word and :func:`compare_renders` them."""
+    with _rendered(docx_a, None) as pdf_a, _rendered(docx_b, None) as pdf_b:
+        return compare_renders(pdf_a, pdf_b, dpi=dpi, out=out)
 
 
 def read_pdf(pdf: str | Path, *, band: float = _BAND) -> list[Sheet]:

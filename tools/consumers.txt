@@ -22,6 +22,7 @@ docxkit	is_locked
 docxkit	lint
 docxkit	package
 docxkit	para_slice
+docxkit	paragraph
 docxkit	paragraphs
 docxkit	placement
 docxkit	preserve_space
@@ -95,6 +96,7 @@ docxkit.citations	link_all
 docxkit.citations	link_in_para
 docxkit.citations	link_rest
 docxkit.citations	marker_bookmark
+docxkit.citations	masked_visible_text
 docxkit.citations	next_bookmark_id
 docxkit.citations	parse_reference
 docxkit.citations	remove_outer_field
@@ -105,6 +107,7 @@ docxkit.citations	rewrap_marker
 docxkit.citations	to_narrative
 docxkit.citations	to_parenthetical
 docxkit.citations	wrap_link_in_bookmark
+docxkit.citations	wrap_visible_span
 docxkit.comments	RevisionContext
 docxkit.comments	add_at
 docxkit.comments	annotate
@@ -190,6 +193,7 @@ docxkit.revision._config	load_paper
 docxkit.revision._promote	rescue_path
 docxkit.revisions	accept
 docxkit.revisions	counts
+docxkit.revisions	reject
 docxkit.save	edit_in_place
 docxkit.tables	Table
 docxkit.tables	_RUN_RE

@@ -123,6 +123,22 @@ def _run_level_in_block(root: _Element) -> list[str]:
             for child in parent if child.tag in _RUN_LEVEL_TAGS]
 
 
+def _link_in_revision(root: _Element) -> list[str]:
+    """Check 4b — a `w:hyperlink` INSIDE a run-level tracked change.
+
+    CT_RunTrackChange holds runs, not hyperlinks, and Word repairs the
+    file. `crossrefs.link` wrote one for a mention in tracked text and
+    every gate passed it (LFP_Inflows, 2026-11-15); the writers now turn
+    such a link inside out (`_xml.hoist_links_out_of_tracked`), and this
+    catches the shape whatever wrote it.
+    """
+    return [f"w:hyperlink inside w:{_local(rev.tag)} — the link must "
+            f"wrap the tracked change, not sit in it"
+            for rev in root.iter(W + "ins", W + "del", W + "moveTo",
+                                 W + "moveFrom")
+            for child in rev if child.tag == W + "hyperlink"]
+
+
 def _revision_findings(
         root: _Element, revision_ids: dict[str | None, int],
 ) -> tuple[list[str], list[str]]:
@@ -368,6 +384,7 @@ def lint(*roots: _Element | None) -> list[str]:
         problems += (_run_level_in_block(root)      # 1
                      + _stray_para_props(root)      # 1b
                      + c3 + _edge_whitespace(root) + c4   # 3, 3b, 4
+                     + _link_in_revision(root)      # 4b
                      + _child_order(root)           # 5, 6
                      + _empty_math(root)            # 7
                      + _repeated_props(root))       # 7b, 7c

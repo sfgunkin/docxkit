@@ -119,6 +119,7 @@ docxkit smarten PAPER.docx [--write]
 docxkit house PAPER.docx [--write]         # captions, notes, Abstract, numbered equations; exits 1 on a finding, 2 on nothing to read
 docxkit pdf PAPER.docx OUT.pdf [--pages 1-3]
 docxkit pages PAPER.docx [--sheets] [--check]
+docxkit render-diff A.docx B.docx [--dpi 60] [--out DIR] [--pdfs]   # sheet by sheet; exit 1 on any difference
 docxkit fit PAPER.docx [--render] [--check]
 docxkit repack PAPER.docx [--threshold 0.6] [--max-drift 1]
 docxkit sections PAPER.docx               # headings 1..N, every mention resolves; exit 1 on a breach

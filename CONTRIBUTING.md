@@ -86,10 +86,10 @@ Run it with `docxkit crossrefs PAPER.docx` (dry run) or `--write`.
 
 ## Testing
 
-Twelve gates, all of which must pass:
+Fifteen gates, all of which must pass:
 
 ```
-python tools/gates.py   # all twelve, in order, first failure stops
+python tools/gates.py   # all fifteen, in order, first failure stops
 ```
 
 Two of them can SKIP rather than pass: `sweep` needs a corpus of real
@@ -110,6 +110,7 @@ python tools/coverage_floor.py
 python tools/unrun_assertions.py   # which assertion did not RUN?
 python tools/verify_equivalents.py --anchors   # does every claim still name its line?
 python tools/api_check.py          # did this break the API the papers call?
+python tools/oracle_reach.py       # does an oracle reach what I changed?
 python -m deptry src tools         # does this repo declare what it imports?
 python tools/sweep.py              # needs DOCXKIT_CORPUS; skips without
 python tools/verify_committed.py   # HEAD, not the working copy
@@ -240,11 +241,23 @@ oracle against the commit before it:
 python tools/writer_oracle.py --base HEAD        # working tree vs HEAD
 ```
 
-It runs idempotent writes over the same strided corpus under both
+It runs the same writes over the same strided corpus under both
 versions and diffs the answers. Its first run found a regression
 committed that hour: a blank-cell fix that grew a run in EQUATION cells
 and printed the formula again as prose. A synthetic test of the reported
 case is not a measurement of the population it touches.
+
+It probes what `PROBES` names (`--probe NAME` for one): the cell and
+block writers, `house` and `house.apply`, the linkers (`crossrefs.link`
+and `link_more`, `citations.link_all` and `link_rest`), `renumber`,
+footnotes, comments, paragraphs and table layout. A writer with no probe
+gets a clean answer about writers you did not touch, which is how a
+batch changing three of them had to measure them by hand (2026-11-14).
+The `reach` gate (`tools/oracle_reach.py`) now refuses that: a changed
+function no probe or sweep routine reaches fails the chain and names the
+public writer to probe. Add the probe to `PROBES`: a function of the
+package returning `{key: answer}`, keyed finely enough that a diff names
+the table, caption or mention that moved.
 
 For a change to the accept/reject VIEWS (`revisions`), run the views'
 oracle the same way, and let Word judge the files that moved:
