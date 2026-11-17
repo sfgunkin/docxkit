@@ -94,6 +94,27 @@ _Protected = tuple[tuple[list[tuple[int, int]], bool, str], ...]
 #: and a `w:id`-second spelling has already read as zero once here.
 _NOTE_REF_RE = re.compile(r"<w:(footnote|endnote|comment)Reference\b[^>]*/>")
 _ID_ATTR_RE = re.compile(r'\bw:id="([^"]+)"')
+#: One property element inside a run's ``w:rPr``: its tag and attributes.
+_RPR_CHILD_RE = re.compile(r"<w:(\w+)\b([^>]*?)/?>")
+_ATTR_RE = re.compile(r'\s([\w:]+)="([^"]*)"')
+#: Properties that differ between runs which print alike, so a look that
+#: counted them would call two halves of one plain sentence different:
+#: proofing marks, and the complex-script mirrors of bold, italic and
+#: size, which govern Arabic or Hebrew glyphs and nothing in a Latin or
+#: Cyrillic run (`_compare_read.MATH_FMT_RE` leaves them out for the
+#: same reason).
+_LOOK_NOISE = frozenset({"lang", "noProof", "bCs", "iCs", "szCs"})
+#: The ``w:rFonts`` slots a Latin or Cyrillic character is set in. The
+#: others (eastAsia, cs and their themes, the hint) choose fonts for
+#: other scripts: across 60 manuscripts 26 boundaries "differed" only in
+#: ``w:eastAsiaTheme`` and printed alike (writer oracle, 2026-11-17).
+_LATIN_FONT_SLOTS = frozenset({"w:ascii", "w:hAnsi", "w:asciiTheme",
+                               "w:hAnsiTheme"})
+_OFF = frozenset({"0", "false", "off", "none", "baseline"})
+#: Explicit black and automatic colour print alike on a white page; 18
+#: oracle boundaries differed in nothing else (2026-11-17).
+_BLACK = frozenset({"auto", "000000"})
+_ON = frozenset({"1", "true", "on"})
 
 
 def _notes_in(run_xml: str) -> list[tuple[int, str]]:
@@ -532,10 +553,66 @@ def _refuse_crossed_note(runs: list[re.Match[str]],
                 f"on one side of the marker, or pass allow_notes=True.")
 
 
+def _look(run_xml: str) -> frozenset[str]:
+    """How a run PRINTS, as far as its own properties say: comparable.
+
+    The live ``w:rPr`` children (a tracked change's snapshot is history,
+    not the face), each as ``tag`` or ``tag attr=value…``, with what does
+    not change the page left out: proofing marks and the complex-script
+    mirrors (`_LOOK_NOISE`), the fonts ``rFonts`` names for other
+    scripts (`_LATIN_FONT_SLOTS` are kept), and a property switched
+    OFF, which prints the way an absent one does in a run whose style
+    does not switch it on. Without the styles part this is the STATED
+    look, which is all a paragraph fragment can tell, and the question
+    it answers is only "do these two runs differ" — a false "yes" costs
+    a narrower edit, never a wrong one.
+    """
+    found = own_properties(run_xml, "rPr")
+    if found is None:
+        return frozenset()
+    out: set[str] = set()
+    for m in _RPR_CHILD_RE.finditer(live_properties(found[2])):
+        tag = m.group(1)
+        if tag in _LOOK_NOISE:
+            continue
+        attrs = dict(_ATTR_RE.findall(m.group(2)))
+        if tag == "rFonts":
+            attrs = {k: v for k, v in attrs.items() if k in _LATIN_FONT_SLOTS}
+            if not attrs:
+                continue            # it named only other scripts' fonts
+        val = attrs.get("w:val")
+        if set(attrs) <= {"w:val"} and val is not None:
+            if val in _OFF or (tag == "color" and val in _BLACK):
+                continue
+            if val in _ON:
+                attrs = {}
+        out.add(" ".join([tag, *(f"{k}={v}" for k, v in sorted(
+            attrs.items()))]))
+    return frozenset(out)
+
+
+def _common_edges(seen: str, new: str) -> tuple[int, int]:
+    """How much `seen` and `new` share at the start and at the end.
+
+    The two never overlap: their sum is at most the shorter string, so
+    what is left between them is the change and nothing is counted twice
+    ("aXa" -> "aa" is one ``X`` deleted, not two a's kept).
+    """
+    limit = min(len(seen), len(new))
+    head = 0
+    while head < limit and seen[head] == new[head]:
+        head += 1
+    tail = 0
+    while tail < limit - head and seen[-1 - tail] == new[-1 - tail]:
+        tail += 1
+    return head, tail
+
+
 def replace_in_para(para_xml: str, old: str, new: str,
                     *, allow_hyperlink: bool = False,
                     grow_link_label: bool = False,
                     allow_notes: bool = False,
+                    allow_format_boundary: bool = False,
                     normalize: bool = False) -> str:
     """Run-aware text replace inside one paragraph.
 
@@ -603,6 +680,27 @@ def replace_in_para(para_xml: str, old: str, new: str,
     caller's own assertion passed because the words really were in that
     order. Anchor after the marker, or pass ``allow_notes=True``.
 
+    **A match that crosses a change of character formatting is narrowed
+    to the words that change.** Writing the whole replacement into the
+    run holding the start gives every new word that run's look: on
+    Parental Style (2026-11-16) a keywords line stored as a bold
+    ``Keywords:`` and a plain list was replaced whole, and the list came
+    out bold. The paragraph's text was right, `lint` was clean, and
+    `compare` reported no FORMAT change, because it compares formatting
+    only where the text is equal. So when the plain runs a match touches
+    do not all print alike (:func:`_look`), the words `new` shares with
+    the matched text at either end are left where they are and only the
+    middle is rewritten: there, ``Keywords: child discipline; `` and
+    ``; Central Asia`` stay untouched and the change lands in the plain
+    run. A middle that adds words and removes none goes into the run
+    before the insertion point (the one after it, when the insertion
+    opens the match), as typing there in Word would. A middle that still
+    crosses the boundary is refused — which run's look the new words
+    should take is the caller's call; split the replacement at the
+    boundary, or pass ``allow_format_boundary=True`` to give them the
+    look of the run they start in. A match in uniformly formatted runs
+    is written exactly as before.
+
     `normalize` matches through Word's typographic substitutions (curly vs
     straight quotes, dash variants) — see :func:`find_normalized`. `new` is
     written verbatim either way.
@@ -620,7 +718,8 @@ def replace_in_para(para_xml: str, old: str, new: str,
     return _rewrite_span(para_xml, runs, spans, (at, end), new,
                          allow_hyperlink=allow_hyperlink,
                          grow_link_label=grow_link_label,
-                         allow_notes=allow_notes)
+                         allow_notes=allow_notes,
+                         allow_format_boundary=allow_format_boundary)
 
 
 def _run_walk(para_xml: str) -> tuple[list[re.Match[str]],
@@ -667,7 +766,8 @@ def _field_instruction(para_xml: str, span: tuple[int, int]) -> str:
 def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
                   spans: list[tuple[int, int]], match: tuple[int, int],
                   new: str, *, allow_hyperlink: bool, grow_link_label: bool,
-                  allow_notes: bool, who: str = "replace_in_para") -> str:
+                  allow_notes: bool, allow_format_boundary: bool = False,
+                  who: str = "replace_in_para") -> str:
     """Write `new` over the EDITABLE span `match`: the write of
     :func:`replace_in_para`, addressed by offset rather than by text.
 
@@ -720,6 +820,17 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
         _refuse_crossed_empty_field(para_xml, runs, spans, (at, end), new,
                                     who=who)
     _refuse_crossed_maths(para_xml, runs, spans, (at, end), new, who=who)
+
+    # A change of character formatting inside the match: rewrite only
+    # the words that change (see `replace_in_para`). The guards above ran
+    # on the WHOLE match, so this narrowing never lets a refusal through.
+    narrowed = _narrow_to_change(
+        para_xml, runs, spans, (at, end), new,
+        plain=lambda i: not labels_a_link(i, runs[i]),
+        allow_format_boundary=allow_format_boundary, who=who)
+    if isinstance(narrowed, str):
+        return narrowed                 # a pure insertion, already written
+    (at, end), new = narrowed
 
     edits, first = [], True
     for idx, ((start, stop), run) in enumerate(zip(spans, runs, strict=True)):
@@ -782,6 +893,90 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
     for run, replacement in reversed(edits):
         out = out[:run.start()] + replacement + out[run.end():]
     return out
+
+
+def _narrow_to_change(para_xml: str, runs: list[re.Match[str]],
+                      spans: list[tuple[int, int]], match: tuple[int, int],
+                      new: str, *, plain: Callable[[int], bool],
+                      allow_format_boundary: bool, who: str,
+                      ) -> tuple[tuple[int, int], str] | str:
+    """The match and replacement to WRITE, when the match crosses a look.
+
+    `(match, new)` unchanged when the plain runs the match touches all
+    print alike — the ordinary case, written byte for byte as before.
+    Otherwise the words `new` shares with the matched text at either end
+    are dropped from both, and what is returned is the changed middle;
+    a middle that only ADDS words comes back already written (a ``str``,
+    the paragraph), by :func:`_insert_at`. A middle that still crosses
+    the change of look is refused unless `allow_format_boundary`.
+    `plain(i)` says the i-th run is prose, not a link's label: a label's
+    look is the link's, and the link guards answer for it.
+    """
+    at, end = match
+
+    def looks(span: tuple[int, int]) -> set[frozenset[str]]:
+        return {_look(runs[i].group(0))
+                for i, sp in enumerate(spans)
+                if sp[0] < sp[1] and overlaps(sp, span) and plain(i)}
+
+    if len(looks(match)) <= 1:
+        return match, new
+    text = "".join(visible_text(r.group(0)) for r in runs)
+    head, tail = _common_edges(text[at:end], new)
+    lo, hi = at + head, end - tail
+    words = new[head:len(new) - tail]
+    if lo == hi:
+        return _insert_at(para_xml, runs, spans, lo, words,
+                          before_first=lo == at, writable=plain, who=who)
+    crossed = looks((lo, hi))
+    if words and len(crossed) > 1 and not allow_format_boundary:
+        faces = " / ".join(sorted(", ".join(sorted(k)) or "plain"
+                                  for k in crossed))
+        raise AnchorError(
+            f"{who}: the words that change, {text[lo:hi][:40]!r}, run "
+            f"across a change of character formatting ({faces}) -- the "
+            f"replacement goes into the run holding their start, so "
+            f"{words[:40]!r} would all take that run's look, which no "
+            f"text diff shows and compare's FORMAT layer does not read. "
+            f"Split the replacement at the boundary, or pass "
+            f"allow_format_boundary=True.")
+    return (lo, hi), words
+
+
+def _insert_at(para_xml: str, runs: list[re.Match[str]],
+               spans: list[tuple[int, int]], pos: int, words: str, *,
+               before_first: bool, writable: Callable[[int], bool],
+               who: str) -> str:
+    """Put `words` at EDITABLE offset `pos`, inside an existing run.
+
+    The pure insertion a narrowed match leaves (`_rewrite_span`): nothing
+    is removed, so the only question is whose look the new words take.
+    A run that holds `pos` strictly inside it is the answer. At a seam,
+    the run BEFORE it — what typing there in Word continues — unless the
+    insertion opens the match (`before_first`), where the caller's
+    anchor begins with the run after it. A link's label is never grown
+    by this: `writable` says no, and the other side of the seam is tried.
+    """
+    if not words:
+        return para_xml                 # nothing changes at all
+    inside = [i for i, (a, b) in enumerate(spans) if a < pos < b]
+    left = [i for i, (a, b) in enumerate(spans) if a < b == pos]
+    right = [i for i, (a, b) in enumerate(spans) if pos == a < b]
+    order = inside or (right + left if before_first else left + right)
+    for i in order:
+        if not writable(i):
+            continue
+        run_xml = runs[i].group(0)
+        body = visible_text(run_xml)
+        cut = pos - spans[i][0]
+        return (para_xml[:runs[i].start()]
+                + set_run_text(run_xml, body[:cut] + words + body[cut:])
+                + para_xml[runs[i].end():])
+    raise AnchorError(
+        f"{who}: {words[:40]!r} would go at the edge of a link's label "
+        f"with no plain run beside it, and writing it into the label "
+        f"would make the link swallow it. Use insert_in_para, which "
+        f"places new words outside a link.")
 
 
 def _refuse_crossed_maths(para_xml: str, runs: list[re.Match[str]],
@@ -956,7 +1151,8 @@ def _live_rpr(run_xml: str) -> str:
 
 def replace_keeping_links(para_xml: str, old: str, new: str, *,
                           normalize: bool = False,
-                          allow_notes: bool = False) -> str:
+                          allow_notes: bool = False,
+                          allow_format_boundary: bool = False) -> str:
     """Replace `old` by `new` in one paragraph, editing AROUND every link.
 
     What :func:`replace_in_para`'s refusal asks for — "replace on each
@@ -1013,6 +1209,10 @@ def replace_keeping_links(para_xml: str, old: str, new: str, *,
     `normalize` matches `old`, and the labels inside `new`, through
     Word's glyph substitutions (:func:`find_normalized`); `new` is
     written verbatim, and a label keeps the glyphs the document has.
+
+    A piece that crosses a change of character formatting is narrowed
+    to its changed words, or refused, exactly as in `replace_in_para`;
+    ``allow_format_boundary`` is the same opt-in.
     """
     runs, spans = _run_walk(para_xml)
     visible = editable_text(para_xml)
@@ -1022,6 +1222,7 @@ def replace_keeping_links(para_xml: str, old: str, new: str, *,
               if overlaps((lab.start, lab.end), (at, end))]
     if not labels:
         return replace_in_para(para_xml, old, new, allow_notes=allow_notes,
+                               allow_format_boundary=allow_format_boundary,
                                normalize=normalize)
 
     for lab in labels:
@@ -1080,6 +1281,7 @@ def replace_keeping_links(para_xml: str, old: str, new: str, *,
             out = _rewrite_span(out, runs, spans, (lo, hi), words,
                                 allow_hyperlink=False, grow_link_label=False,
                                 allow_notes=allow_notes,
+                                allow_format_boundary=allow_format_boundary,
                                 who="replace_keeping_links")
         else:
             out = _insert_between_labels(out, runs, spans, lo, words,

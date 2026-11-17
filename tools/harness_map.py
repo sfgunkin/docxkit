@@ -442,6 +442,7 @@ HARNESS: dict[str, list[str]] = {
                 "tests/test_normalize_anchors.py",
                 "tests/test_locate_spans.py", "tests/test_replace_spans.py",
                 "tests/test_edit_links_replace.py",
+                "tests/test_edit_format_boundary.py",
                 "tests/test_remove_link.py", "tests/test_insert_spans.py"],
     # The exit CODES are this module's contract with the paper
     # projects' scripts, and the tests that read them live with the

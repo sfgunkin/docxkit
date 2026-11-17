@@ -34,8 +34,12 @@ whose answer should not change unless the writer did:
   paragraph's hash afterwards, and the audit's buckets before and after.
 * ``link_all`` — `citations.link_all` on the package: every mention it
   linked and every one it skipped, one key each, and the body's hash.
+* ``replace`` — `edit.replace_in_para` and `replace_keeping_links`
+  across run seams: each run's text and properties afterwards, which is
+  where a replacement given the wrong run's look shows (added
+  2026-11-17, BACKLOG S2).
 
-The last three were added 2026-11-14 (BACKLOG S4: "probes two writers").
+``house``, ``crossrefs`` and ``link_all`` were added 2026-11-14 (BACKLOG S4: "probes two writers").
 The batch that changed those writers had to measure them with a scratch
 probe, and that probe caught a false positive before commit — 32 new
 `misplaced_anchor` findings, all on a cached soft-break marker.
@@ -477,6 +481,65 @@ def probe_paragraphs(parts: Package) -> Answers:
     return out
 
 
+def _faced_runs(para_xml: str) -> str:
+    """Each run that shows text, as (text, hash of its own ``w:rPr``)."""
+    from docxkit._xml import RUN_RE, own_properties, visible_text  # noqa: PLC0415
+    runs = []
+    for r in RUN_RE.finditer(para_xml):
+        text = visible_text(r.group(0))
+        if text:
+            props = own_properties(r.group(0), "rPr")
+            runs.append([text, _sha(props[2]) if props else ""])
+    return json.dumps(runs, ensure_ascii=False)
+
+
+def probe_replace(parts: Package) -> Answers:
+    """`edit.replace_in_para` and `replace_keeping_links` across run SEAMS.
+
+    For up to 60 seams between two runs that show text, a 10-character
+    anchor straddling the seam is replaced twice: upper-cased whole (a
+    change on both sides) and with its last two characters changed (a
+    change after the seam only). The answer is the refusal, or every
+    run's text and properties afterwards — the question BACKLOG S2
+    (2026-11-16) asked, which a text answer cannot see: whose look the
+    new words took.
+    """
+    from docxkit import edit  # noqa: PLC0415
+    from docxkit._xml import PARA_RE, RUN_RE, visible_text  # noqa: PLC0415
+    xml = parts[DOCUMENT].decode("utf-8")
+    out: Answers = {}
+    seams = 0
+    for n, p in enumerate(PARA_RE.finditer(xml)):
+        para = p.group(0)
+        if "<w:ins " in para or "<w:del " in para or "<m:oMath" in para:
+            continue
+        text = edit.editable_text(para)
+        cursor = 0
+        for r in RUN_RE.finditer(para):
+            width = len(visible_text(r.group(0)))
+            cursor += width
+            if not width or not 5 <= cursor <= len(text) - 5:
+                continue
+            old = text[cursor - 5:cursor + 5]
+            if text.count(old) != 1 or not old.strip():
+                continue
+            for label, new in (("both", old.upper() + "~"),
+                               ("after", old[:-2] + "~~")):
+                key = f"p{n} seam {cursor} {label}"
+                for name, write in (("in_para", edit.replace_in_para),
+                                    ("keeping_links",
+                                     edit.replace_keeping_links)):
+                    try:
+                        out[f"{key} {name}"] = _faced_runs(
+                            write(para, old, new))
+                    except Exception as exc:
+                        out[f"{key} {name}"] = _refusal(exc)
+            seams += 1
+            if seams == 60:
+                return out
+    return out
+
+
 def _on_document(probe: Callable[[str], Answers]
                  ) -> Callable[[Package], Answers]:
     """A probe of the body XML alone, given the package."""
@@ -500,6 +563,7 @@ PROBES: dict[str, Callable[[Package], Answers]] = {
     "footnotes": probe_footnotes,
     "comments": probe_comments,
     "paragraphs": probe_paragraphs,
+    "replace": probe_replace,
 }
 
 
