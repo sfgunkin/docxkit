@@ -14,6 +14,275 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 `link_more` / `link_rest` / `link_all` wrote a hyperlink across the EDGE of an element: XML that does not parse~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** 2026-11-15, by the writer oracle's new `link_more` and `link_rest` probes (the `reach` gate asked for
+them). On `mb2_redline_20261112` the base `link_more` wrote a part that `lint` reports as not well-formed: "Opening
+and ending tag mismatch: hyperlink … and ins". `link_rest` did the same on 6 corpus documents. A mention that starts
+in plain text and ends inside a `w:ins` (or the reverse) was wrapped by `wrap_visible_span`, which slices from the
+first run to the last. The slice carried the `w:ins` open tag into the link without its close. `crossrefs._safe_wrap`
+already refused that shape for `link`; the two every-mention passes called the wrap directly. So did `link_all`, for
+first mentions and entry back-links: on 300 corpus papers it wrote 25 such links in 12 documents. Three were checked
+by parsing. Offshore_WB's link opened outside a `w:ins` and closed inside it. le13_tracked's carried an unclosed
+`w:ins` open tag. API2_MM's span started inside an EXTERNAL (URL) hyperlink, which the mask does not cover, so the
+wrap closed someone else's `w:hyperlink`.
+
+**Fixed 2026-11-15.** `wrap_visible_span` now refuses a link whose content is not balanced (`_xml.balanced`) with an
+`AnchorError`. `link_rest` already reported those as skipped; `link_more` now catches them and counts
+`"<key> not linked"` instead of raising. A span wholly inside a tracked change still links, and the hoist above turns
+that link inside out. Tests: `test_a_mention_CROSSING_the_edge_of_a_tracked_change_is_left_plain`,
+`test_the_hoist_leaves_markup_that_does_not_CLOSE_alone`.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S3 `crossrefs.link_more` re-homes `<key>txt` with no opt-out~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** 2026-11-15, LFP_Inflows. The paper's protocol kept the back-link of Table 3 on a later mention, the one the
+author chose on 8 November. `link_more` moved `Table3txt` to the earliest mention, in a paragraph the author added
+later. The paper had to write its own forward-link pass to leave the marker alone. **Fix:** a `rehome=False`
+parameter, or report the move without making it when the caller says the marker is placed.
+
+**Fixed 2026-11-15.** `link_more(xml, rehome=False)` links every mention as before and leaves each marker where it
+is, reporting the move it would have made as `"<key>txt not moved: placed"`. The default is unchanged. Test:
+`test_rehome_False_reports_the_move_and_does_not_make_it`. The paper's own forward-link pass can go.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S2 `crossrefs.link` writes a `w:hyperlink` (and its bookmark) INSIDE a `w:ins` when the mention is a tracked insertion~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** 2026-11-15, LFP_Inflows (participation-paragraph round, L1). The paragraph that mentions Figure 5 had been
+moved as a tracked deletion plus a tracked insertion; `link` wrapped the mention where it stood, giving
+`<w:ins><w:bookmarkStart/><w:hyperlink><w:r>Figure 5</w:r></w:hyperlink><w:bookmarkEnd/>…</w:ins>`.
+CT_RunTrackChange holds runs, not hyperlinks, so Word would repair the file. No gate in the package saw it: audit
+counted the link as fine. The paper fixed it after the fact with a hoist
+(`code/50_export/layout_link_exhibits.py:hoist_links_out_of_ins`). The hoist splits the `w:ins` and puts the link
+around a tracked run, `[bookmarkStart] <w:hyperlink><w:ins><w:r/></w:ins></w:hyperlink> [bookmarkEnd]`, which is the
+form Word writes. `wrap_visible_span` (used by `link_more` and `link_rest`) probably has the same hole.
+**Fix:** wrap at the run level inside tracked content, or hoist as above, and add a structural check
+("no `w:hyperlink` under `w:ins`/`w:del`") to the integrity gate.
+
+**Fixed 2026-11-15.** The hoist, in the package: `_xml.hoist_links_out_of_tracked` turns every link inside a
+`w:ins`/`w:del`/`w:moveTo`/`w:moveFrom` inside out, the same way as the paper's. The change is split at the link,
+each piece keeps its author and date, the first keeps its `w:id`, and the rest take ids that are free across the
+package. `crossrefs.link`, `link_more` (before its re-homing), `citations.link_all` and `link_rest` all run it on
+what they wrote. `lint` check 4b now fails the shape, whatever wrote it. Tests:
+`test_a_mention_in_a_tracked_INSERTION_is_linked_around_the_change`,
+`test_the_split_change_takes_ids_free_across_the_PACKAGE`,
+`test_link_more_links_a_tracked_mention_around_the_change_too`,
+`test_lint_FAILS_a_hyperlink_inside_a_tracked_change`, `test_link_all_links_a_TRACKED_citation_around_the_change`.
+The paper's `hoist_links_out_of_ins` can go once LFP_Inflows rebuilds on this.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S2 `_xml.live_properties` cut a `w:pPr` inside the paragraph MARK's tracked `w:rPrChange`~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** 2026-11-15, by the `house_apply` probe: `house.apply` raised `ValueError('substring not found')` on
+`_Archive/Middle class/Documents/Shifting vulnerability in Europe 06012023.docx`, at HEAD as well. The pPr there is
+`<w:jc w:val="center"/><w:rPr>…<w:rPrChange>…</w:rPrChange></w:rPr>`: the paragraph mark's own run properties carry a
+tracked formatting change. `live_properties` cut at the FIRST `…PrChange` anywhere, so the "live" pPr ended inside an
+unclosed `w:rPr`, and `set_para_property`'s child walk raised. Any reader of a live pPr also lost what follows the
+mark, the `w:sectPr` included. It was silent there, and loud only in a writer that walked it.
+
+**Fixed 2026-11-15.** Only a DIRECT child is the element's own change record: `live_properties` walks the top-level
+children and cuts at the first `…PrChange` among them, falling back to the first match anywhere when the markup does
+not close. The manuscript now applies (captions 9, notes 14). Test:
+`test_the_MARK_s_tracked_change_is_not_the_paragraph_s`.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S2 `renumber.footnotes` refuses every document whose `continuationNotice` holds id 1~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** 2026-11-15, by the new `footnotes` probe on its first corpus run: 3 of 12 sampled manuscripts (`ACC1.docx`,
+`ROIW_08012024.docx`, `Big Shocks 2 03292021.docx`) raised "renumbering did not settle — references [1, 2, …],
+notes [1, 1, 2, …]". Word stores three separator notes there, `separator` -1, `continuationSeparator` 0 and
+`continuationNotice` 1. `renumber` knew them by id alone (`_RESERVED = {0, -1}`), so it read the notice as a real,
+unreferenced note and numbered the first real note onto its id. `footnote_audit` likewise reported "note 1 has no
+reference" on every such paper. `footnotes._reserved` learned this on 2026-09-23 (Misconceptions); `renumber` kept
+its own copy. Refused rather than corrupted, by the "did not settle" backstop: a wrong output no gate saw, because
+nothing ran the writer over the corpus.
+
+**Fixed 2026-11-15.** `renumber` reuses `footnotes._reserved` (type OR id), and numbering starts at the first id the
+separators leave free: 1 as usual, 2 behind a notice at 1. The sample's crashes went from 3 of 12 to 0 of 40. Test:
+`test_a_CONTINUATION_NOTICE_at_id_1_is_a_separator_not_a_note`.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S4 `tools/writer_oracle.py` probes two writers; a change to any other writer has no old-vs-new oracle~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** 2026-11-14, closing the batch in e84596f. CONTRIBUTING says a change to a writer is measured with
+`writer_oracle.py --base HEAD`, but its `PROBES` table holds only `set_cell` and `insert_before`. The batch changed
+three other writers: `tables.house`, `crossrefs.link` and `citations.link_all`. For those the oracle measures nothing,
+and running it would have printed a clean result about writers the batch never touched.
+
+**Measured by hand instead.** A HEAD worktree plus `PYTHONPATH` per side, and a scratch probe run over a strided sample
+of 170 manuscripts from `Papers/`. For each table it recorded `house`'s output hash, visible text and its counts of
+italic, bold, `jc`, `keepNext` and `vertAlign`; for each document, `crossrefs.link`'s output hash and the audit's
+`misplaced_anchor` count before and after; and `link_all`'s linked/skipped counts and output hash. It earned its keep
+twice. It measured the old `house` damage (72,484 `jc` and 35,337 italics lost on 911 tables) against zero for the new
+code. And it caught a false positive in the first `crossrefs` fix before commit: 32 new `misplaced_anchor` findings,
+all on `w:lastRenderedPageBreak`.
+
+**Suggested fix.** Add `house`, `crossrefs.link` and `link_all` to `PROBES`. The answers to compare are: the output hash;
+whether the visible text is unchanged; property counts for `house`; the audit counts for `crossrefs`; and the
+report's counts for `link_all`. `link_all` takes parts, not the document XML that `worker` reads, so `worker` needs to
+hand probes the package. Better still, make a writer with no probe a gate failure. A test can list the public writers
+(anything that returns changed XML or parts) and fail on one absent from `PROBES`. A gap like this one is otherwise
+found only by the person it happens to.
+
+**Fixed 2026-11-14.** `PROBES` now holds `house` (per table: text kept, five property counts before -> after,
+hash), `crossrefs` (per caption hash, audit buckets before and after) and `link_all` (one key per mention linked,
+back-linked or skipped, plus the body hash). Probes take the package; the two old ones run through `_on_document`.
+On 40 corpus documents: against HEAD, all five probes give 0 differences (they are deterministic); against c9b2081,
+the commit before e84596f, `house` 291 of 306 differ and `link_all` 5 of 380 do. CONTRIBUTING names the five
+probes and says to add one before changing another writer.
+Two older defects surfaced on the first corpus run and are fixed with it. The default limit never applied:
+`get(LIMIT_ENV, "0") or 40` yields the truthy string "0", so the limit was 0 and the run took the whole corpus. And
+the worker took its paths on argv: 1,813 paths are 183,290 characters, so Windows raised WinError 206 before any
+probe ran. Paths now go in a file, as `view_oracle` already does. Tests: `test_writer_oracle.py`, three probe tests,
+the unset-limit one, and an end-to-end run against c9b2081 that must see the `house` fix.
+
+**The "better still" half, 2026-11-15: `tools/oracle_reach.py`, the `reach` gate.** Not a hand-kept list of writers,
+which would be the gap again. It asks a different question: does an ORACLE reach what this change changed? Every
+function, method, class body and module-level constant whose code differs from HEAD, docstrings and comments aside,
+is looked up in a static call graph of the package. The graph is walked from the docxkit names the writer oracle and
+`sweep.py` call, and a change nothing walks to fails, naming the public writer a probe belongs on. Over-approximating
+on purpose: a method is reached by its name on any object, a class reaches its methods, and a constant reaches the
+functions that read it. `EXEMPT` names what no corpus oracle can run, with reasons: the CLI layer, Word Compare
+(`tracked`, `moves`, their gates), renders (`pages`, `repack`), the protocol over one paper's files
+(`revision.*`), and backup naming.
+- **It fails where it should.** Given c9b2081's two-probe oracle, the e84596f batch fails with 20 unmeasured changes:
+  every `house` helper, named as `tables.house` (it follows the re-export); `link_all`'s first-mention fix;
+  `crossrefs`' page-break helpers; `renumber._CONTINUATION`.
+- **It is quiet where it should be.** Replayed with today's oracles over the 30 commits that touched `src`, it was
+  first 21 of 30 failing. That was dunder constants, Word-bound modules and real gaps. The gaps got probes:
+  `renumber`, `builders` (`house_rpr`), `house_apply`, `table_layout` (`booktabs`, `fit_columns`, `clone_row`,
+  `keep_together`), `footnotes` (`prune_orphans`, `renumber.footnotes`), `comments` (`annotate`,
+  `annotate_blocks`, `reclassify`, `add_at`, `dedupe_comments`), and `paragraphs` (`split`, `merge`, `drop`,
+  `footnotes.add`). The sweep gained `comments.has_scaffold` and `probe`. Now 1 of 30 fails:
+  `comments._about`/`_place` in 2e6dea1, which no library code calls.
+- **It found a real defect on the first corpus run:** `renumber.footnotes` and a `continuationNotice` (entry below).
+- **Its own first use caught two things.** The probe spelled `getattr(house, "FIGURE_SIZE")`, which is invisible to
+  a static walk, and one of today's probes first called `getattr(paragraph, name)`. Both are now attribute calls.
+- The writer oracle now prints each probe's seconds and a "CRASHED on N" count: a probe that crashes on every
+  document answers the same one key on both sides and read "0 differ".
+- Tests: `tests/test_oracle_reach.py`, with both sides read from git so later edits cannot move them. Gate:
+  `reach`, after `api`, in `tools/gates.py` and `test_gates.py`.
+
+**Workaround in use.** Scratch `writer_probe.py` and `probe_diff.py` in that session's scratchpad. They are not in a
+repo and will be gone; the shape is the paragraph above.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S4 `revision ingest` says "the words SURVIVE" for links whose words the author DELETED~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** Month_of_birth, 2026-11-12. The author deleted a paragraph and a sentence that held two mentions each of
+"Table 1" and "Table 2". `ingest` listed all four links under `LOST -- the words SURVIVE` and pointed at
+`citations.link_all` to rebuild them. Nothing could be rebuilt: `crossrefs.link_more` linked 0, because every
+surviving "Table 1"/"Table 2" was already linked. The claim is decided on the label TEXT alone (the label still
+occurs somewhere in the document), not on the mention it belonged to.
+
+**Suggested fix.** Count a lost link as "words survive" only when the paragraph it sat in still holds an UNLINKED
+occurrence of its label; otherwise report it under the text the author deleted, which needs no restore.
+
+**Fixed 2026-11-15, by count rather than by paragraph.** A link Word ate leaves its label as one more UNLINKED
+occurrence than the previous round had, and a mention the author deleted leaves none. `_link_changes` counts each
+lost label's plain occurrences (all text parts, linked words masked) in both versions, and each lost link spends one
+of the extra ones. A position-free rule holds when the label recurs: "Table 1" in four paragraphs. Test:
+`test_a_DELETED_mention_of_a_label_the_paper_repeats_is_not_a_survivor` (three lost: one flattened, two cut).
+
+**Workaround in use.** Checked each one by hand against the content diff, then `baseline --accept-loss Table1,Table2`.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S4 `house` has no figure-size rule; the author's house style places every figure at 6 x 4 in~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+**Found.** LFP_Inflows_ECA, 2026-11-12: "Make figure sizes 4x6 this should be in house style" (6 in wide, 4 in high;
+the Uzbek paper's Figures 1-3 were set the same way on 2026-11-08). `house` audits captions and notes but not the
+drawing extents, so a figure at 5.5 in passed `house` with 0 findings.
+
+**Suggested fix.** `Rules.figure_size = (6.0, 4.0)` in inches (None = off). Audit: each inline drawing in the main
+story whose `wp:extent` differs from the size by more than 1 EMU-rounding is a finding, and an image whose pixel
+aspect is not 3:2 is a separate finding (resizing it would distort). Apply: `figures` resize per drawing (both
+`wp:extent` and `a:ext`), only where the aspect already matches.
+
+**Fixed 2026-11-15, OPT-IN.** `Rules.figure_size` and `house.FIGURE_SIZE = (6.0, 4.0)`. `apply` sets every inline
+body figure outside a table to that size (`wp:extent` and `a:ext`) where the image is already 3:2 within 1%. `audit`
+reports one placed off size, and separately one whose image is not 3:2, which is never stretched. The default is
+None, measured: on 170 corpus documents the rule reports 448 figures in 92 of them. 404 of those are images that are
+not 3:2 at all, and paper scripts assert the audit is EMPTY after a round (Month_of_birth's `r13_after_verdict.py`).
+On by default, every older paper's next run would fail and get its figures resized. A paper opts in with
+`Rules(figure_size=FIGURE_SIZE)`. Making it the default is the author's decision, not taken here. Tests in
+`test_house.py`.
+
+**Workaround in use.** The generator inserts at `FIG_W, FIG_H = 6.0, 4.0` and asserts the PNG is 3:2;
+`test_figures_are_6_by_4_inches`.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S4 No command diffs two renders page by page; a byte-identical-render check was hand-rolled~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+Found 2026-11-09 verifying that dropping the BiH paper's workarounds (bih `f1b78f0`) left its output unchanged.
+
+**Measured.** `docxkit compare` reports no difference on any layer, but it does not read table properties, and the
+change kept a theme `tblStyle` the old build removed — only a render could say whether the page moved. `docxkit pdf`
+renders, `pages.render_anchors` rasterises around anchors, and nothing compares two PDFs. The check took a 20-line
+PyMuPDF script: page count, then per page the 60 dpi pixmap bytes, saving both sides of each page that differs.
+
+**Suggested fix.** `docxkit render-diff A.docx B.docx [--dpi 60] [--out DIR]`: export both through Word, compare page
+counts and per-page pixmaps, write side-by-side PNGs of the pages that differ, exit 0 only when every page matches.
+It is the missing half of "verify a rebuild that should change nothing".
+
+**Fixed 2026-11-15.** `docxkit render-diff A.docx B.docx [--dpi 60] [--out DIR] [--pdfs]`, exit 1 on any
+difference. `pages.compare_renders(pdf_a, pdf_b)` is the comparison: the sheet counts, then each shared sheet's pixmap
+bytes; a differing sheet reports the share of its pixels that differ and is written out as `sheet-NNN-a.png` and
+`-b.png`. `pages.render_diff` renders both through Word first. The PNGs are written one per side, not composed side
+by side. Tests: `tests/test_render_diff.py` (PDFs drawn with PyMuPDF; one `word` test renders a real manuscript
+against itself and finds it SAME).
+
+**Workaround in use.** Scratch `pdf_diff.py` (this session's scratchpad, not in a repo).
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
+### ~~S4 `tools/sweep.py` does not run `house.audit`, so an audit change cannot be measured on the corpus~~ — FIXED 15.11, `08fd536`
+
+<!-- status: fixed -->
+
+Found 2026-11-09 while fixing the `house.NOTE` and MERGEFORMAT entries (e020e1e).
+
+**Measured.** The sweep's `routines()` lists lint, citations, refstyle, crossrefs, compare.self, footnotes and hygiene,
+and not `house.audit` or `house.scope`. So `--findings before.json` / `--diff` — the documented way to measure an audit
+change — reported nothing for a change that added 93 `house.audit` findings in 22 of 300 sampled documents.
+
+**Suggested fix.** Add `"house.audit": lambda: len(house.audit(dict(raw)))` (and `house.scope`) to `routines()`, and
+let `--findings` record the findings' text, not only the count, for this one, so `--diff` can say which kind moved.
+
+**Fixed 2026-11-15.** `routines()` runs `house.audit` and `house.scope`, and `house` joins `AUDITS`. Its findings
+are recorded as `["HOUSE <kind>", "<subject>"]`, the kind being the sentence after the paragraph it names with the
+numbers folded to N, so `--diff` says which kind moved.
+
+**Workaround in use.** Scratch `house_audit_sample.py` + `house_audit_diff.py` (this session's scratchpad, not in a
+repo): 300 shuffled `Papers/**/*.docx`, `house.audit` at the HEAD worktree and at the working tree, diffed by kind.
+
+Fixed in 08fd536; the entry's "Fixed 2026-11-15" paragraph has the measurement and the tests.
+
 ### ~~S4 `renumber` reads "Table 23, 0.217" as a list and skips the mention~~ — FIXED 14.11, `e84596f`
 
 <!-- status: fixed -->
