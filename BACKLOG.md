@@ -918,31 +918,23 @@ non-negotiables forbid; `moves.tracked_move` (fce83cc) covers the MOVE half thro
 work bears on this one: Word's `Range.Delete()` over another author's pending deletion takes it over (measured
 2026-11-09), so a layered round has to step over existing deletions, as `moves._delete_live` does.
 
-### S2 `replace_in_para` gives a match that starts in a bold label the label's bold for the whole replacement
+### S2 `compare` reads no FORMAT inside a paragraph whose text changed
 <!-- status: open -->
 
-Found 2026-11-16 on Parental_style (ETIC batch, T3.1 keywords line).
+Found 2026-11-16 on Parental_style, split out of the `replace_in_para` format-boundary entry when that was fixed
+(2026-11-17, f2b009c).
 
-**Measured.** The paragraph is two runs: `Keywords:` (bold) and ` child discipline; coercive discipline; family size;
-Central Asia` (plain). `replace_in_para(para, "Keywords: child discipline; coercive discipline; family size; Central
-Asia", "Keywords: child discipline; parenting style; …")` wrote the whole new line into the bold run and emptied the
-plain one: the keyword list rendered bold. The paragraph text contract held, the document text contract held, `lint` was
-clean, and `docxkit compare prev.docx repro.docx` reported FORMAT `(none)` with 1 real change. FORMAT compares
-text-MATCHED paragraphs only, and an edited paragraph is not one. Nothing saw it. I caught it by dumping the runs.
+**Measured.** A keywords line rewritten so its plain list came out bold: `docxkit compare prev.docx repro.docx` reported
+FORMAT `(none)` and one real change. `_compare_diff.fmt_diff` returns `[]` unless the two paragraphs' prose is EQUAL
+("a character-by-character comparison of two different strings reports the offset, not the emphasis"), so any
+formatting change riding on a text edit in the same paragraph is invisible to the gated layers.
 
-**Diagnosis.** This is the same mechanism the docstring already guards at a hyperlink and a note reference: "writes `new`
-into the run holding the START of the match, and empties the remainder". A run-property boundary inside the match
-(bold, italic, size, colour, a character style) is the same hazard. There is no refusal and no warning, so the new text
-inherits the leading run's look.
+**Why it still matters after the writer fix.** `replace_in_para` no longer does this, but an author's Word edit, another
+writer or a hand-rolled script can, and `compare` is the gate the protocol trusts for "did anything else change".
 
-**Suggested fix.** Refuse a match whose runs carry different effective run properties (compare the resolved `w:rPr`,
-ignoring rsid noise) unless `allow_format_boundary=True`. Better still, keep the common prefix and suffix in their own
-runs and write only the changed middle. Here that would have left `Keywords: child discipline; ` and `; family size;
-Central Asia` untouched. A matching gap in `compare`: report FORMAT for the unchanged words of a text-changed paragraph.
-That alone would have flagged this.
-
-**Workaround in use.** Anchor on the plain part only (`coercive discipline; family size; Central Asia`), in
-`Parental_style/revision/scripts/etic_edits.py`, plus a run dump after the edit.
+**Suggested fix.** Align the two texts (the `SequenceMatcher` the TEXT layer already uses) and compare per-character
+formatting over the EQUAL blocks only, reporting a segment whose flags changed. Measure on the corpus first, per
+CONTRIBUTING: an author's tracked round legitimately restyles words it also edits, and the layer must not cry wolf.
 
 ## Where the fixed entries are
 
