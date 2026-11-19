@@ -36,9 +36,11 @@ from ._xml import (
     DOCUMENT,
     ENDNOTES,
     FOOTNOTES,
+    HYPERLINK_OPEN_RE,
     PARA_RE,
     Parts,
     dead_links,
+    field_anchors,
     internal_links,
     visible_text,
 )
@@ -444,6 +446,53 @@ def _misplaced_markers(doc: str, paras: list[re.Match[str]],
                 f"¶{at.index + 1} (\"{at.text[:30]}\") but its entry "
                 f"is ¶{owner.index + 1}"))
 
+    return found
+
+
+def _late_markers(doc: str, paras: list[re.Match[str]],
+                  cite_marks: dict[str, int]) -> list[_Finding]:
+    """`<key>txt` markers with a link to `<key>` in an EARLIER paragraph.
+
+    The entry's back-link lands on the marker, so the reader is sent
+    past the first mention. Month_of_birth R15 (2026-11-18, backlog S2):
+    a batch cited Todd and Wolpin in §5 ahead of the paragraph holding
+    `Todd2003txt`; `link_all` linked the new mention forward and left the
+    marker where it was, and this audit said "86 of 86 linked".
+    `crossrefs.audit` has made the same check for exhibits
+    (`misplaced_anchor`) since 2026-08-12.
+
+    Judged by PARAGRAPH, as `crossrefs` judges it: whether the marker
+    wraps its own link or sits beside it is a linker's choice and means
+    nothing to a reader. A marker Word hoisted out of a paragraph head
+    belongs to the paragraph after it. Body only: a note has no place in
+    the body's order, so a marker or a link in one is not judged.
+    """
+    starts = [p.start() for p in paras]
+
+    def para_of(at: int) -> int:
+        i = bisect_right(starts, at) - 1
+        return i if i >= 0 and at < paras[i].end() else i + 1
+
+    first: dict[str, int] = {}
+    for m in HYPERLINK_OPEN_RE.finditer(doc):
+        first.setdefault(m.group(1), m.start())
+    for anchor, at in field_anchors(doc, clickable=False):
+        first[anchor] = min(at, first.get(anchor, at))
+
+    found: list[_Finding] = []
+    for name in sorted(cite_marks):
+        key = name[:-3]
+        mark = re.search(rf'<w:bookmarkStart\b[^>]*w:name="{re.escape(name)}"',
+                         doc)
+        if mark is None or key not in first:
+            continue
+        home, ahead = para_of(mark.start()), para_of(first[key])
+        if ahead < home:
+            found.append(_Finding(
+                "LATE MARKER", name,
+                f"LATE MARKER: '{name}' sits at ¶{home + 1} but '{key}' "
+                f"is linked first at ¶{ahead + 1}, so the entry's "
+                "back-link lands past the first mention", extra=key))
     return found
 
 
@@ -1124,6 +1173,7 @@ def _audit_findings(parts: Parts, *,
 
     entries = references(texts, heading=heading)
     issues += _misplaced_markers(doc, paras, entries, ref_marks)
+    issues += _late_markers(doc, paras, cite_marks)
 
     mention_issues, counts = _mention_findings(
         parts, texts, paras, entries=entries, ref_marks=ref_marks,

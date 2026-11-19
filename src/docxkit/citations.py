@@ -158,6 +158,10 @@ def _one_call(kind: str, name: str, issue: str,
         "MISPLACED MARKER": (
             "moved", (f'delete_bookmark(doc, "{name}") then '
                       f"marker_bookmark(doc, ENTRY_SIG, ...)   # {issue}")),
+        "LATE MARKER": (
+            "moved", (f'delete_bookmark(doc, "{name}") then '
+                      f'wrap_link_in_bookmark(doc, "{extra}", "{name}", '
+                      f'bid, which="first")   # {issue}')),
         "MARKER OFF LINK": (
             "marker", f'rewrap_marker(doc, "{name}")   # {issue}'),
         "SELF LINK": (

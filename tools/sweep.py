@@ -127,6 +127,10 @@ def routines(blob: bytes) -> dict[str, Routine]:
         "citations.refs": lambda: len(
             citations.references(revisions.text(doc, revisions.FINAL))),
         "citations.audit": lambda: len(citations.audit_links(dict(raw))[0]),
+        # the repairs the audit's findings propose; reached by no oracle
+        # until LATE MARKER gave it a new line (2026-11-19)
+        "citations.plan": lambda: len(
+            citations.repair_plan(dict(raw)).splitlines()),
         "refstyle.audit": lambda: len(refstyle.audit(dict(raw)).issues),
         "crossrefs.captions": lambda: len(crossrefs.find_captions(doc)),
         "crossrefs.linked": lambda: len(crossrefs.audit(doc)["linked"]),

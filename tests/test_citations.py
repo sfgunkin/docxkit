@@ -1279,6 +1279,70 @@ def test_a_nested_link_with_a_different_target_is_doubled():
     assert not any(i.startswith("DOUBLED LINK") for i in issues)
 
 
+def _todd(first: str, later: str) -> dict[str, bytes]:
+    """Month_of_birth R15's shape: two mentions of one work, the marker
+    on `later`'s paragraph or `first`'s, as the arguments place it."""
+    return make_doc(
+        P(R("Birth timing matters (") + first + R(").")),
+        P(R("Intervening prose.")),
+        P(R("Later work agrees (") + later + R(").")),
+        P(R("References")),
+        P(_entry("Todd2003", "Todd, P. and Wolpin, K. (2003). On the "
+                 "specification. EJ.")))
+
+
+def test_a_cite_marker_PAST_an_earlier_link_to_its_entry_reports():
+    """Backlog S2, 2026-11-18: `Todd2003txt` stayed on §5 B13 after a
+    batch linked an earlier mention in B04, and the audit said
+    "86 of 86 linked"."""
+    parts = _todd(hfield("Todd2003", "Todd and Wolpin 2003"),
+                  _linked_cite("Todd2003", "Todd and Wolpin 2003"))
+
+    issues, _ = audit_links(parts)
+
+    assert [i for i in issues if i.startswith("LATE MARKER")] == [
+        "LATE MARKER: 'Todd2003txt' sits at ¶8 but 'Todd2003' is linked "
+        "first at ¶6, so the entry's back-link lands past the first "
+        "mention"]
+
+
+def test_a_cite_marker_ON_the_first_mention_is_quiet():
+    parts = _todd(_linked_cite("Todd2003", "Todd and Wolpin 2003"),
+                  hfield("Todd2003", "Todd and Wolpin 2003"))
+
+    issues, _ = audit_links(parts)
+
+    assert not [i for i in issues if i.startswith("LATE MARKER")]
+
+
+def test_a_cite_marker_BESIDE_its_link_in_one_paragraph_is_quiet():
+    """Whether the marker wraps the link or sits after it is a linker's
+    choice; only the PARAGRAPH reaches a reader."""
+    one = P(R("See ") + hfield("Todd2003", "Todd and Wolpin 2003")
+            + bookmark("Todd2003txt", 10, R(" and later")) + R("."))
+    parts = make_doc(one, P(R("References")),
+                     P(_entry("Todd2003", "Todd, P. and Wolpin, K. "
+                              "(2003). On the specification. EJ.")))
+
+    issues, _ = audit_links(parts)
+
+    assert not [i for i in issues if i.startswith("LATE MARKER")]
+
+
+def test_the_plan_moves_a_LATE_marker_to_the_first_link():
+    plan = _plan(
+        P(R("Birth timing (") + hfield("Todd2003", "Todd 2003") + R(").")),
+        P(R("Again (") + _linked_cite("Todd2003", "Todd 2003") + R(").")),
+        P(R("References")),
+        P(_entry("Todd2003", "Todd, P. (2003). A paper.")))
+
+    assert _bucket(plan, "re-place") == [
+        'delete_bookmark(doc, "Todd2003txt") then wrap_link_in_bookmark('
+        'doc, "Todd2003", "Todd2003txt", bid, which="first")   # LATE '
+        "MARKER: 'Todd2003txt' sits at ¶7 but 'Todd2003' is linked first "
+        "at ¶6, so the entry's back-link lands past the first mention"]
+
+
 def test_a_marker_stranded_at_the_wrong_entry_reports():
     """Reordering entry paragraphs strands body-level markers one entry
     off (13 of them on API10). Only confident mismatches report."""
