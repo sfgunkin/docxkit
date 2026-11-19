@@ -823,6 +823,85 @@ def bookmark_additions(original: Parts, clean: Parts) -> list[str]:
                   .elements())
 
 
+#: A lost-bookmark line as :func:`bookmark_changes` writes it; `build`
+#: prefixes the view ("rejected: "), `revision validate` does not.
+_LOST_RE = re.compile(r"^(?:rejected: )?bookmarkStart: lost (.+)$")
+
+
+def inserted_only_bookmarks(diffs: list[str], redline: Parts) -> str:
+    """Why the REJECTED view lost bookmarks the redline still holds.
+
+    A bookmark is not revisable, so one present in the redline and gone
+    after reject-all can only have sat on text Compare INSERTED: it
+    deleted the stretch that carried the bookmark and wrote it again, and
+    the bookmark went with the new copy. Measured twice on Month_of_birth
+    (2026-11-19, backlog S2): R19 trimmed words on both sides of a kept
+    first-mention label (`Chen2021txt`), and R17 relocated 25 exhibits
+    with ``--no-moves``. Neither clean edit was wrong, and the refusal
+    said only "bookmarkStart lost". Returns the paragraph to add to the
+    refusal, or ``""`` when no lost bookmark is in the redline.
+    """
+    lost: list[str] = []
+    for d in diffs:
+        if m := _LOST_RE.match(d):
+            lost += re.findall(r"'([^']+)'", m.group(1))
+    xml = "".join(x for _name, x in text_parts(redline))
+    held = [n for n in lost if f'w:name="{n}"' in xml]
+    if not held:
+        return ""
+    shown = []
+    for name in held[:6]:
+        start = re.search(rf'<w:bookmarkStart\b[^>]*w:id="(\d+)"[^>]*'
+                          rf'w:name="{re.escape(name)}"|<w:bookmarkStart\b'
+                          rf'[^>]*w:name="{re.escape(name)}"[^>]*'
+                          rf'w:id="(\d+)"', xml)
+        label = ""
+        if start:
+            bid = start.group(1) or start.group(2)
+            end = re.search(rf'<w:bookmarkEnd\b[^>]*w:id="{bid}"',
+                            xml[start.end():])
+            if end:
+                label = visible_text(xml[start.end():start.end()
+                                         + end.start()])[:40]
+        shown.append(f"{name} ({label!r})" if label else name)
+    more = f" and {len(held) - 6} more" if len(held) > 6 else ""
+    return (f"Compare re-inserted the text carrying {', '.join(shown)}"
+            f"{more}: it deleted that stretch and wrote it again, so the "
+            f"bookmark exists only on the INSERTED copy and rejecting the "
+            f"round drops it. The clean edit is not wrong. Two shapes are "
+            f"known to do it: kept text between two deletions (a trim on "
+            f"both sides of a citation it keeps), and a bookmarked block "
+            f"relocated with moves off. Moves on and off were both "
+            f"measured on the first; neither keeps the bookmark.")
+
+
+def final_paragraph_cause(unrejectable: list[Untracked],
+                          original: Parts, revised: Parts) -> str:
+    """Why the original's LAST body paragraph cannot be rejected back.
+
+    Month_of_birth R17 (2026-11-19, backlog S2): Table A3's note was the
+    body's last paragraph and Table 24's took its place. Built with
+    moves on, rejecting the round left the old last paragraph EMPTY,
+    with or without the label changes; the same pair built with moves
+    off rejected it correctly. The refusal said only UNREJECTABLE.
+    Returns the paragraph to add to the refusal, or ``""`` when the
+    body's last paragraph did not change or is not among the
+    unrejectable ones.
+    """
+    was = _paras(_root(original))
+    now = _paras(_root(revised))
+    if not was or not now or was[-1] == now[-1] or not was[-1].strip():
+        return ""
+    if not any(u.part == "body" and u.baseline == was[-1]
+               for u in unrejectable):
+        return ""
+    return (f"The body's FINAL paragraph changed ({was[-1][:50]!r} was "
+            f"last, {now[-1][:50]!r} is now), and that is the paragraph "
+            f"rejecting cannot bring back. Where this was measured, a "
+            f"build with moves on left it empty and the same pair built "
+            f"with moves off (`--no-moves`) rejected it correctly.")
+
+
 def bookmark_changes(base: Parts, view: Parts,
                      carried: Parts | Counter[str]) -> list[str]:
     """What `view` does to `base`'s bookmarks that `carried` does not explain.

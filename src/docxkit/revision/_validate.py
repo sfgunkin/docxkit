@@ -37,6 +37,8 @@ from ..tracked import (
     bookmark_changes,
     bookmark_names,
     cell_property_changes,
+    final_paragraph_cause,
+    inserted_only_bookmarks,
     rejected_view,
     structure_counts,
     structure_diff,
@@ -141,6 +143,11 @@ class ValidateReport:
     #: renders by default for a paper carrying maths. Empty when the
     #: batch touches no equation. See :func:`math_anchors`.
     math_anchors: list[str] = field(default_factory=list)
+    #: The named causes of a reject-all mismatch, when one is known:
+    #: bookmarks Compare left only on inserted text, the body's final
+    #: paragraph. See :func:`docxkit.tracked.inserted_only_bookmarks`
+    #: and :func:`~docxkit.tracked.final_paragraph_cause`.
+    reject_causes: list[str] = field(default_factory=list)
 
     @property
     def empty_shells(self) -> int:
@@ -546,6 +553,10 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             report.lost_links, report.retargeted_links = _lost_or_retargeted(
                 was, now, bookmark_names(rejected))
             report.structure_diff = struct_moved
+            report.reject_causes = [c for c in (
+                inserted_only_bookmarks(struct_moved, parts),
+                final_paragraph_cause(report.reject_diff, base, accepted))
+                if c]
 
     if word_accept_glyph is not None:
         report.accept_paths_agree = (

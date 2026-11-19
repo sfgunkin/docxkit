@@ -1918,3 +1918,67 @@ def test_every_accept_side_refusal_carries_the_same_escape():
     assert "accept_check=False to build" not in said
     assert body.count("_ACCEPT_ESCAPE") == body.count("raise PackageError")
     assert not _re.search(r"(?i)pass accept_check", said)
+
+
+# --- named causes for a reject that loses a bookmark or a last paragraph --
+# Backlog S2, 2026-11-19 (Month_of_birth R17 and R19): both refusals
+# said only "bookmarkStart lost" / UNREJECTABLE.
+
+_R19_INS = ('<w:ins w:id="95" w:author="Revision" '
+            'w:date="2026-07-29T00:00:00Z">'
+            '<w:r><w:t xml:space="preserve">; </w:t></w:r>'
+            '<w:bookmarkStart w:id="7" w:name="Chen2021txt"/>'
+            "<w:r><w:t>Chen and Park 2021</w:t></w:r>"
+            '<w:bookmarkEnd w:id="7"/><w:r><w:t>).</w:t></w:r></w:ins>')
+
+
+def test_a_bookmark_Compare_left_ONLY_on_inserted_text_is_named():
+    """R19: a trim on both sides of a kept first-mention label. Compare
+    deleted the stretch, label included, and inserted it again with the
+    marker inside the insertion; rejecting the round dropped it."""
+    original = make_parts(para(
+        run("Mexico (Pena 2017; "),
+        '<w:bookmarkStart w:id="7" w:name="Chen2021txt"/>',
+        run("Chen and Park 2021"), '<w:bookmarkEnd w:id="7"/>',
+        run("; Herdeiro 2025).")))
+    redline = make_parts(para(
+        run("Mexico ("),
+        dele("Pena 2017; Chen and Park 2021; Herdeiro 2025)."),
+        _R19_INS))
+
+    diffs = tracked.bookmark_changes(
+        original, tracked.rejected_view(redline), original)
+    cause = tracked.inserted_only_bookmarks(
+        [f"rejected: {d}" for d in diffs], redline)
+
+    assert diffs == ["bookmarkStart: lost 'Chen2021txt'"]
+    assert cause.startswith("Compare re-inserted the text carrying "
+                            "Chen2021txt ('Chen and Park 2021')")
+    # validate's lines carry no "rejected: " prefix
+    assert tracked.inserted_only_bookmarks(diffs, redline) == cause
+
+
+def test_a_bookmark_the_REDLINE_lost_too_gets_no_cause():
+    """Gone from the redline itself: Compare did not re-insert it, it
+    dropped it, and the inserted-copy explanation would be wrong."""
+    redline = make_parts(para(run("Mexico (Chen and Park 2021).")))
+
+    assert tracked.inserted_only_bookmarks(
+        ["rejected: bookmarkStart: lost 'Chen2021txt'"], redline) == ""
+    assert tracked.inserted_only_bookmarks(["tbl: 3 -> 4"], redline) == ""
+
+
+def test_the_FINAL_paragraph_that_changed_is_named():
+    original = make_parts(para(run("Body text."))
+                          + para(run("Note: Table A3 was last.")))
+    revised = make_parts(para(run("Body text."))
+                         + para(run("Note: Table 24 is last now.")))
+    lost = tracked.Untracked("body", 1, "Note: Table A3 was last.", "")
+
+    cause = tracked.final_paragraph_cause([lost], original, revised)
+
+    assert cause.startswith("The body's FINAL paragraph changed "
+                            "('Note: Table A3 was last.' was last")
+    other = tracked.Untracked("body", 0, "Body text.", "")
+    assert tracked.final_paragraph_cause([other], original, revised) == ""
+    assert tracked.final_paragraph_cause([lost], original, original) == ""

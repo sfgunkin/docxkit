@@ -71,6 +71,8 @@ from ._tracked_gates import bookmark_changes as bookmark_changes
 from ._tracked_gates import bookmark_names as bookmark_names
 from ._tracked_gates import cell_property_changes as cell_property_changes
 from ._tracked_gates import compare_collateral as compare_collateral
+from ._tracked_gates import final_paragraph_cause as final_paragraph_cause
+from ._tracked_gates import inserted_only_bookmarks as inserted_only_bookmarks
 from ._tracked_gates import package_counts as package_counts
 from ._tracked_gates import rejected_view as rejected_view
 from ._tracked_gates import return_note_spaces as return_note_spaces
@@ -153,6 +155,8 @@ __all__ = [
     "build",
     "cell_property_changes",
     "compare_collateral",
+    "final_paragraph_cause",
+    "inserted_only_bookmarks",
     "package_counts",
     "rejected_view",
     "return_note_spaces",
@@ -1083,17 +1087,23 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         for missed in report.unaccepted:
             say(f"  UNACCEPTED {missed}")
         if report.structure_diff and reject_check:
-            raise PackageError(_structure_refusal(report.structure_diff))
+            cause = inserted_only_bookmarks(report.structure_diff, parts)
+            raise PackageError(_structure_refusal(report.structure_diff)
+                               + (f"\n{cause}" if cause else ""))
         if report.unrejectable and reject_check:
             listed = "\n  ".join(str(u) for u in report.unrejectable)
+            final = final_paragraph_cause(report.unrejectable,
+                                          original_parts, revised_parts)
             raise PackageError(
                 f"rejecting every revision does NOT reproduce "
                 f"{original.name} — {len(report.unrejectable)} paragraph(s) "
                 f"differ with no revision on them, so the author cannot "
                 f"refuse those edits:\n  {listed}\n"
-                f"An over-eager math accept is the usual cause: try "
-                f"resolve_math=False. Pass reject_check=False to build the "
-                f"file anyway and inspect it.")
+                + (f"{final}\n" if final else
+                   "An over-eager math accept is the usual cause: try "
+                   "resolve_math=False. ")
+                + "Pass reject_check=False to build the file anyway and "
+                  "inspect it.")
         if accept_check:
             _refuse_accept_side(report, revised.name)
         # Word rewrites the OMML while deriving the redline and flattens

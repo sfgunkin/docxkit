@@ -1934,6 +1934,22 @@ def _say_footnotes(report: object) -> None:
               f"reject-all restores it — not part of this mismatch)")
 
 
+def _say_structure(report: object) -> None:
+    """Gate 5's structure lines, and the named cause when one is known
+    (`reject_causes`: a bookmark Compare left only on inserted text, the
+    body's final paragraph — backlog S2, 2026-11-19)."""
+    from .revision import ValidateReport
+    assert isinstance(report, ValidateReport)
+    for moved in report.structure_diff:
+        print(f"   STRUCTURE {moved}: the rejected batch does not "
+              f"carry what the baseline does, and it is not a "
+              f"character — a move can duplicate a table or drop a "
+              f"paragraph's bookmarks, and the text gates see "
+              f"neither")
+    for cause in report.reject_causes:
+        print(f"   CAUSE {cause}")
+
+
 def _say_glyphs(report: object) -> None:
     """The glyph half of gate 5, with the VIEW it is about named.
 
@@ -2209,12 +2225,7 @@ def cmd_revision_validate(args: argparse.Namespace) -> int:
             for u in report.reject_diff:
                 print(f"   {u}")
             _say_glyphs(report)
-            for moved in report.structure_diff:
-                print(f"   STRUCTURE {moved}: the rejected batch does not "
-                      f"carry what the baseline does, and it is not a "
-                      f"character — a move can duplicate a table or drop a "
-                      f"paragraph's bookmarks, and the text gates see "
-                      f"neither")
+            _say_structure(report)
             for link in report.lost_links:
                 print(f"   LINK LOST {link}: the baseline has this "
                       f"hyperlink and the rejected batch does not — it "
