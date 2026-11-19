@@ -105,6 +105,84 @@ def test_a_relocated_paragraph_reports_as_a_move(tmp_path):
     assert report["text"] == []
 
 
+def _srun(text: str, props: str) -> str:
+    return (f'<w:r><w:rPr>{props}</w:rPr><w:t xml:space="preserve">'
+            f"{text}</w:t></w:r>")
+
+
+_KEYWORDS = ('<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">'
+             "Keywords: </w:t></w:r>{rest}</w:p>")
+
+
+def test_a_format_change_RIDING_on_a_text_edit_is_format(tmp_path):
+    """Parental_style, 2026-11-16 (backlog S2): a keywords line rewritten
+    so its plain list came out bold reported FORMAT (none) beside the
+    one text change, because formatting was compared only where the
+    texts were equal."""
+    before = _KEYWORDS.format(rest=run(
+        "child discipline; parenting style; Uzbekistan"))
+    after = _KEYWORDS.format(rest=(
+        "<w:r><w:rPr><w:b/></w:rPr><w:t>child discipline; parenting "
+        "style; Central Asia</w:t></w:r>"))
+    a, b = docs(tmp_path, before, after)
+
+    report = compare(a, b)
+
+    assert len(report["text"]) == 1
+    assert [(e["text"], e["from"], e["to"]) for e in report["format"]] == [
+        ("child discipline; parenting style; ", [], ["bold"])]
+
+
+def test_a_text_edit_with_NO_format_change_reports_no_format(tmp_path):
+    before = _KEYWORDS.format(rest=run("child discipline; Uzbekistan"))
+    after = _KEYWORDS.format(rest=run("child discipline; Central Asia"))
+    a, b = docs(tmp_path, before, after)
+
+    report = compare(a, b)
+
+    assert report["text"] and report["format"] == []
+
+
+def test_a_REWRITTEN_word_in_a_new_style_is_text_not_format(tmp_path):
+    """The words that changed are the TEXT layer's; only a stretch both
+    versions share has a format to compare. Short shared stretches —
+    a letter of a deleted word aligned with a letter of a kept one —
+    are not compared at all."""
+    before = para(run("We estimate the model by ordinary least squares."))
+    after = para(run("We estimate the model by "),
+                 _srun("maximum likelihood", "<w:i/>"),
+                 run("."))
+    a, b = docs(tmp_path, before, after)
+
+    assert compare(a, b)["format"] == []
+
+
+def test_unrelated_paragraphs_paired_by_position_compare_no_format():
+    """A replace run pairs paragraphs by POSITION, so one inserted
+    heading pairs every paragraph after it with its neighbour. Two
+    paragraphs that share a word or two are not the same paragraph, and
+    the formatting of that word in each says nothing."""
+    from docxkit._compare_diff import fmt_diff_edited
+    from docxkit._compare_read import Part
+    from docxkit.styles import Cascade
+
+    def one(xml: str):
+        return Part("word/document.xml", "<w:body>" + xml + "</w:body>",
+                    Cascade(None)).paras[0]
+
+    a = one(para(run("Income rises with the household head's schooling.")))
+    b = one(para(run("Panel B of Table 3 lists the "),
+                 _srun("income", "<w:b/>"),
+                 run(" quintiles by region, year of survey and sector.")))
+
+    assert fmt_diff_edited(a, b) == []
+    # the same bold word in a paragraph that IS the first one, edited
+    c = one(para(run("Mean "), _srun("income", "<w:b/>"),
+                 run(" rises with the household head's schooling.")))
+    assert fmt_diff_edited(a, c) == [("ncome", frozenset(),
+                                      frozenset({"bold"}))]
+
+
 def test_a_formatting_change_on_equal_text_is_format(tmp_path):
     plain = para(run("See the Journal of Things here."))
     italic = ('<w:p><w:r><w:t xml:space="preserve">See the </w:t></w:r>'

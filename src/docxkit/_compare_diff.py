@@ -134,6 +134,52 @@ def fmt_diff(pa: Para,
     return res
 
 
+#: The shortest stretch of text two edited paragraphs must share before
+#: its formatting is compared, and how alike the paragraphs must be.
+#: Below them an alignment pairs a letter of a deleted word with a
+#: letter of a kept one, and the "change" it finds is the offset.
+_FMT_MIN_BLOCK = 4
+_FMT_MIN_RATIO = 0.5
+
+
+def fmt_diff_edited(pa: Para, pb: Para,
+                    ) -> list[tuple[str, frozenset[str], frozenset[str]]]:
+    """:func:`fmt_diff` for a paragraph whose TEXT changed too.
+
+    Formatting riding on a text edit was invisible: `fmt_diff` returns
+    nothing unless the two texts are equal, so a keywords line rewritten
+    with its plain list come out bold reported FORMAT ``(none)`` beside
+    one text change (Parental_style, 2026-11-16; backlog S2). The texts
+    are aligned instead, and formatting is compared over the stretches
+    they SHARE — at least ``_FMT_MIN_BLOCK`` characters, in paragraphs at
+    least ``_FMT_MIN_RATIO`` alike — so a word the author also restyled
+    is reported as it would be in an unedited paragraph, and the words
+    they rewrote are left to the TEXT layer. A segment with no letter or
+    digit in it (a space, a bracket) is not reported.
+    """
+    a, b = pa.wtext_f, pb.wtext_f
+    if a == b or len(pa.fmt) != len(a) or len(pb.fmt) != len(b):
+        return []
+    sm = SequenceMatcher(None, a, b, autojunk=False)
+    if sm.ratio() < _FMT_MIN_RATIO:
+        return []
+    res: list[tuple[str, frozenset[str], frozenset[str]]] = []
+    for i, j, size in sm.get_matching_blocks():
+        if size < _FMT_MIN_BLOCK:
+            continue
+        start: int | None = None
+        for k in range(size + 1):
+            differs = k < size and pa.fmt[i + k] != pb.fmt[j + k]
+            if differs and start is None:
+                start = k
+            elif not differs and start is not None:
+                seg = a[i + start:i + k]
+                if any(ch.isalnum() for ch in seg):
+                    res.append((seg, pa.fmt[i + start], pb.fmt[j + start]))
+                start = None
+    return res
+
+
 def _marker_segments(text: str, before: list[str],
                      after: list[str]) -> list[tuple[str, str, str]]:
     """(symbols, old markers, new markers) per contiguous run of
@@ -616,6 +662,9 @@ class _Alignment:
             if changed:
                 entry["formula"] = changed
             self.report["text"].append(entry)
+            for seg, old, new in fmt_diff_edited(pa, pb):
+                self.add("format", {"text": seg, "from": sorted(old),
+                                    "to": sorted(new)}, pa)
         # A loss whose paragraph never reached the text layer — its prose
         # came through glyph-identical while its machinery did not — is
         # still a loss, and silence would be worse than an entry with no
