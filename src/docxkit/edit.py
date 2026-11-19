@@ -699,8 +699,14 @@ def replace_in_para(para_xml: str, old: str, new: str,
     crosses the boundary is refused — which run's look the new words
     should take is the caller's call; split the replacement at the
     boundary, or pass ``allow_format_boundary=True`` to give them the
-    look of the run they start in. A match in uniformly formatted runs
-    is written exactly as before.
+    look of the run they start in. A middle lying wholly in one run takes
+    that run's look, as typing over it in Word does: "the *old* term" ->
+    "the new term" keeps "new" italic; anchor on the word alone and pass
+    plain runs through :func:`replace_with_runs` to drop the emphasis. A
+    middle that only ADDS words at a seam between two runs that print
+    differently is refused the same way, since either could own them
+    (backlog S1, 2026-11-19). A match in uniformly formatted runs is
+    written exactly as before.
 
     `normalize` matches through Word's typographic substitutions (curly vs
     straight quotes, dash variants) — see :func:`find_normalized`. `new` is
