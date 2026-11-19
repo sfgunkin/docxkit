@@ -4761,6 +4761,21 @@ def test_an_UNDRAWN_part_left_alone_is_no_change_either():
     assert _media_report(before, after)["media"] == []
 
 
+def test_a_figure_MOVED_renamed_and_recaptioned_is_no_change():
+    """The pair oracle's first finding (Month_of_birth mb2 -> mb3,
+    exhibits to the appendix): the notes were renumbered with the
+    figures, no caption key matched, and the renamed pictures came out
+    MEDIA ADDED. The picture is still there; that is a move."""
+    before = _figures([("Note: see Table 4.", "image6.png"),
+                       ("Note: see Table 5.", "image7.png")],
+                      {"image6.png": b"picture P", "image7.png": b"pic Q"})
+    after = _figures([("Note: see Table A1.", "image6.png"),
+                      ("Note: see Table A2.", "image9.png")],
+                     {"image6.png": b"pic Q", "image9.png": b"picture P"})
+
+    assert _media_report(before, after)["media"] == []
+
+
 def test_a_part_drawn_TWICE_and_changed_once_is_not_renamed():
     """Review, 2026-11-19: one equal pair was enough to call the part
     renamed, and ingest dropped a real figure change."""

@@ -841,9 +841,10 @@ def compare_media(a: Doc, b: Doc, report: Report) -> None:
 def media_pairs(a: Doc, b: Doc) -> list[tuple[str, str]]:
     """``(part in a, part in b)`` for each drawing the two sides share,
     in `a`'s order: paired by caption key (:func:`drawn_media`), and only
-    where that key names ONE drawing on each side. A drawing whose
-    caption is new, gone, edited or repeated is left out, and
-    :func:`compare_media` pairs its part by name.
+    where that key names ONE drawing on each side; then the parts left
+    over on both sides, by identical content. What is still unpaired —
+    a new picture, a removed one, one replaced under an edited caption —
+    :func:`compare_media` pairs by name.
 
     Not by position, which was the first version (review, 2026-11-19):
     a figure removed and another added, or exhibits reordered with their
@@ -854,8 +855,23 @@ def media_pairs(a: Doc, b: Doc) -> list[tuple[str, str]]:
         return {key: part for key, part in drawn if seen[key] == 1}
 
     ka, kb = unique(a.drawn), unique(b.drawn)
-    return list(dict.fromkeys((part, kb[key]) for key, part in ka.items()
-                              if key in kb))
+    pairs = list(dict.fromkeys((part, kb[key]) for key, part in ka.items()
+                               if key in kb))
+    # Then the parts no caption paired, by CONTENT: a picture still in
+    # the package under another name, its caption edited, is a move and
+    # not a figure added beside one removed. Measured by the pair oracle
+    # on Month_of_birth's mb2 -> mb3 (exhibits to the appendix, notes
+    # renumbered): seven such pictures came out MEDIA ADDED.
+    left_a = sorted(set(a.media) - {w for w, _ in pairs})
+    left_b = sorted(set(b.media) - {n for _, n in pairs})
+    by_digest: dict[str, list[str]] = {}
+    for name in left_b:
+        by_digest.setdefault(b.media[name].digest, []).append(name)
+    for name in left_a:
+        twins = by_digest.get(a.media[name].digest)
+        if twins:
+            pairs.append((name, twins.pop(0)))
+    return pairs
 
 
 def renamed_media(before: Parts, after: Parts) -> list[str]:
