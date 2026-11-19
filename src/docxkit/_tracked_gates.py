@@ -873,8 +873,9 @@ def inserted_only_bookmarks(diffs: list[str], redline: Parts) -> str:
             f"round drops it. The clean edit is not wrong. Two shapes are "
             f"known to do it: kept text between two deletions (a trim on "
             f"both sides of a citation it keeps), and a bookmarked block "
-            f"relocated with moves off. Moves on and off were both "
-            f"measured on the first; neither keeps the bookmark.")
+            f"relocated with moves off. On the first, moves on and off "
+            f"and Word's character-level comparison were all measured; "
+            f"none keeps the bookmark.")
 
 
 def final_paragraph_cause(rejected: Parts, original: Parts,

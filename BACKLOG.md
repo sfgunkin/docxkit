@@ -999,9 +999,19 @@ kept text '<label>'; its bookmark exists only on the inserted side").
 **Partly addressed, `e810cc7` (2026-11-19): (c) is done.** `tracked.inserted_only_bookmarks` names the cause in
 `tracked.build`'s refusal and as a CAUSE line in `revision validate`: the bookmark and its text, sitting only on
 the inserted copy, and the two shapes known to produce it. It is exact rather than a guess: a bookmark is not
-revisable, so one present in the redline and gone after reject-all can only have sat on inserted text. Still
-open: (a), measuring `CompareGranularity` = character level on the R19 pair (needs Word and the pair;
-`revision/prev.docx` is no longer in the paper, so the baseline has to be recovered first), and (b).
+revisable, so one present in the redline and gone after reject-all can only have sat on inserted text.
+
+**(a) measured 2026-11-19: it does not help.** The R19 pair is still on disk (`revision/build/prev.docx`, 16:59,
+and `edited_r19.docx`, 17:06). On copies, `CompareDocuments` with `Granularity` 1 (word) and 0 (character), each
+with moves on and off: all four redlines lose `Chen2021txt` on reject (43 revisions at word level, 46 at character
+level, none unrejectable or unaccepted otherwise). That reproduces the premise on the real pair and rules out a
+`--granularity char` switch. The named cause fires on the real redline, and its text now says character level was
+measured too.
+
+**Still open: (b), and it is a design decision.** Moving the bookmark onto the DELETED copy keeps it on reject
+and loses it on accept, since one name cannot sit on both. So (b) means a post-accept repair (re-plant the marker
+on the kept label after the author accepts), like the one `ship` already prints for removed entry bookmarks.
+Whether the protocol should carry that is the author's call.
 
 ## Where the fixed entries are
 
