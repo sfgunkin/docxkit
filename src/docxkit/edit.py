@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from html import unescape
 from typing import NamedTuple
 
@@ -64,6 +64,7 @@ __all__ = [
     "rep",
     "replace_in_para",
     "replace_keeping_links",
+    "replace_with_runs",
     "rstrip_para",
     "run_spans",
     "set_run_properties",
@@ -1875,6 +1876,74 @@ def insert_in_para(para_xml: str, at: int, content: str, *,
         return para_xml[:pos] + content + para_xml[pos:]
     pos = _between_runs(runs, spans, at, cursor, protected)
     return para_xml[:pos] + content + para_xml[pos:]
+
+
+#: Marks the match while `replace_with_runs` finds its visible offset.
+#: A private-use code point: no manuscript types one, and the call
+#: refuses a paragraph that already holds it rather than guess.
+_HERE = ""
+_PRESERVE = ' xml:space="preserve"'
+#: A run that holds nothing but properties and an empty ``w:t``.
+_SHELL_RE = re.compile(
+    r"<w:r(?:\s[^>]*)?>(?:<w:rPr>.*?</w:rPr>|<w:rPr/>)?"
+    r"<w:t(?:\s[^>]*)?(?:/>|></w:t>)</w:r>", re.DOTALL)
+
+
+def replace_with_runs(para_xml: str, old: str,
+                      new_runs: Sequence[tuple[str, str]], *,
+                      allow_hyperlink: bool = False,
+                      allow_notes: bool = False,
+                      normalize: bool = False) -> str:
+    """Replace the visible text `old` with STYLED runs.
+
+    `new_runs` is a list of ``(text, rpr)`` pairs, `rpr` a whole
+    ``<w:rPr>…</w:rPr>`` or ``""`` for a plain run: "Let *x*\\ :sub:`i`
+    be…" is ``[("Let ", ""), ("x", ITALIC), ("i", ITALIC_SUB),
+    (" be", "")]``. :func:`replace_in_para` writes its replacement as
+    plain text in the look of the run it starts in, so one call cannot
+    write a mixed-style replacement; Month_of_birth R15 composed this
+    out of a delete, an insert at a re-derived offset and a regex that
+    swept up the emptied runs, for 19 spans, and R14 had done the same a
+    different way (backlog S4, 2026-11-18).
+
+    The match, and every refusal, is :func:`replace_in_para`'s: a link
+    it starts in or crosses, a note reference, an equation. The runs then
+    go in where the match began by :func:`insert_in_para`, so at the
+    edge of a link or a bookmark they land OUTSIDE it. The runs the
+    deletion emptied are removed — the shells ``replace_in_para(old,
+    "")`` leaves behind — and no other run is touched.
+    """
+    if _HERE in para_xml:
+        raise AnchorError("replace_with_runs: the paragraph already holds "
+                          "the private marker U+E000")
+    for text, rpr in new_runs:
+        if rpr and not (rpr.startswith("<w:rPr>")
+                        and rpr.endswith("</w:rPr>")):
+            raise AnchorError(
+                f"replace_with_runs: the properties of {text[:30]!r} must be "
+                f"a whole <w:rPr>…</w:rPr> or empty, not {rpr[:40]!r}")
+    marked = replace_in_para(para_xml, old, _HERE,
+                             allow_hyperlink=allow_hyperlink,
+                             allow_notes=allow_notes,
+                             allow_format_boundary=True, normalize=normalize)
+    at = visible_text(marked).index(_HERE)
+    out = replace_in_para(marked, _HERE, "", allow_hyperlink=True,
+                          allow_notes=True)
+    # Both writes rewrite runs in place and add none, so the runs of the
+    # two versions pair by position: a shell is a run the edit CHANGED
+    # into one. A shell the paragraph already had is not ours to drop.
+    shells = [n for o, n in zip(RUN_RE.finditer(para_xml),
+                                RUN_RE.finditer(out), strict=True)
+              if o.group(0) != n.group(0) and _SHELL_RE.fullmatch(n.group(0))]
+    for m in reversed(shells):
+        out = out[:m.start()] + out[m.end():]
+    content = "".join(
+        f"<w:r>{rpr}<w:t{_PRESERVE if text != text.strip() else ''}>"
+        f"{escape(text)}</w:t></w:r>"
+        for text, rpr in new_runs if text)
+    if not content:
+        return out
+    return insert_in_para(out, at, content, allow_hyperlink=allow_hyperlink)
 
 
 def _split_run(para_xml: str, run: re.Match[str], offset: int, content: str,

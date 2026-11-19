@@ -528,7 +528,8 @@ def probe_replace(parts: Package) -> Answers:
                 key = f"p{n} seam {cursor} {label}"
                 for name, write in (("in_para", edit.replace_in_para),
                                     ("keeping_links",
-                                     edit.replace_keeping_links)):
+                                     edit.replace_keeping_links),
+                                    ("with_runs", _styled_replace)):
                     try:
                         out[f"{key} {name}"] = _faced_runs(
                             write(para, old, new))
@@ -538,6 +539,15 @@ def probe_replace(parts: Package) -> Answers:
             if seams == 60:
                 return out
     return out
+
+
+def _styled_replace(para: str, old: str, new: str) -> str:
+    """`edit.replace_with_runs` with `new` split italic + plain, so the
+    answer shows each run's look (added 2026-11-19, BACKLOG S4). A base
+    that predates the writer answers with its AttributeError."""
+    from docxkit import edit  # noqa: PLC0415
+    return edit.replace_with_runs(
+        para, old, [(new[:3], "<w:rPr><w:i/></w:rPr>"), (new[3:], "")])
 
 
 def _on_document(probe: Callable[[str], Answers]
