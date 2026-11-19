@@ -153,6 +153,23 @@ def test_two_changes_in_a_row_are_two_SEGMENTS():
         == [("estimates", [], ["bold"]), (" of the model", [], ["italic"])]
 
 
+def test_a_change_on_a_SPACE_alone_is_not_reported():
+    """An italic space between two words is not a word anyone restyled."""
+    from docxkit._compare_diff import fmt_diff_edited
+    from docxkit._compare_read import Part
+    from docxkit.styles import Cascade
+
+    def one(xml: str):
+        return Part("word/document.xml", "<w:body>" + xml + "</w:body>",
+                    Cascade(None)).paras[0]
+
+    a = one(para(run("The estimates are stable over the sample.")))
+    b = one(para(run("The estimates"), _srun(" ", "<w:i/>"),
+                 run("are stable over the whole sample.")))
+
+    assert fmt_diff_edited(a, b) == []
+
+
 def test_a_paragraph_whose_EQUATION_changed_still_reads_its_format():
     """Prose equal, paragraph not: the replace path reaches it and the
     prose's formatting is `fmt_diff`'s to compare (review, 2026-11-19)."""
@@ -4721,6 +4738,27 @@ def test_exhibits_REORDERED_with_their_names_kept_change_no_picture():
                            _figures(order[::-1], blobs))
 
     assert report["media"] == []
+
+
+def test_a_figure_renamed_to_a_NEW_part_name_is_no_change():
+    """Word's renaming can land on a name the old package never had;
+    neither the old name nor the new one is then a removal or an
+    addition."""
+    before = _figures([("Figure 1.", "a.png")], {"a.png": b"picture A"})
+    after = _figures([("Figure 1.", "q.png")], {"q.png": b"picture A"})
+
+    assert _media_report(before, after)["media"] == []
+
+
+def test_an_UNDRAWN_part_left_alone_is_no_change_either():
+    """A picture no drawing shows is paired by name, and equal bytes
+    under one name are nothing to report."""
+    before = _figures([("Figure 1.", "a.png")],
+                      {"a.png": b"picture A", "spare.png": b"unused"})
+    after = _figures([("Figure 1.", "a.png")],
+                     {"a.png": b"picture A", "spare.png": b"unused"})
+
+    assert _media_report(before, after)["media"] == []
 
 
 def test_a_part_drawn_TWICE_and_changed_once_is_not_renamed():

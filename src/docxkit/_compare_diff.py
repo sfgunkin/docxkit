@@ -165,8 +165,8 @@ def fmt_diff_edited(pa: Para, pb: Para,
     a, b = pa.wtext_f, pb.wtext_f
     if a == b:
         return fmt_diff(pa, pb)
-    if len(pa.fmt) != len(a) or len(pb.fmt) != len(b):
-        return []
+    # `fmt` has one entry per character of `wtext_f`: `_char_fmt` builds
+    # the two together, appending to both or neither
     sm = SequenceMatcher(None, a, b, autojunk=False)
     if sm.ratio() < _FMT_MIN_RATIO:
         return []
@@ -831,7 +831,8 @@ def compare_media(a: Doc, b: Doc, report: Report) -> None:
             report["media"].append(
                 {"type": "MEDIA REMOVED", "part": name, "label": label,
                  "from": before.size, "to": 0})
-        elif after is not None:
+        else:   # in the loop at all only because one side still holds it
+            assert after is not None
             report["media"].append(
                 {"type": "MEDIA ADDED", "part": name, "label": label,
                  "from": 0, "to": after.size})
