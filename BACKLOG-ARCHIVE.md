@@ -14,7 +14,7 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
-### ~~S2 `compare` reads no FORMAT inside a paragraph whose text changed~~ — FIXED 19.11, `8dae74e`
+### ~~S2 `compare` reads no FORMAT inside a paragraph whose text changed~~ — FIXED 19.11, `8dae74e`, `7909330`, `7decace`
 
 <!-- status: fixed -->
 
@@ -56,7 +56,7 @@ Tests: `test_a_format_change_RIDING_on_a_text_edit_is_format` (the keywords line
 `test_a_REWRITTEN_word_in_a_new_style_is_text_not_format`,
 `test_unrelated_paragraphs_paired_by_position_compare_no_format`.
 
-### ~~S4 `revision ingest` reports MEDIA CHANGED when Word only renamed the image parts~~ — FIXED 19.11, `e72e75f`
+### ~~S4 `revision ingest` reports MEDIA CHANGED when Word only renamed the image parts~~ — FIXED 19.11, `e72e75f`, `7909330`, `7decace`
 
 <!-- status: fixed -->
 
@@ -108,7 +108,7 @@ between changed. Drawings now pair by caption key (caption text plus position am
 drawings), only where the key is unique on both sides; the rest go by name. `renamed_media` requires EVERY
 drawing of a part to be unchanged. The real pair still gives MEDIA empty and all ten renamed.
 
-### ~~S4 No call replaces a stretch of visible text with STYLED runs; papers compose delete + insert by hand~~ — FIXED 19.11, `d9180a7`
+### ~~S4 No call replaces a stretch of visible text with STYLED runs; papers compose delete + insert by hand~~ — FIXED 19.11, `d9180a7`, `7909330`
 
 <!-- status: fixed -->
 
