@@ -14,6 +14,63 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S1 `replace_in_para`'s narrowing writes an inserted phrase in the look of the run left of the seam~~ — FIXED 19.11, `bc84cee`
+
+<!-- status: fixed -->
+
+Found 2026-11-19 by `/code-review high` over the unpushed range, in `f2b009c` (2026-11-17, the fix for "a match
+that crosses a change of look"). Not part of that day's batch; filed rather than fixed.
+
+**Measured (finding 1, reproduced).** A keywords line stored as bold `Keywords: ` (the space inside the bold run)
+plus plain `a; b`. `replace_in_para(p, "Keywords: a; b", "Keywords: x; a; b")`: the common head is `Keywords: `,
+so the narrowed change is a pure insertion at the seam, and `_insert_at` writes it into the LEFT run. Result:
+`Keywords: x; ` bold. That is the Parental_style failure the narrowing exists to stop, and nothing refuses: the
+"crosses a change of look" refusal runs only for a middle that replaces something. No gate sees it.
+
+**Reproduced, and a judgement call rather than a defect (finding 2).** `the *old* term` ->
+`replace_in_para(p, "the old term", "the new term")`: before `f2b009c` the whole replacement went plain into
+the first run (the usual way to drop emphasis); now the middle `new` lands in the italic run. Typing over the
+word in Word does the same, but callers that relied on the old behaviour get a different look and no warning.
+The docstring should say which is intended. (The review's mid-word variant, `Keywords:` -> `JEL codes:`, gave
+the right result when tried.)
+
+**Reported, not yet reproduced:**
+- `_insert_at` is a bare `set_run_text` and skips `insert_in_para`'s tracked-revision edge rule (2026-09-18), so
+  an insertion at a seam whose left run is inside another author's `w:ins` joins that insertion, and
+  reject-all deletes it.
+- The comment at `edit.py` ~826 says the guards "ran on the WHOLE match, so this narrowing never lets a refusal
+  through", but the link and field-result guards are in the per-run loop and run on the NARROWED span. A match
+  that crosses a link and a change of look, sharing its edges with `new`, may now pass where it was refused.
+- With `allow_hyperlink=True`, a seam strictly inside a label run raises "would go at the edge of a link's
+  label" (`inside` is chosen before `writable` is checked), which misnames the situation.
+
+**Fix sketch.** A pure insertion at a seam between two looks is the "crosses a change of look" case and should
+take the same refusal (or `allow_format_boundary`); route it through `insert_in_para` so the revision-edge
+rule applies; run the link guards on the whole match before narrowing, and correct the comment.
+
+**Fixed in `bc84cee`** (docstring `6226094`). A pure insertion strictly inside the match at a seam between two
+writable runs that print differently is refused unless `allow_format_boundary=True` (which keeps the old
+"continue the run before" as an explicit choice); at the match's own edge nothing changes. A seam whose run
+before sits inside a revision now prefers the run outside it. `allow_hyperlink=True` lets an insertion strictly
+inside a label in, and the refusal says "inside". The misleading comment is corrected: the link guards judge the
+narrowed span, which is safe because a link in the shared edges is not written to.
+
+Finding 2 (italic `old` -> `new` stays italic) is the intended behaviour and is now stated in `replace_in_para`'s
+docstring; `replace_with_runs` is the way to drop the emphasis.
+
+**Measured.** The writer oracle's `replace` probe could not reach this path (0 of 121,242 answers differed), so it
+gained a third case, one character inserted AT the seam. Over 400 manuscripts: 4,227 of 181,863 answers differ,
+all seam insertions between two differently printing plain runs that now refuse (about 7% of seams in real prose).
+Link labels do not trigger it: they are not writable, so the plain side is chosen as before.
+
+Tests in `tests/test_edit_format_boundary.py`: the seam refusal with the one-sided anchor that needs no opt-in,
+the opt-in, a seam between like runs, the revision edge, and inside a label; the first three new ones fail on
+`f2b009c`'s code.
+
+**Consequence for papers:** a builder that inserts words at such a seam, inside a longer anchor, now raises
+instead of writing them in the left run's look. Anchor on the side the words belong to, or pass
+`allow_format_boundary=True`.
+
 ### ~~S2 `compare` reads no FORMAT inside a paragraph whose text changed~~ — FIXED 19.11, `8dae74e`, `7909330`, `7decace`
 
 <!-- status: fixed -->
