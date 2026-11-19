@@ -20,6 +20,21 @@ def doc(*paras: str) -> str:
     return "<w:document><w:body>" + "".join(paras) + "</w:body></w:document>"
 
 
+def _with_caption_marks(xml: str) -> str:
+    """Bookmark every caption, as :func:`crossrefs.link` leaves them.
+
+    `link_more` links only to a caption that carries its bookmark
+    (backlog S2, 2026-11-18), and runs after `link`, which plants them.
+    Fixtures written before that rule spelled bare captions."""
+    for i, cap in enumerate(reversed(crossrefs.find_captions(xml)), 900):
+        p = xml[cap.start:cap.end]
+        head = p.index("<w:r>") if "<w:r>" in p else p.index("<w:r ")
+        p = (p[:head] + f'<w:bookmarkStart w:id="{i}" w:name="{cap.name}"/>'
+             f'<w:bookmarkEnd w:id="{i}"/>' + p[head:])
+        xml = xml[:cap.start] + p + xml[cap.end:]
+    return xml
+
+
 def paragraph_holding(xml: str, needle: str) -> str:
     """The single <w:p> whose visible text contains `needle`.
 
@@ -1065,7 +1080,7 @@ def test_a_continuation_does_not_reach_across_ANOTHER_label():
         para(run("Table 5. Hours.")),
     )
 
-    xml, counts = crossrefs.link_more(xml)
+    xml, counts = crossrefs.link_more(_with_caption_marks(xml))
 
     p = paragraph_holding(xml, "Compare")
     assert 'w:anchor="Table3"' not in p, counts
@@ -1081,7 +1096,7 @@ def test_a_continuation_WITHIN_its_own_series_still_links(prose, anchor):
     xml = doc(para(run(prose)), para(run("Table 5. Hours.")),
               para(run("Figure 5. Wages.")))
 
-    xml, _ = crossrefs.link_more(xml)
+    xml, _ = crossrefs.link_more(_with_caption_marks(xml))
 
     assert f'w:anchor="{anchor}"' in paragraph_holding(xml, "report it")
 
@@ -1490,7 +1505,7 @@ def test_link_more_links_two_mentions_in_one_paragraph():
     xml = doc(
         para(run("Both Table 1 and Table 2 report the same gradient.")),
         para(run("Table 1. First")), para(run("Table 2. Second")))
-    out, counts = crossrefs.link_more(xml)
+    out, counts = crossrefs.link_more(_with_caption_marks(xml))
     assert counts == {"Table1": 1, "Table2": 1}
     body = paragraph_holding(out, "Both Table 1 and Table 2")
     assert "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", body)) == \
@@ -1518,7 +1533,7 @@ def test_a_mention_ALREADY_inside_a_link_is_invisible_to_the_scan():
     xml = doc(para(run("As "), linked, run(" shows, and Table 1 again.")),
               para(run("Table 1. First")))
 
-    out, counts = crossrefs.link_more(xml)
+    out, counts = crossrefs.link_more(_with_caption_marks(xml))
 
     assert counts == {"Table1": 1}, "only the plain one"
     body = paragraph_holding(out, "As Table 1 shows, and Table 1 again.")
@@ -1541,7 +1556,7 @@ def test_an_EMPTY_paragraph_does_not_end_the_walk_either():
               para(run("")),
               para(run("Table 1. First")))
 
-    _out, counts = crossrefs.link_more(xml)
+    _out, counts = crossrefs.link_more(_with_caption_marks(xml))
 
     assert counts == {"Table1": 1}, counts
 
@@ -1559,7 +1574,7 @@ def test_a_paragraph_with_nothing_to_link_does_not_end_the_walk():
               para(run("An intervening paragraph with no exhibit in it.")),
               para(run("Table 1. First")))
 
-    _out, counts = crossrefs.link_more(xml)
+    _out, counts = crossrefs.link_more(_with_caption_marks(xml))
 
     assert counts == {"Table1": 1}, counts
 
@@ -1569,7 +1584,7 @@ def test_link_more_is_a_no_op_on_a_second_run():
     plans nothing."""
     xml = doc(para(run("See Table 1 for the gradient.")),
               para(run("Table 1. First")))
-    once, first = crossrefs.link_more(xml)
+    once, first = crossrefs.link_more(_with_caption_marks(xml))
     twice, again = crossrefs.link_more(once)
     assert first == {"Table1": 1} and again == {}
     assert twice == once
@@ -1587,7 +1602,7 @@ def test_link_more_claims_a_span_once_when_a_caption_is_duplicated():
     xml = doc(para(run("See Table 1 for the gradient.")),
               para(run("Table 1. First")),
               para(run("Table 1. A copy nobody renumbered")))
-    out, counts = crossrefs.link_more(xml)
+    out, counts = crossrefs.link_more(_with_caption_marks(xml))
     assert counts == {"Table1": 1}, counts
     body = paragraph_holding(out, "See Table 1 for the gradient.")
     assert body.count("<w:hyperlink") == 1, body
@@ -1625,7 +1640,7 @@ def test_a_duplicated_caption_claims_a_CONTINUATION_span_once_too():
         para(run("Table 2. Second")),
     )
 
-    out, counts = crossrefs.link_more(xml)
+    out, counts = crossrefs.link_more(_with_caption_marks(xml))
 
     assert counts == {"Table1": 1, "Table2": 1}, counts
     body = paragraph_holding(out, "Tables 2 and 1 report the same gradient.")
@@ -3262,6 +3277,41 @@ def test_a_mention_CROSSING_the_edge_of_a_tracked_change_is_left_plain():
     assert counts == {"Figure3 not linked": 1}
     assert out == xml
     assert _lint(out) == []
+
+
+def test_link_more_leaves_a_range_end_plain_when_its_caption_has_NO_bookmark():
+    """Month_of_birth, 2026-11-18 (backlog S2): "(Tables 20–24)" linked
+    its range end to `Table24`, the paper's one exhibit kept unlinked on
+    purpose, so its caption had no bookmark and both links dangled. A
+    link is written only where something waits for it; the skip is
+    counted under its own name, so it is not silent either."""
+    xml = doc(
+        para(run("As Tables 2–3 show, the gap is stable.")),
+        para('<w:bookmarkStart w:id="1" w:name="Table2"/>'
+             '<w:bookmarkEnd w:id="1"/>' + run("Table 2. Wages")),
+        para(run("Table 3. Hours, kept unlinked")),
+    )
+
+    out, counts = crossrefs.link_more(xml)
+
+    assert counts == {"Table2": 1,
+                      "Table3 not linked: no caption bookmark": 1}, counts
+    assert 'w:anchor="Table3"' not in out
+    assert crossrefs.audit(out)["dangling"] == []
+
+
+def test_link_more_finds_a_caption_bookmark_in_OTHER_parts():
+    """The bookmark set spans `other_parts`, as `audit`'s does."""
+    xml = doc(para(run("See Table 7 here.")),
+              para(run("Table 7. In a part of its own")))
+    elsewhere = doc(para('<w:bookmarkStart w:id="5" w:name="Table7"/>'
+                         '<w:bookmarkEnd w:id="5"/>'))
+
+    _out, bare = crossrefs.link_more(xml)
+    _out, found = crossrefs.link_more(xml, other_parts=[elsewhere])
+
+    assert bare == {"Table7 not linked: no caption bookmark": 1}
+    assert found == {"Table7": 1}
 
 
 def test_the_hoist_leaves_markup_that_does_not_CLOSE_alone():

@@ -1090,9 +1090,7 @@ def audit(xml: str, *,
     """
     others = [also] if isinstance(also, str) else list(also)
     every = [xml, *others]
-    names = {n for part in every
-             for n in re.findall(
-                 r'<w:bookmarkStart[^>]*w:name="([^"]+)"', part)}
+    names = _bookmark_names(*every)
     # What actually REACHES a bookmark: both link forms, and the REF
     # cross-reference too. Reading elements alone made `dangling` blind
     # to a field pointing at a bookmark that is gone, which is the same
@@ -1169,6 +1167,13 @@ def _where(para_starts: list[int], at: int) -> str:
     return f"¶{n}" if n else "body"
 
 
+def _bookmark_names(*parts: str) -> set[str]:
+    """Every bookmark name defined anywhere in `parts`."""
+    return {n for part in parts
+            for n in re.findall(r'<w:bookmarkStart[^>]*w:name="([^"]+)"',
+                                part)}
+
+
 def _bookmark_offsets(xml: str) -> dict[str, int]:
     """Offset of each bookmark's FIRST definition."""
     out: dict[str, int] = {}
@@ -1230,6 +1235,15 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     and the re-homing took it to a paragraph added afterwards; the paper
     wrote its own forward-link pass to keep it (backlog S3, 2026-11-15).
 
+    **Only to a caption that carries its bookmark.** A caption left
+    without one — an exhibit a paper keeps unlinked on purpose — has
+    nothing to land on, and a link to it is dangling the moment it is
+    written. Month_of_birth's "(Tables 20–24)" linked its range end to
+    `Table24`, whose caption had no bookmark, and only `audit` noticed
+    (backlog S2, 2026-11-18). Such a mention stays plain and is counted
+    as ``"<name> not linked: no caption bookmark"``. The bookmark is
+    sought in `xml` and in `other_parts`.
+
     Returns ``(xml, {caption name: mentions linked})``, with a
     ``"<key>txt moved"`` entry for each marker re-homed.
     """
@@ -1238,6 +1252,7 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
     captions = find_captions(xml, labels=labels)
     counts: dict[str, int] = {}
     caption_spans = {(c.start, c.end) for c in captions}
+    names = _bookmark_names(xml, *other_parts)
     patterns = [(cap, mention_re(cap.label, cap.number),
                  continuation_re(cap.label, cap.number))
                 for cap in captions]
@@ -1278,6 +1293,10 @@ def link_more(xml: str, *, labels: tuple[str, ...] = DEFAULT_LABELS,
         if not todo:
             continue
         for at, end, anchor in sorted(todo, reverse=True):
+            if anchor not in names:
+                bare = f"{anchor} not linked: no caption bookmark"
+                counts[bare] = counts.get(bare, 0) + 1
+                continue
             # a mention the link cannot wrap — one crossing the edge of a
             # tracked change, or starting inside an equation — is counted
             # and left plain, never written half inside an element
