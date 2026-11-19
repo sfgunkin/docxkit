@@ -936,6 +936,164 @@ writer or a hand-rolled script can, and `compare` is the gate the protocol trust
 formatting over the EQUAL blocks only, reporting a segment whose flags changed. Measure on the corpus first, per
 CONTRIBUTING: an author's tracked round legitimately restyles words it also edits, and the layer must not cry wolf.
 
+### S4 No call replaces a stretch of visible text with STYLED runs; papers compose delete + insert by hand
+<!-- status: open -->
+
+Found 2026-11-18 on Month_of_birth R15 (`revision/scripts/r15_methodology_polish.py`, `apply_span`).
+
+**Measured.** The batch's 19 spans each give `old` (visible text) and `new_runs`, a list of `[text, style]` pairs
+(italic symbol, italic subscript, upright subscript, plain): "Let *x*<sub>*i*</sub> be the child's date of birth…".
+`replace_in_para(old, new)` writes `new` as plain text into the run holding the START of the match, with that run's
+properties, so one call cannot produce a mixed-style replacement. `insert_in_para(at, xml)` takes styled runs but
+deletes nothing. `replace_keeping_links` splits around link labels and is likewise plain text.
+
+**Workaround in use.** `p = replace_in_para(p, old, "")`, then `insert_in_para(p, at, runs_xml)` at the offset of
+`old` in `visible_text(p)`, then a regex that drops the emptied `<w:r>…<w:t></w:t></w:r>` shells the delete leaves.
+For a stretch that holds a link (S06, declared) `remove_link(p, anchor, drop_twin=False)` first. Gates: visible text
+== before with the span applied, after each step; the protocol's checker (G3 text AND run styles) passed. R14 on the
+same paper wrote the same thing a third way (whole paragraphs rebuilt from runs).
+
+**Suggested fix.** `replace_in_para(..., new_runs=[(text, rpr_xml), …])` (or `replace_with_runs`): the same match,
+link and note refusals as `replace_in_para`, deletion by offset, the runs spliced at the start offset with the
+`insert_in_para` edge rule (outside a link/bookmark at its edge), and no empty run shells left behind. The empty-shell
+cleanup is worth having on its own: `replace_in_para(old, "")` leaves a run whose `w:t` is empty.
+
+### S2 `crossrefs.link_more` links a range end to an exhibit with no caption bookmark (dangling link)
+<!-- status: open -->
+
+Found 2026-11-18 on Month_of_birth (after R15's accept; paper script `relink_exhibits.py`).
+
+**Measured.** The author retyped two Results paragraphs holding "(Tables 20–24, Figures 10–11)" and "(Tables 23–24)";
+Word stripped their links. `link_more(xml, labels=("Figure", "Table"))` then linked the range ENDS too: "11" →
+`Figure11` (resolves) and "24" → `Table24` in both paragraphs. Table 24's caption has NO bookmark (the paper's one
+deliberately unlinked exhibit; `crossrefs --audit` lists it under `unlinked`), so both links point at nothing:
+`audit` reports `dangling: ['Table24']`. Before the retype the same paragraphs carried field links to `Table20`,
+`Figure10`, `Figure11`, `Table22`, `Table23` only; neither "24" was linked, so the range-end linking is newer than
+those links or applies only to the element form.
+
+**Diagnosis (unverified in code).** `link_more` picks the targets from the mention text without asking whether the
+anchor exists. Its own audit catches the result, so it is not silent, but a writer that can emit a dangling link is
+wrong at the source.
+
+**Suggested fix.** `link_more` links a mention only to an anchor present as a bookmark (the caption's), and reports
+the skipped ones (`no_anchor=[...]`) as `link` reports `no_mention`. Test: a range "Tables 2–3" where Table 3 has no
+caption bookmark → "3" stays plain, reported.
+
+**Workaround in use.** The paper's `relink_exhibits.py` undoes, after `link_more`, every link to an
+`ALLOWED_UNLINKED` exhibit with no bookmark (`remove_link(..., drop_twin=False)`).
+
+### S2 `docxkit citations` does not flag a `<key>txt` marker that sits on a LATER mention
+<!-- status: open -->
+
+Found 2026-11-18 on Month_of_birth R15.
+
+**Measured.** A batch added "Todd and Wolpin 2003" in §5 B04, ahead of the mention in B13 that held `Todd2003txt`.
+After `link_all`/`link_rest`, B04 linked forward to `Todd2003` and `Todd2003txt` stayed on B13, so the reference
+entry's back-link lands PAST the first mention. `docxkit citations --later-mentions` reported "86 of 86 linked" with
+only the paper's known REF WITHOUT CITE findings; no MISPLACED MARKER. `crossrefs --audit` makes exactly this check
+for exhibits (`misplaced_anchor`: "the <key>txt marker must sit on the FIRST mention").
+
+**Suggested fix.** In the citation audit: for each key, if the first in-text link to `<key>` (document order) is not
+inside `<key>txt`, report MISPLACED MARKER with the repair `delete_bookmark` + `wrap_link_in_bookmark(which="first")`.
+And `link_all` could move the marker itself when it finds an earlier mention of an already-linked work, since it
+already decides which mention is first.
+
+**Workaround in use.** `scripts/applied/r15_todd_marker.py` in the paper: `delete_bookmark`, then
+`wrap_link_in_bookmark(xml, "Todd2003", "Todd2003txt", bid, which="first")`, gated on text, links and bookmark names.
+
+### S2 No route ships a round that relocates bookmarked exhibits: moves mis-stitch, `--no-moves` loses the bookmarks on reject
+<!-- status: open -->
+
+Found 2026-11-19 on Month_of_birth R17 (exhibits to the appendix; clean edit `revision/build/edited_r17.docx`,
+baseline `prev.docx`; the paper's checker `notes/exhibits_check.py post` PASSES on the clean edit). 26 of 40
+exhibit spans (hoisted body-level `bookmarkStart`, caption, body, note) are re-ordered; 34 caption labels change
+inside their `HYPERLINK \l "<X>txt"` field; the body's LAST paragraph changes (Table A3's note was last, now Table 24's).
+
+**Measured, three builds of the same pair** (each ~15 s, `revision ship` / `revision build`):
+
+| route | accept | reject-all |
+|---|---|---|
+| moves (default) | 4 captions lose their label: `'Table 1. Descriptive statistics'` accepts as `' Descriptive statistics'`; `link LOST on accept: -> Table4txt` (and 9, 17, 20) | ¶2877 (the old last paragraph) UNREJECTABLE: baseline `'Note: Each pupil…'`, batch `''` |
+| `--no-moves` | exact (XML accept == Word accept; oMath 6) | paragraphs, glyphs, footnotes, links True; **STRUCTURE False**: bookmarkStart lost for all 25 relocated exhibits (`Figure4`, `Table1`, …) |
+| moves, reorder only (no label change) | exact | ¶2877 UNREJECTABLE as above |
+
+In the moves redline Word splits the caption across two places: at the NEW position `<w:ins>` "Table 4." followed by a
+`moveFromRangeStart`; at the OLD position `<w:del>` "Table 17." and the title " Covariate balance at the cutoff:
+sharp design" left as plain text. The four affected captions are exactly the ones with a near-twin elsewhere in the
+block ("Covariate balance at the cutoff: sharp/fuzzy design", "Descriptive statistics" / "…of the main sample",
+the two "The jump in the overall mark…" / "The effect of being a year older…" captions). With `--no-moves` Word drops
+the bookmarks of the DELETED copy (bookmarks are not tracked), so rejecting a relocation leaves its links dangling.
+
+**Why it matters.** Every gate is right to refuse, and the CLI deliberately has no override, so a reorder of bookmarked
+exhibits — what an "exhibits to the appendix" round is — cannot be shipped at all. R13 (same paper) passed only
+because its moves had no near-twin captions and the last paragraph stayed last.
+
+**Suggested fix (to measure).** (a) In a `--no-moves` build, re-plant each body-level bookmark of a relocated span on
+its DELETED copy and let the accept side take the inserted one — impossible with one name, so instead (b) have
+`tracked.build` carry relocation bookmarks as the move route does, by building the moves themselves: compare with
+moves OFF, then pair each deleted span with its inserted twin (identical text after the label map) and rewrite the
+pair as `moveFrom`/`moveTo` ranges with the bookmark inside `moveTo` — the one hand-authored markup that would need a
+Word round-trip test, since hand-authored `w:ins`/`w:del` has failed to open before. (c) For the last-paragraph case,
+the build could refuse up front with a named cause ("the body's final paragraph changes; Word cannot track the
+final paragraph mark") rather than the generic UNREJECTABLE.
+
+**Workaround in use.** None yet: R17 stopped at T2.2 and was reported to the author (manuscript untouched).
+Later the same day the author chose to adopt the clean edit whole (`mb3.docx`), outside the ship ladder.
+
+### S4 `revision ingest` reports MEDIA CHANGED when Word only renamed the image parts
+<!-- status: open -->
+
+Found 2026-11-19 on Month_of_birth, ingesting the author's 15:13 save of `mb3.docx` (R18 accepted, a one-tag
+keepNext round) against `prev.docx` (= the R17 clean edit, whose exhibit reorder left `image4..13.png` out of
+document order). Word's save renumbered the media parts in document order. `ingest` printed 10
+`MEDIA CHANGED` lines, each labelled with a figure note (`'word/media/image10.png' … from 127557 to 54652`) and
+listed the 10 parts under `package: changed`. The ten "from" sizes and the ten "to" sizes are the same multiset.
+
+**Measured.** Resolving each `r:embed` in document order through the rels and hashing the target: 13 of 13 drawings
+show byte-identical pictures before and after (`image5.png` -> `image4.png`, `image12.png` -> `image5.png`, …).
+Nothing a reader sees changed.
+
+**Why it matters.** The MEDIA layer's own header says "a difference here is an edit and not a round-trip artifact",
+and each line names a figure, so the report reads as ten replaced figures after an author round that touched none.
+It did not block the baseline (no LOST entry), but it costs a manual check every time and would hide a real swap
+among the renames.
+
+**Suggested fix.** Pair media by what each drawing shows, not by part name: walk `r:embed`/`r:link` in document
+order on both sides, resolve through each side's rels, compare digests per drawing; report a part rename whose
+digest is unchanged as package noise ("re-saved, meaning unchanged"). The same pairing belongs in `compare`'s MEDIA
+layer.
+
+**Workaround in use.** A per-drawing digest check in the session scratchpad before the baseline (0 differing).
+
+### S2 A kept first-mention label between two deletions is re-inserted by Compare, and its marker is lost on reject
+<!-- status: open -->
+
+Found 2026-11-19 on Month_of_birth R19 (Introduction trim; clean edit `revision/build/edited_r19.docx`, baseline
+`prev.docx`, the paper's checker `notes/intro_trim_check.py post` PASSES). In one paragraph the build deletes
+`") and persists into adulthood in Mexico (Peña 2017). Later entry lowers high-school attendance in China ("` and,
+right after the kept field-link label `Chen and Park 2021` (wrapped in its marker bookmark `Chen2021txt`), deletes
+`") and early earnings in Brazil (Herdeiro et al. 2025). The direction … entry rules."`, inserting `"; "` and `")."`.
+
+**Measured** (`revision ship`, ~60 s each): Word's Compare does not keep the label as common text. It deletes the
+whole stretch from `Peña 2017` to `…entry rules.`, OLD label included, and inserts `"; " + label + ")."`, with
+`Chen2021txt` only inside the `w:ins`. Reject-all: paragraphs, glyphs, footnotes, links True; **STRUCTURE False:
+bookmarkStart lost 'Chen2021txt'**. Same result with the neighbouring removed markers kept as empty bookmarks
+(build 1), dropped (build 2), and with `--no-moves` (no move markup in any of them).
+
+**Why it matters.** A trim that removes words on both sides of a citation it keeps, the commonest shape of a
+"shorten this paragraph" edit, cannot ship whenever that citation is a first mention. Nothing in the clean edit is
+wrong, and the CLI has no way to carry it.
+
+**Suggested fix (to measure).** (a) Try `CompareGranularity` = character level (`wdGranularityCharLevel`) as a
+`--granularity char` switch, which may keep a short common field between two deletions; (b) after Compare, when a
+bookmark of the ORIGINAL sits only inside a `w:ins` whose text equals a stretch inside the adjacent `w:del`,
+re-plant the bookmark on the deleted copy too (two bookmarks of one name cannot coexist, so it would have to move
+from the inserted copy to the deleted one and back on accept, which is a post-accept repair like the one the ship
+already prints for removed entry bookmarks); (c) at minimum name the cause in the refusal ("Compare re-inserted the
+kept text '<label>'; its bookmark exists only on the inserted side").
+
+**Workaround in use.** None: R19 stopped at T8.2 (protocol D3), nothing promoted; route is the author's call.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
