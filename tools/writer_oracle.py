@@ -497,9 +497,11 @@ def probe_replace(parts: Package) -> Answers:
     """`edit.replace_in_para` and `replace_keeping_links` across run SEAMS.
 
     For up to 60 seams between two runs that show text, a 10-character
-    anchor straddling the seam is replaced twice: upper-cased whole (a
-    change on both sides) and with its last two characters changed (a
-    change after the seam only). The answer is the refusal, or every
+    anchor straddling the seam is replaced three ways: upper-cased whole
+    (a change on both sides), with its last two characters changed (a
+    change after the seam only), and with one character inserted AT the
+    seam (a pure insertion there, the case BACKLOG S1 of 2026-11-19 is
+    about: whose look, and whether to refuse). The answer is the refusal, or every
     run's text and properties afterwards — the question BACKLOG S2
     (2026-11-16) asked, which a text answer cannot see: whose look the
     new words took.
@@ -524,7 +526,8 @@ def probe_replace(parts: Package) -> Answers:
             if text.count(old) != 1 or not old.strip():
                 continue
             for label, new in (("both", old.upper() + "~"),
-                               ("after", old[:-2] + "~~")):
+                               ("after", old[:-2] + "~~"),
+                               ("seam", old[:5] + "~" + old[5:])):
                 key = f"p{n} seam {cursor} {label}"
                 for name, write in (("in_para", edit.replace_in_para),
                                     ("keeping_links",

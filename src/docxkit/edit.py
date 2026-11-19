@@ -823,12 +823,19 @@ def _rewrite_span(para_xml: str, runs: list[re.Match[str]],
     _refuse_crossed_maths(para_xml, runs, spans, (at, end), new, who=who)
 
     # A change of character formatting inside the match: rewrite only
-    # the words that change (see `replace_in_para`). The guards above ran
-    # on the WHOLE match, so this narrowing never lets a refusal through.
+    # the words that change (see `replace_in_para`). The note, empty-
+    # field and maths guards above ran on the WHOLE match. The link and
+    # field-result guards in the loop below run on the NARROWED span, and
+    # that is deliberate rather than a gap: a link lying wholly in the
+    # shared edges is not written to, so there is nothing for them to
+    # refuse — the words that change are the ones they judge. A pure
+    # insertion never reaches the loop; `_insert_at` keeps it out of a
+    # label unless `allow_hyperlink` says otherwise.
     narrowed = _narrow_to_change(
         para_xml, runs, spans, (at, end), new,
         plain=lambda i: not labels_a_link(i, runs[i]),
-        allow_format_boundary=allow_format_boundary, who=who)
+        allow_format_boundary=allow_format_boundary, who=who,
+        allow_hyperlink=allow_hyperlink)
     if isinstance(narrowed, str):
         return narrowed                 # a pure insertion, already written
     (at, end), new = narrowed
@@ -900,6 +907,7 @@ def _narrow_to_change(para_xml: str, runs: list[re.Match[str]],
                       spans: list[tuple[int, int]], match: tuple[int, int],
                       new: str, *, plain: Callable[[int], bool],
                       allow_format_boundary: bool, who: str,
+                      allow_hyperlink: bool = False,
                       ) -> tuple[tuple[int, int], str] | str:
     """The match and replacement to WRITE, when the match crosses a look.
 
@@ -928,7 +936,10 @@ def _narrow_to_change(para_xml: str, runs: list[re.Match[str]],
     words = new[head:len(new) - tail]
     if lo == hi:
         return _insert_at(para_xml, runs, spans, lo, words,
-                          before_first=lo == at, writable=plain, who=who)
+                          before_first=lo == at, within=at < lo < end,
+                          writable=plain, allow_hyperlink=allow_hyperlink,
+                          allow_format_boundary=allow_format_boundary,
+                          who=who)
     crossed = looks((lo, hi))
     if words and len(crossed) > 1 and not allow_format_boundary:
         faces = " / ".join(sorted(", ".join(sorted(k)) or "plain"
@@ -947,7 +958,8 @@ def _narrow_to_change(para_xml: str, runs: list[re.Match[str]],
 def _insert_at(para_xml: str, runs: list[re.Match[str]],
                spans: list[tuple[int, int]], pos: int, words: str, *,
                before_first: bool, writable: Callable[[int], bool],
-               who: str) -> str:
+               who: str, within: bool = False, allow_hyperlink: bool = False,
+               allow_format_boundary: bool = False) -> str:
     """Put `words` at EDITABLE offset `pos`, inside an existing run.
 
     The pure insertion a narrowed match leaves (`_rewrite_span`): nothing
@@ -957,16 +969,57 @@ def _insert_at(para_xml: str, runs: list[re.Match[str]],
     insertion opens the match (`before_first`), where the caller's
     anchor begins with the run after it. A link's label is never grown
     by this: `writable` says no, and the other side of the seam is tried.
+
+    **A seam between two runs that print differently, strictly inside
+    the match (`within`), is refused** unless `allow_format_boundary`:
+    the words belong to either side and the text cannot say which.
+    "Keywords: " in bold + "a; b" -> "Keywords: x; a; b" wrote `x; `
+    bold, the Parental Style failure the narrowing exists to stop, with
+    nothing refusing (backlog S1, 2026-11-19). At the match's own edge
+    there is no question: the anchor names the side.
+
+    **At the edge of a tracked revision the words stay outside it**, the
+    rule :func:`insert_in_para` has kept since 2026-09-18: the run before
+    the seam inside another author's ``w:ins`` took them, and rejecting
+    that author's round deleted them.
+
+    **Strictly inside a link's label** the words go in when the caller
+    passed ``allow_hyperlink`` — retitling the label is what it means —
+    and otherwise the refusal says it is inside, not at the edge.
     """
     if not words:
         return para_xml                 # nothing changes at all
     inside = [i for i, (a, b) in enumerate(spans) if a < pos < b]
     left = [i for i, (a, b) in enumerate(spans) if a < b == pos]
     right = [i for i, (a, b) in enumerate(spans) if pos == a < b]
-    order = inside or (right + left if before_first else left + right)
-    for i in order:
-        if not writable(i):
-            continue
+    if inside:
+        order = inside
+        allowed = [i for i in inside if writable(i) or allow_hyperlink]
+        where = "inside a link's label"
+    else:
+        revisions = _revision_spans(para_xml)
+
+        def in_revision(i: int) -> bool:
+            return any(in_span(runs[i].start(), s) for s in revisions)
+
+        seam = right + left if before_first else left + right
+        # stable: a run outside every revision first, the order kept
+        # among runs that are alike in that
+        order = sorted(seam, key=in_revision)
+        allowed = [i for i in order if writable(i)]
+        where = "at the edge of a link's label with no plain run beside it"
+        sides = {_look(runs[i].group(0)) for i in left + right
+                 if writable(i)}
+        if within and len(sides) > 1 and not allow_format_boundary:
+            faces = " / ".join(sorted(", ".join(sorted(k)) or "plain"
+                                      for k in sides))
+            raise AnchorError(
+                f"{who}: {words[:40]!r} goes in between two runs that "
+                f"print differently ({faces}), and either could own it -- "
+                f"the text cannot say which. Anchor on the side the words "
+                f"belong to, or pass allow_format_boundary=True to "
+                f"continue the run before them, as typing there does.")
+    for i in allowed:
         run_xml = runs[i].group(0)
         body = visible_text(run_xml)
         cut = pos - spans[i][0]
@@ -974,10 +1027,10 @@ def _insert_at(para_xml: str, runs: list[re.Match[str]],
                 + set_run_text(run_xml, body[:cut] + words + body[cut:])
                 + para_xml[runs[i].end():])
     raise AnchorError(
-        f"{who}: {words[:40]!r} would go at the edge of a link's label "
-        f"with no plain run beside it, and writing it into the label "
-        f"would make the link swallow it. Use insert_in_para, which "
-        f"places new words outside a link.")
+        f"{who}: {words[:40]!r} would go {where}, and writing it into the "
+        f"label would make the link swallow it. Use insert_in_para, which "
+        f"places new words outside a link, or pass allow_hyperlink=True "
+        f"to retitle the label.")
 
 
 def _refuse_crossed_maths(para_xml: str, runs: list[re.Match[str]],

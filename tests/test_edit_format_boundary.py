@@ -111,10 +111,68 @@ def test_a_pure_deletion_across_the_boundary_needs_no_opt_in() -> None:
     assert _faces(out) == [("Keywords:", True), (" b", False)]
 
 
-def test_an_insertion_at_the_seam_continues_the_run_before_it() -> None:
+def test_an_insertion_at_a_seam_between_two_LOOKS_is_refused() -> None:
+    """Backlog S1, 2026-11-19 (a /code-review of f2b009c, reproduced):
+    words inserted where a bold label meets a plain list belong to
+    either, and the text cannot say which. "Keywords: " + "a; b" ->
+    "Keywords: x; a; b" wrote `x; ` bold — the Parental Style failure
+    this narrowing exists to stop, with nothing refusing."""
+    p = para(_r("Keywords: ", BOLD), _r("a; b"))
+    with pytest.raises(AnchorError, match="between two runs that print"):
+        replace_in_para(p, "Keywords: a; b", "Keywords: x; a; b")
+    # anchoring on one side says which, and needs no opt-in
+    out = replace_in_para(p, "a; b", "x; a; b")
+    assert _faces(out) == [("Keywords: ", True), ("x; a; b", False)]
+
+
+def test_the_opt_in_continues_the_run_before_the_seam() -> None:
+    """What typing there in Word does, when the caller says so."""
     p = para(_r("Keywords:", BOLD), _r(" a"))
-    out = replace_in_para(p, "Keywords: a", "Keywords:! a")
+    out = replace_in_para(p, "Keywords: a", "Keywords:! a",
+                          allow_format_boundary=True)
     assert _faces(out) == [("Keywords:!", True), (" a", False)]
+
+
+def test_an_insertion_at_a_seam_between_LIKE_runs_needs_no_opt_in() -> None:
+    """Narrowing happens because the match crosses a look somewhere;
+    a seam between two runs that print alike is not that place."""
+    p = para(_r("Keywords:", BOLD), _r(" a; "), _r("b"))
+    out = replace_in_para(p, "Keywords: a; b", "Keywords: a; x; b")
+    assert _faces(out) == [("Keywords:", True), (" a; x; ", False),
+                           ("b", False)]
+
+
+LINK = ('<w:hyperlink w:anchor="Table2">'
+        '<w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr>'
+        '<w:t xml:space="preserve">Table 2</w:t></w:r></w:hyperlink>')
+
+
+def test_an_insertion_INSIDE_a_label_is_named_and_honours_the_opt_in() -> None:
+    """The refusal said "at the edge of a link's label" for a position
+    strictly inside one, and `allow_hyperlink=True` — retitling the
+    label — did not let it through (review, 2026-11-19)."""
+    p = para(_r("See "), LINK, _r(" here", BOLD))
+    with pytest.raises(AnchorError, match="inside a link's label"):
+        replace_in_para(p, "See Table 2 here", "See Tabble 2 here")
+    out = replace_in_para(p, "See Table 2 here", "See Tabble 2 here",
+                          allow_hyperlink=True)
+    label = out[out.index("<w:hyperlink"):out.index("</w:hyperlink>")]
+    assert visible_text(label) == "Tabble 2"
+
+
+INS = '<w:ins w:id="7" w:author="Other" w:date="2026-11-01T00:00:00Z">'
+
+
+def test_an_insertion_at_the_EDGE_of_a_revision_stays_out_of_it() -> None:
+    """`_insert_at` wrote into the run before the seam even when that run
+    sat inside another author's `w:ins`, so the new words became part of
+    that insertion and reject-all deleted them. `insert_in_para` has kept
+    content out of a revision at its edge since 2026-09-18."""
+    p = para(INS + _r("We ") + "</w:ins>", _r("now see"), _r(" x", BOLD))
+    out = replace_in_para(p, "We now see x", "We clearly now see x")
+    ins = out[out.index("<w:ins"):out.index("</w:ins>")]
+    assert visible_text(ins) == "We "
+    assert visible_text(out) == "We clearly now see x"
 
 
 def test_an_insertion_that_opens_the_match_joins_its_first_run() -> None:
