@@ -56,9 +56,11 @@ def test_stride_spreads_the_sample_and_keeps_a_short_list_whole():
 
 def test_diff_is_a_MULTISET_per_pair_and_bucket():
     """One entry gained beside an identical one kept is one gained."""
-    base = {"a -> b": {"format": ["x"], "text": ["t"]}}
-    head = {"a -> b": {"format": ["x", "x", "y"], "text": []},
-            "c -> d": "error: OSError: gone"}
+    base: dict[str, dict[str, list[str]] | str] = {
+        "a -> b": {"format": ["x"], "text": ["t"]}}
+    head: dict[str, dict[str, list[str]] | str] = {
+        "a -> b": {"format": ["x", "x", "y"], "text": []},
+        "c -> d": "error: OSError: gone"}
 
     assert po.diff(base, head) == {
         "(error)": [("c -> d", ["error: OSError: gone"], ["{}"])],
