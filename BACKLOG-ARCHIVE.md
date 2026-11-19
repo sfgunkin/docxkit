@@ -14,6 +14,69 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 A kept first-mention label between two deletions is re-inserted by Compare, and its marker is lost on reject~~ — FIXED 19.11, `a7ccbbb`
+
+<!-- status: fixed -->
+
+Found 2026-11-19 on Month_of_birth R19 (Introduction trim; clean edit `revision/build/edited_r19.docx`, baseline
+`prev.docx`, the paper's checker `notes/intro_trim_check.py post` PASSES). In one paragraph the build deletes
+`") and persists into adulthood in Mexico (Peña 2017). Later entry lowers high-school attendance in China ("` and,
+right after the kept field-link label `Chen and Park 2021` (wrapped in its marker bookmark `Chen2021txt`), deletes
+`") and early earnings in Brazil (Herdeiro et al. 2025). The direction … entry rules."`, inserting `"; "` and `")."`.
+
+**Measured** (`revision ship`, ~60 s each): Word's Compare does not keep the label as common text. It deletes the
+whole stretch from `Peña 2017` to `…entry rules.`, OLD label included, and inserts `"; " + label + ")."`, with
+`Chen2021txt` only inside the `w:ins`. Reject-all: paragraphs, glyphs, footnotes, links True; **STRUCTURE False:
+bookmarkStart lost 'Chen2021txt'**. Same result with the neighbouring removed markers kept as empty bookmarks
+(build 1), dropped (build 2), and with `--no-moves` (no move markup in any of them).
+
+**Why it matters.** A trim that removes words on both sides of a citation it keeps, the commonest shape of a
+"shorten this paragraph" edit, cannot ship whenever that citation is a first mention. Nothing in the clean edit is
+wrong, and the CLI has no way to carry it.
+
+**Suggested fix (to measure).** (a) Try `CompareGranularity` = character level (`wdGranularityCharLevel`) as a
+`--granularity char` switch, which may keep a short common field between two deletions; (b) after Compare, when a
+bookmark of the ORIGINAL sits only inside a `w:ins` whose text equals a stretch inside the adjacent `w:del`,
+re-plant the bookmark on the deleted copy too (two bookmarks of one name cannot coexist, so it would have to move
+from the inserted copy to the deleted one and back on accept, which is a post-accept repair like the one the ship
+already prints for removed entry bookmarks); (c) at minimum name the cause in the refusal ("Compare re-inserted the
+kept text '<label>'; its bookmark exists only on the inserted side").
+
+**Workaround in use.** None: R19 stopped at T8.2 (protocol D3), nothing promoted; route is the author's call.
+
+**Partly addressed, `e810cc7` (2026-11-19): (c) is done.** `tracked.inserted_only_bookmarks` names the cause in
+`tracked.build`'s refusal and as a CAUSE line in `revision validate`: the bookmark and its text, sitting only on
+the inserted copy, and the two shapes known to produce it. It is exact rather than a guess: a bookmark is not
+revisable, so one present in the redline and gone after reject-all can only have sat on inserted text.
+
+**(a) measured 2026-11-19: it does not help.** The R19 pair is still on disk (`revision/build/prev.docx`, 16:59,
+and `edited_r19.docx`, 17:06). On copies, `CompareDocuments` with `Granularity` 1 (word) and 0 (character), each
+with moves on and off: all four redlines lose `Chen2021txt` on reject (43 revisions at word level, 46 at character
+level, none unrejectable or unaccepted otherwise). That reproduces the premise on the real pair and rules out a
+`--granularity char` switch. The named cause fires on the real redline, and its text now says character level was
+measured too.
+
+**Still open: (b), and it is a design decision.** Moving the bookmark onto the DELETED copy keeps it on reject
+and loses it on accept, since one name cannot sit on both. So (b) means a post-accept repair (re-plant the marker
+on the kept label after the author accepts), like the one `ship` already prints for removed entry bookmarks.
+Whether the protocol should carry that is the author's call.
+
+**Fixed, `a7ccbbb` (2026-11-19): (b), without a post-accept step.** The order of an adjacent `w:del` and
+`w:ins` is invisible to both views, so `tracked.build` (`_tracked_replant.replant_reinserted_bookmarks`, run
+before the gates) splits Word's own two elements at the label, interleaves them, and sets the bookmark over the
+pair: `del[pre] ins[pre] <start> del[label] ins[label] <end> ins[post] del[post]`. No revision content is
+written, only Compare's runs regrouped; a candidate is kept only when both views' text is unchanged and both
+hold the bookmark. The two placements that do not reorder were measured first and each fails one view: on the
+deleted copy alone the bookmark is lost on accept (Word and XML agree); spanning both copies in Compare's order
+wraps the whole deleted sentence on reject.
+
+Measured in Word on the R19 redline: Accept All and Reject All both leave `Chen2021txt` on exactly
+`'Chen and Park 2021'`. The real `tracked.build` of the R19 pair, which refused, now builds with every gate
+green. Corpus: 724 of 3,036 documents carry insertions; the repair fires on 2 (`LI7_tracked.docx` and its
+pre-repair copy, `Gellatly2008txt`), no errors. Sweep routine `tracked.replant`. Not covered: a deleted copy
+that is not the insertion's neighbour, or that holds the label twice; `inserted_only_bookmarks` still names
+those, and R17's relocations (the other S2) are that shape.
+
 ### ~~S4 No oracle measures a change to `compare` on real version PAIRS; the 2026-11-19 batch hand-rolled one~~ — FIXED 19.11, `318f88d`, `c18f2eb`
 
 <!-- status: fixed -->
