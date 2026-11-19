@@ -116,10 +116,11 @@ def _paragraph(report: Report) -> int:
 def _media(report: Report) -> int:
     _head("MEDIA  (figures and embedded objects — added / removed / "
           "changed)")
-    print("  Compared by name and by content digest, not by pixels: a "
-          "part whose bytes differ is worth a look whatever changed in "
-          "it. Word does not rewrite these on save, so a difference "
-          "here is an edit and not a round-trip artifact.")
+    print("  Compared drawing by drawing (by part name when a figure "
+          "was added or removed) and by content digest, not by pixels: "
+          "a picture whose bytes differ is worth a look whatever changed "
+          "in it. Word renaming the parts into document order on save "
+          "is not reported; a difference here is an edit.")
     for m in report["media"]:
         where = f"  — {m['label']}" if m.get("label") else ""
         size = (f"{m['from']:,} -> {m['to']:,} bytes"

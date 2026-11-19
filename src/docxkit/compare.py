@@ -89,6 +89,8 @@ from ._compare_diff import formula_diff as formula_diff
 from ._compare_diff import hyperlink_labels as hyperlink_labels
 from ._compare_diff import integrity as integrity
 from ._compare_diff import label_moves as label_moves
+from ._compare_diff import media_pairs as media_pairs
+from ._compare_diff import renamed_media as renamed_media
 from ._compare_diff import stripped_block as stripped_block
 from ._compare_diff import stripped_fields as stripped_fields
 from ._compare_diff import word_diff as word_diff
@@ -137,7 +139,9 @@ __all__ = [
     "load_parts",
     "main",
     "mask_volatile_fields",
+    "media_pairs",
     "pair_parts",
+    "renamed_media",
     "render",
     "stripped_block",
     "stripped_fields",

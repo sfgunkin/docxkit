@@ -20,12 +20,15 @@ from ._compare_read import (
     Doc,
     Para,
     _fields,
+    _media_of,
+    drawn_media,
 )
 from ._xml import (
     BOOKMARK_END_ID_RE,
     BOOKMARK_START_ID_RE,
     INSTR_ANCHOR_RE,
     INSTR_RE,
+    Parts,
     normalize_glyphs,
 )
 
@@ -712,20 +715,37 @@ def compare_media(a: Doc, b: Doc, report: Report) -> None:
     the package reported as zero changes — on the one task whose whole
     deliverable was four replaced images (HCW, filed S1).
 
-    **Paired by NAME, and that is measured rather than assumed.** The
-    alternative was pairing by digest to absorb renumbering, and it
-    would have hidden the case that matters: two figures whose contents
-    swap places keep both names and both digests, and only a name
-    pairing calls that two changes. Word does not renumber media parts
-    on save — checked over 110 media parts in three real manuscripts,
-    every one byte-identical through an open-and-save — so the noise
-    the digest pairing would have absorbed does not arrive.
+    **Paired by DRAWING when both sides draw as many pictures**, by name
+    otherwise. Pairing by digest alone would hide the case that matters:
+    two figures whose contents swap places keep both names and both
+    digests, and only a positional pairing calls that two changes. Name
+    pairing was the rule until 2026-11-19, on the measurement that Word
+    does not renumber media parts on save — true of 110 parts in three
+    manuscripts whose media were in document order. When they are NOT,
+    Word renumbers them into it: Month_of_birth's exhibit reorder left
+    ``image4..13.png`` out of order, the author's next save renamed all
+    ten, and this layer reported ten replaced figures where every
+    drawing showed the same picture (backlog S4). Drawing ``i`` against
+    drawing ``i`` sees both: a rename keeps the digest, a swap does not.
+    A picture no drawing shows is still paired by name.
 
     No pixel diff, deliberately: "content differs, 66,203 -> 69,327
     bytes" is enough to send a person to look, which is all any other
     layer does.
     """
-    for name in sorted(set(a.media) | set(b.media)):
+    # a drawing whose part is missing on either side is left to the
+    # name pairing below, which reports it ADDED or REMOVED
+    drawn: set[str] = set()
+    for was, now in media_pairs(a, b) or ():
+        before, after = a.media.get(was), b.media.get(now)
+        if before is None or after is None:
+            continue
+        drawn |= {was, now}
+        if before.digest != after.digest:
+            report["media"].append(
+                {"type": "MEDIA CHANGED", "part": now, "label": after.label,
+                 "from": before.size, "to": after.size})
+    for name in sorted((set(a.media) | set(b.media)) - drawn):
         before, after = a.media.get(name), b.media.get(name)
         known = after or before
         label = known.label if known else ""
@@ -742,6 +762,34 @@ def compare_media(a: Doc, b: Doc, report: Report) -> None:
             report["media"].append(
                 {"type": "MEDIA ADDED", "part": name, "label": label,
                  "from": 0, "to": after.size})
+
+
+def media_pairs(a: Doc, b: Doc) -> list[tuple[str, str]] | None:
+    """``(part in a, part in b)`` for each drawing, in document order,
+    or None when the two sides do not draw as many pictures — a figure
+    added or removed, where position says nothing and the name is the
+    better guess. A picture drawn twice is paired once."""
+    if not a.drawn or len(a.drawn) != len(b.drawn):
+        return None
+    return list(dict.fromkeys(zip(a.drawn, b.drawn, strict=True)))
+
+
+def renamed_media(before: Parts, after: Parts) -> list[str]:
+    """Media parts of `after` whose bytes differ from the part of that
+    name in `before` only because Word RENAMED the parts: each drawing
+    still shows the same picture. What `revision ingest` files as
+    re-saved rather than changed. Empty unless :func:`media_pairs` pairs
+    the sides."""
+    a, b = (Doc("", [], [], _media_of(raw), drawn_media(raw))
+            for raw in (before, after))
+    pairs = media_pairs(a, b)
+    if pairs is None:
+        return []
+    same = {now for was, now in pairs
+            if (x := a.media.get(was)) and (y := b.media.get(now))
+            and x.digest == y.digest}
+    return sorted(n for n in same
+                  if n in a.media and a.media[n].digest != b.media[n].digest)
 
 
 def compare_comments(a: Doc, b: Doc, report: Report) -> None:

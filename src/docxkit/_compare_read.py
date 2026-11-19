@@ -18,6 +18,7 @@ import html
 import posixpath
 import re
 import zipfile
+from collections.abc import Iterator
 from difflib import SequenceMatcher
 from typing import TypedDict
 
@@ -796,6 +797,25 @@ def _media_labels(raw: Parts) -> dict[str, str]:
     every one of these manuscripts.
     """
     labels: dict[str, str] = {}
+    for paras, i, hit in _drawings(raw):
+        texts = [printed_text(p).strip() for p in
+                 paras[max(0, i - 2):i + 3]]
+        at = min(i, 2)
+        # the caption below first — that is where a figure's sits in
+        # every one of these manuscripts — then above
+        near = [texts[at], *texts[at + 1:], *reversed(texts[:at])]
+        caption = next((t for t in near if t), "")
+        for target in hit:
+            labels.setdefault(target, caption[:60])
+    return labels
+
+
+def _drawings(raw: Parts) -> Iterator[tuple[list[str], int, list[str]]]:
+    """``(paragraphs, index, media drawn)`` for each paragraph that draws.
+
+    The media are in the order the paragraph's ids name them; parts are
+    walked in name order, so both sides of a comparison walk alike.
+    """
     for name in sorted(raw):
         if not TEXT_PART_RE.match(name):
             continue
@@ -805,20 +825,24 @@ def _media_labels(raw: Parts) -> dict[str, str]:
         targets = _rel_targets(rels.decode("utf-8", "replace"), "word/")
         paras = [m.group(0) for m in P_RE.finditer(
             raw[name].decode("utf-8", "replace"))]
-        texts = [printed_text(p).strip() for p in paras]
         for i, para in enumerate(paras):
-            drawn = {targets.get(rid) for rid in _RID_RE.findall(para)}
-            hit = {t for t in drawn if t and MEDIA_PART_RE.match(t)}
-            if not hit:
-                continue
-            # the caption below first — that is where a figure's
-            # sits in every one of these manuscripts — then above
-            near = [texts[i], *texts[i + 1:i + 3],
-                    *reversed(texts[max(0, i - 2):i])]
-            caption = next((t for t in near if t), "")
-            for target in hit:
-                labels.setdefault(target, caption[:60])
-    return labels
+            hit = [t for rid in _RID_RE.findall(para)
+                   if (t := targets.get(rid)) and MEDIA_PART_RE.match(t)]
+            if hit:
+                yield paras, i, hit
+
+
+def drawn_media(raw: Parts) -> list[str]:
+    """The media part behind each drawing, in document order.
+
+    What a reader sees is the drawing, not the part's name — and Word
+    RENAMES media parts into document order on save when they are out
+    of it (Month_of_birth, 2026-11-19: an exhibit reorder left
+    ``image4..13.png`` out of order, and the author's next save
+    renumbered all ten). Pairing the two sides drawing by drawing is
+    what tells that renaming from a changed figure.
+    """
+    return [t for _paras, _i, hit in _drawings(raw) for t in hit]
 
 
 def _media_of(raw: Parts) -> dict[str, Media]:
@@ -859,7 +883,7 @@ class Part:
 class Doc:
     """A package as the comparison sees it: parts, comments, and media."""
 
-    __slots__ = ("comments", "media", "parts", "path")
+    __slots__ = ("comments", "drawn", "media", "parts", "path")
 
     path: str
     parts: list[Part]
@@ -869,14 +893,19 @@ class Doc:
     dict holding none — which is not the same as a document with no
     figures, and is why `compare_media` reports nothing when BOTH sides
     are empty rather than treating one side's absence as a deletion."""
+    drawn: list[str]
+    """The media part behind each drawing, in document order
+    (:func:`drawn_media`)."""
 
     def __init__(self, path: str, parts: list[Part],
                  comments: list[tuple[str, str, str]],
-                 media: dict[str, Media] | None = None) -> None:
+                 media: dict[str, Media] | None = None,
+                 drawn: list[str] | None = None) -> None:
         self.path = path
         self.parts = parts
         self.comments = comments
         self.media = media or {}
+        self.drawn = drawn or []
 
 
 def _rank(name: str) -> tuple[int, str]:
@@ -900,7 +929,8 @@ def load_parts(raw: Parts, path: str = "") -> Doc:
                       if STYLES_PART in raw else None)
     parts = [Part(n, raw[n].decode("utf-8"), cascade)
              for n in sorted(raw, key=_rank) if TEXT_PART_RE.match(n)]
-    return Doc(path, parts, _read_comments(raw), _media_of(raw))
+    return Doc(path, parts, _read_comments(raw), _media_of(raw),
+               drawn_media(raw))
 
 
 def load(path: str) -> Doc:

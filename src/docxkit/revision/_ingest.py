@@ -115,6 +115,10 @@ def ingest(working: str | Path, prev: str | Path, *,
     # out of the snapshot: one read, and a path the caller can open.
     working_state = _state(working_parts, working, snapshot)
     parts = package.changed_parts(prev_parts, working_parts)
+    # Word renames media parts into document order on save; a picture
+    # every drawing still shows is a re-save, not a changed part
+    # (Month_of_birth 2026-11-19: ten "changed" figures, none changed).
+    renamed = set(_compare.renamed_media(prev_parts, working_parts))
     lost = losses(working_parts, prev_parts)
     deleted: list[Loss] = []
     if paper is not None:
@@ -128,9 +132,10 @@ def ingest(working: str | Path, prev: str | Path, *,
         prev=prev,
         from_snapshot=snapshot,
         content=content,
-        changed_parts=[p for p in parts["changed"] if p not in SAVE_NOISE],
+        changed_parts=[p for p in parts["changed"]
+                       if p not in SAVE_NOISE and p not in renamed],
         noise_parts=[p for p in parts["changed"] if p in SAVE_NOISE],
-        resaved=len(parts["resaved"]),
+        resaved=len(parts["resaved"]) + len(renamed & set(parts["changed"])),
         added=parts["added"],
         removed=parts["removed"],
         working_state=working_state,

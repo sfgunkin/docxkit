@@ -143,6 +143,10 @@ def routines(blob: bytes) -> dict[str, Routine]:
         # endnotes.xml holding only separator entries being reported as a
         # whole part gained.
         "compare.self": lambda: _self_diff(dict(raw)),
+        # media a document "renamed" against ITSELF — always none; it is
+        # what reaches the drawing pairing `revision ingest` reads
+        "compare.renamed_self": lambda: len(
+            compare.renamed_media(dict(raw), dict(raw))),
         "footnotes.find_all": lambda: len(footnotes.find_all(foot))
         if foot else 0,
         # How many DISTINCT face/size combinations the notes state. A
@@ -234,6 +238,9 @@ def check(row: dict[str, object]) -> list[str]:
     if row.get("compare.self") not in (0, "FAIL"):
         out.append(f"compare reports {row['compare.self']} difference(s) "
                    "between the document and ITSELF")
+    if row.get("compare.renamed_self") not in (0, "FAIL"):
+        out.append(f"{row['compare.renamed_self']} media part(s) read as "
+                   "renamed between the document and ITSELF")
     if row.get("text.final") == 0:
         out.append("no paragraphs of text")
     if isinstance(row.get("figures.shared"), int) and row["figures.shared"]:

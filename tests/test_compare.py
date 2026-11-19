@@ -4473,10 +4473,72 @@ def test_an_EMBEDDED_object_counts_as_media():
     assert entry["part"].startswith("word/embeddings/")
 
 
+def _two_figures(first: str, second: str, blobs: dict[str, bytes]):
+    """Two drawings, rId1 then rId2, naming the parts given."""
+    drawing = _DRAWING.replace('r:embed="rId7"', 'r:embed="{rid}"')
+    parts = make_parts(drawing.format(rid="rId1") + para(run("Figure 1."))
+                       + drawing.format(rid="rId2") + para(run("Figure 2.")))
+    rel = ('<Relationship Id="{rid}" Type="http://schemas.openxmlformats'
+           '.org/officeDocument/2006/relationships/image" '
+           'Target="media/{name}"/>')
+    parts["word/_rels/document.xml.rels"] = (
+        '<?xml version="1.0"?><Relationships xmlns="http://schemas.'
+        'openxmlformats.org/package/2006/relationships">'
+        + rel.format(rid="rId1", name=first)
+        + rel.format(rid="rId2", name=second)
+        + "</Relationships>").encode("utf-8")
+    for name, blob in blobs.items():
+        parts[f"word/media/{name}"] = blob
+    return parts
+
+
+def test_Word_RENUMBERING_the_media_parts_is_not_a_change():
+    """Month_of_birth, 2026-11-19 (backlog S4): an exhibit reorder left
+    the media out of document order and the author's save renamed them
+    into it. Every drawing shows the picture it showed; the layer said
+    ten figures were replaced."""
+    before = _two_figures("image2.png", "image1.png",
+                          {"image1.png": PNG2, "image2.png": PNG})
+    after = _two_figures("image1.png", "image2.png",
+                         {"image1.png": PNG, "image2.png": PNG2})
+
+    assert _media_report(before, after)["media"] == []
+
+
+def test_two_DRAWN_figures_that_swap_pictures_are_still_two_changes():
+    """What name pairing was kept for, and what the drawing pairing
+    keeps: same names, same digests, the pictures traded places."""
+    before = _two_figures("image1.png", "image2.png",
+                          {"image1.png": PNG, "image2.png": PNG2})
+    after = _two_figures("image1.png", "image2.png",
+                         {"image1.png": PNG2, "image2.png": PNG})
+
+    changes = _media_report(before, after)["media"]
+
+    assert [(c["type"], c["part"], c["label"]) for c in changes] == [
+        ("MEDIA CHANGED", "word/media/image1.png", "Figure 1."),
+        ("MEDIA CHANGED", "word/media/image2.png", "Figure 2.")]
+
+
+def test_renamed_media_names_the_parts_a_RENUMBERING_explains():
+    from docxkit.compare import renamed_media
+    before = _two_figures("image2.png", "image1.png",
+                          {"image1.png": PNG2, "image2.png": PNG})
+    renumbered = _two_figures("image1.png", "image2.png",
+                              {"image1.png": PNG, "image2.png": PNG2})
+    replaced = _two_figures("image2.png", "image1.png",
+                            {"image1.png": PNG2, "image2.png": b"new"})
+
+    assert renamed_media(before, renumbered) == [
+        "word/media/image1.png", "word/media/image2.png"]
+    assert renamed_media(before, replaced) == []
+    assert renamed_media(before, before) == []
+
+
 def test_two_figures_that_SWAP_contents_are_two_changes():
-    """Why the pairing is by NAME. Pairing by digest would absorb a
-    renumbering — and would report this, where the pictures genuinely
-    trade places, as nothing at all."""
+    """Pairing by digest would absorb a renumbering — and would report
+    this, where the pictures genuinely trade places, as nothing at all.
+    image2 is drawn by nothing here, so it is paired by name."""
     before, after = _with_media(), _with_media()
     before["word/media/image2.png"] = PNG2
     after["word/media/image1.png"] = PNG2

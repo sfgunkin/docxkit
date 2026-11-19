@@ -771,6 +771,44 @@ def test_ingest_does_not_cry_wolf_over_save_noise(project):
     assert "docProps/app.xml" in report.noise_parts
 
 
+def _drawn(first: str, second: str, blobs: dict[str, bytes]):
+    """Two drawings naming `first` then `second` of the rIds; the rels
+    are fixed (rId1 -> image1, rId2 -> image2), as Word leaves them when
+    it renumbers: on the Month_of_birth pair the rels part did not
+    change, the drawings' ids and the media did."""
+    blip = ('<w:p><w:r><w:drawing><a:blip r:embed="{rid}"/></w:drawing>'
+            "</w:r></w:p>")
+    parts = make_parts(blip.format(rid=first) + para(run("Figure 1."))
+                       + blip.format(rid=second) + para(run("Figure 2.")))
+    rel = ('<Relationship Id="rId{n}" Type="http://schemas.openxmlformats'
+           '.org/officeDocument/2006/relationships/image" '
+           'Target="media/image{n}.png"/>')
+    parts["word/_rels/document.xml.rels"] = (
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+        '2006/relationships">' + rel.format(n=1) + rel.format(n=2)
+        + "</Relationships>").encode()
+    for name, blob in blobs.items():
+        parts[f"word/media/{name}"] = blob
+    return parts
+
+
+def test_ingest_files_media_Word_only_RENAMED_as_resaved(project):
+    """Month_of_birth, 2026-11-19 (backlog S4): Word renamed ten media
+    parts into document order and `ingest` listed all ten as changed.
+    A part whose picture every drawing still shows is a re-save."""
+    write(project.prev, _drawn("rId2", "rId1",
+                               {"image1.png": b"chart B", "image2.png": b"A"}))
+    write(project.working, _drawn("rId1", "rId2", {"image1.png": b"A",
+                                                    "image2.png": b"chart B"}))
+
+    report = revision.ingest(project.working, project.prev)
+
+    # the drawings' ids did change, as they did on the real pair
+    assert report.changed_parts == ["word/document.xml"]
+    assert report.resaved >= 2
+    assert report.content["media"] == []
+
+
 # ----------------------------------------------------------- baseline
 
 def test_baseline_records_the_new_truth(project):

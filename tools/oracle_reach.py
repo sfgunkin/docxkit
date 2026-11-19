@@ -75,6 +75,10 @@ EXEMPT: dict[str, str] = {
     "docxkit._tracked_report": "what `tracked.build` reports",
     "docxkit.package:next_backup_path": "names a backup FILE on disk; "
                                         "reads and writes no document",
+    "docxkit._compare_render:_media": "prints the MEDIA layer's entries "
+                                      "and its header; the entries are "
+                                      "compare_media's, which compare.self "
+                                      "sweeps",
 }
 
 
