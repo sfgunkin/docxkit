@@ -924,6 +924,21 @@ the right result when tried.)
 take the same refusal (or `allow_format_boundary`); route it through `insert_in_para` so the revision-edge
 rule applies; run the link guards on the whole match before narrowing, and correct the comment.
 
+### S4 No oracle measures a change to `compare` on real version PAIRS; the 2026-11-19 batch hand-rolled one
+<!-- status: open -->
+
+Found 2026-11-19, processing the `compare` FORMAT entry, whose own text said "measure on the corpus first".
+`tools/sweep.py` reads one document at a time, and its only compare routine is `compare.self` (a document
+against itself, always 0), so no corpus run can show what a change to a PAIR layer does. The batch wrote three
+scratch scripts: consecutive versions of similarly named manuscripts in one folder (by mtime) as pairs, then
+`compare_docs` on each pair with the old `src` (a worktree at HEAD) and the new one, then a multiset diff of
+the FORMAT entries. It answered the question (1,042, then 724 new entries in 240 pairs), and it lives only in a
+session scratchpad.
+
+**Fix sketch.** A `tools/pair_oracle.py` beside `writer_oracle.py`: build the pair list once (or read it from
+`DOCXKIT_CORPUS`), run `compare_docs` per pair on `--base` and the working tree, and diff every bucket. That is
+`writer_oracle`'s shape with two documents per case, and `oracle_reach` could count it as reaching `compare`.
+
 ### S4 No API for a tracked round on top of pending revisions; the paper had to hand-roll one
 <!-- status: open -->
 
