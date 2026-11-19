@@ -1285,7 +1285,8 @@ def cmd_compare_probe(args: argparse.Namespace) -> int:
     print(f"{Path(args.original).name} -> {Path(args.clean).name}")
     print(f"  revisions: {report.revisions}  "
           f"{', '.join(f'{k} {n}' for k, n in sorted(kinds.items()))}")
-    for note in report.returned_spaces + report.restored_glyphs:
+    for note in (report.returned_spaces + report.restored_glyphs
+                 + report.replanted_bookmarks):
         print(f"  repaired: {note}")
     # Every list the build would have refused on, from the report's own
     # table — picking five by hand here missed the lost anchor and the

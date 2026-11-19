@@ -82,6 +82,9 @@ from ._tracked_gates import structure_diff as structure_diff
 from ._tracked_gates import unaccepted as unaccepted
 from ._tracked_gates import untracked as untracked
 from ._tracked_gates import width_changes as width_changes
+from ._tracked_replant import (
+    replant_reinserted_bookmarks as replant_reinserted_bookmarks,
+)
 from ._tracked_report import _ACCEPT_ESCAPE as _ACCEPT_ESCAPE
 from ._tracked_report import _LINT_ESCAPE as _LINT_ESCAPE
 from ._tracked_report import BuildReport as BuildReport
@@ -159,6 +162,7 @@ __all__ = [
     "inserted_only_bookmarks",
     "package_counts",
     "rejected_view",
+    "replant_reinserted_bookmarks",
     "return_note_spaces",
     "revisions_by_part",
     "structure_counts",
@@ -1002,6 +1006,10 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
         _carry_rewrites(parts, original_parts, revised_parts, report, say)
         _return_spaces(parts, revised_parts, report, say,
                        fold_space=not whitespace)
+        report.replanted_bookmarks = replant_reinserted_bookmarks(
+            parts, original_parts)
+        for note in report.replanted_bookmarks:
+            say(f"  {note}")
         report.dropped = compare_collateral(revised_parts, parts)
         for note in report.dropped:
             say(f"  WARNING: Compare {note}")

@@ -102,6 +102,7 @@ VALUES = [
     # in the XML half since 2026-09-11; reachable as `tracked.<Name>`
     "_tracked_gates.Unaccepted",
     "_tracked_gates.Untracked",
+    "_tracked_replant._Candidate",
     "wordcount.Counts",
     "house._Drawing",
 ]

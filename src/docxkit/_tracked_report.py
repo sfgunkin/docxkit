@@ -167,7 +167,7 @@ BLOCKING: tuple[tuple[str, str], ...] = (
 ADVISORY: tuple[str, ...] = (
     "suppressed", "dropped", "carried", "carried_from_baseline",
     "carried_properties", "restored_glyphs", "returned_spaces",
-    "deduped_comments", "uncommented", "phases",
+    "replanted_bookmarks", "deduped_comments", "uncommented", "phases",
 )
 
 #: The advisory lists that want a person's LOOK — a Word call that
@@ -276,6 +276,11 @@ class BuildReport:
         #: Spaces Compare deleted after a note mark and the build gave
         #: back. See :func:`return_note_spaces`.
         self.returned_spaces: list[str] = []
+        #: Bookmarks of the original that Compare left only on text it
+        #: deleted and inserted again, set over both copies so rejecting
+        #: keeps them. See
+        #: :func:`docxkit.tracked.replant_reinserted_bookmarks`.
+        self.replanted_bookmarks: list[str] = []
         #: Comments Compare kept TWICE because both inputs carried them.
         #: See :func:`docxkit.hygiene.dedupe_comments`.
         self.deduped_comments: list[str] = []

@@ -71,6 +71,7 @@ from docxkit.errors import DocxKitError          # everything catchable
 | `tracked` | build a tracked-changes deliverable end to end |
 | `moves` | move a block as a tracked change done by WORD, on top of a co-author's pending revisions (which Compare would flatten); author name, properties and the three views gated |
 | `_tracked_gates` / `_tracked_report` | internal: what a redline must reproduce (the XML gates — reject-all, accept-all, collateral, counts; no Word) and what a build did (the report and the refusals that read it). `tracked` is the facade and keeps the Word pipeline |
+| `_tracked_replant` | internal: a bookmark Compare left only on text it deleted and inserted again (a kept first-mention label in a trim), set over both copies so reject-all keeps it; run by `tracked.build` before its gates |
 | `guard` | stop a rebuild discarding a review someone made in Word; `restamp` records a repair the TOOL made, which is not a review; `carry` moves a stamp with the bytes it describes, as `promote` does onto the manuscript |
 | `ingest` | fold the author's Word edits back into the build source, part by part — a footnote the author retyped is an override too |
 | `lint` | structural checks for the markup Word refuses to open (ported from DSI) |

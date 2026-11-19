@@ -76,6 +76,7 @@ from docxkit import (
     refstyle,
     revisions,
     tables,
+    tracked,
 )
 from docxkit.console import utf8_stdout
 from docxkit.testing import read_bytes
@@ -147,6 +148,13 @@ def routines(blob: bytes) -> dict[str, Routine]:
         # what reaches the drawing pairing `revision ingest` reads
         "compare.renamed_self": lambda: len(
             compare.renamed_media(dict(raw), dict(raw))),
+        # A redline in the corpus whose bookmark sits only on INSERTED
+        # text next to a deleted copy — the shape `tracked.build` repairs
+        # (Month_of_birth R19). The document is its own original, so
+        # this counts the repairs a build on it would make: 0 on a clean
+        # file, and on a redline what the repair would touch.
+        "tracked.replant": lambda: len(
+            tracked.replant_reinserted_bookmarks(dict(raw), dict(raw))),
         "footnotes.find_all": lambda: len(footnotes.find_all(foot))
         if foot else 0,
         # How many DISTINCT face/size combinations the notes state. A

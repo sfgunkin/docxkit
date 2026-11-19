@@ -340,6 +340,7 @@ HARNESS: dict[str, list[str]] = {
                    "tests/test_tracked_gates.py",
                    "tests/test_tracked_edges.py",
                    "tests/test_tracked_guard.py",
+                   "tests/test_tracked_replant.py",
                    "tests/test_cli_revision.py", "tests/test_parts_gaps.py",
                    "tests/test_value_types.py"],
     # `tracked.py` grew two halves on 2026-09-11, and each gets the
@@ -350,10 +351,19 @@ HARNESS: dict[str, list[str]] = {
                       "tests/test_tracked_gates.py",
                       "tests/test_tracked_edges.py",
                       "tests/test_tracked_guard.py",
+                      "tests/test_tracked_replant.py",
                       "tests/test_cli_revision.py",
                       "tests/test_parts_gaps.py",
                       "tests/test_value_types.py"]
        for half in ("_tracked_gates", "_tracked_report")},
+    # 2026-11-19: the repair is reached from `tracked.build` (Word) and
+    # pinned on its own, on Compare's R19 shape
+    "_tracked_replant.py": ["tests/test_tracked_replant.py",
+                            "tests/test_tracked_build.py",
+                            "tests/test_tracked_gates.py",
+                            "tests/test_tracked_edges.py",
+                            "tests/test_tracked_guard.py",
+                            "tests/test_value_types.py"],
     "_cite_audit.py": ["tests/test_citations.py", "tests/test_crossrefs.py",
                        "tests/test_link_convention.py",
                        "tests/test_cite_audit_edges.py"],
@@ -567,7 +577,8 @@ HARNESS: dict[str, list[str]] = {
 FACADE = {"_table_core.py": "tables", "_table_layout.py": "tables",
           "_compare_diff.py": "compare", "_compare_render.py": "compare",
           "_compare_read.py": "compare",
-          "_tracked_gates.py": "tracked", "_tracked_report.py": "tracked"}
+          "_tracked_gates.py": "tracked", "_tracked_report.py": "tracked",
+          "_tracked_replant.py": "tracked"}
 EXCLUDED: dict[str, tuple[str, ...]] = {
     "_table_core.py": ("tests/test_tables_fit.py",
                        "tests/test_tables_fit_edges.py",
