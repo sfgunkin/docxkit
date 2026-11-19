@@ -14,6 +14,36 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S4 No oracle measures a change to `compare` on real version PAIRS; the 2026-11-19 batch hand-rolled one~~ — FIXED 19.11, `318f88d`, `c18f2eb`
+
+<!-- status: fixed -->
+
+Found 2026-11-19, processing the `compare` FORMAT entry, whose own text said "measure on the corpus first".
+`tools/sweep.py` reads one document at a time, and its only compare routine is `compare.self` (a document
+against itself, always 0), so no corpus run can show what a change to a PAIR layer does. The batch wrote three
+scratch scripts: consecutive versions of similarly named manuscripts in one folder (by mtime) as pairs, then
+`compare_docs` on each pair with the old `src` (a worktree at HEAD) and the new one, then a multiset diff of
+the FORMAT entries. It answered the question (1,042, then 724 new entries in 240 pairs), and it lives only in a
+session scratchpad.
+
+**Fix sketch.** A `tools/pair_oracle.py` beside `writer_oracle.py`: build the pair list once (or read it from
+`DOCXKIT_CORPUS`), run `compare_docs` per pair on `--base` and the working tree, and diff every bucket. That is
+`writer_oracle`'s shape with two documents per case, and `oracle_reach` could count it as reaching `compare`.
+
+**Fixed in `318f88d`.** `tools/pair_oracle.py`: consecutive versions of one manuscript per folder (by mtime, each
+with the next file of its own name, so a file saved in between does not break the pair; redlines, tracked copies
+and comparisons left out), a strided sample, `compare_docs` on each pair with the base revision's `src` and the
+working tree's, and every bucket diffed as a multiset. `--bucket`, `--show`, `--expect-same`, `--jobs`; exit 3
+without a corpus. Five tests in `tests/test_pair_oracle.py`, among them the pairing rule (its first version broke a
+pair around a cover letter, which the test caught) and an end-to-end run against HEAD.
+
+**It paid for itself on its first run**: base `023b102`, 120 of 1,024 pairs, reproduced the FORMAT change
+(+341 in 36 pairs) and showed Month_of_birth's mb2 -> mb3 reporting 7 MEDIA ADDED for pictures still in the
+document. Fixed in `c18f2eb` (parts no caption paired are matched by content before names).
+
+Not done: `oracle_reach` does not count this oracle as reaching `compare`; the entry's sketch said it "could".
+Run it by hand for a change to `compare`.
+
 ### ~~S1 `replace_in_para`'s narrowing writes an inserted phrase in the look of the run left of the seam~~ — FIXED 19.11, `bc84cee`
 
 <!-- status: fixed -->
@@ -113,7 +143,7 @@ Tests: `test_a_format_change_RIDING_on_a_text_edit_is_format` (the keywords line
 `test_a_REWRITTEN_word_in_a_new_style_is_text_not_format`,
 `test_unrelated_paragraphs_paired_by_position_compare_no_format`.
 
-### ~~S4 `revision ingest` reports MEDIA CHANGED when Word only renamed the image parts~~ — FIXED 19.11, `e72e75f`, `7909330`, `7decace`
+### ~~S4 `revision ingest` reports MEDIA CHANGED when Word only renamed the image parts~~ — FIXED 19.11, `e72e75f`, `7909330`, `7decace`, `c18f2eb`
 
 <!-- status: fixed -->
 
