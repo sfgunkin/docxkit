@@ -479,14 +479,18 @@ def _late_markers(doc: str, paras: list[re.Match[str]],
     for anchor, at in field_anchors(doc, clickable=False):
         first[anchor] = min(at, first.get(anchor, at))
 
+    # every marker's first definition in ONE pass over the body: a search
+    # per marker is a whole-document scan per cited work
+    marks: dict[str, int] = {}
+    for m in re.finditer(r'<w:bookmarkStart\b[^>]*\bw:name="([^"]+)"', doc):
+        marks.setdefault(m.group(1), m.start())
+
     found: list[_Finding] = []
     for name in sorted(cite_marks):
         key = name[:-3]
-        mark = re.search(rf'<w:bookmarkStart\b[^>]*w:name="{re.escape(name)}"',
-                         doc)
-        if mark is None or key not in first:
+        if name not in marks or key not in first:
             continue
-        home, ahead = para_of(mark.start()), para_of(first[key])
+        home, ahead = para_of(marks[name]), para_of(first[key])
         if ahead < home:
             found.append(_Finding(
                 "LATE MARKER", name,

@@ -798,16 +798,20 @@ def _media_labels(raw: Parts) -> dict[str, str]:
     """
     labels: dict[str, str] = {}
     for paras, i, hit in _drawings(raw):
-        texts = [printed_text(p).strip() for p in
-                 paras[max(0, i - 2):i + 3]]
-        at = min(i, 2)
-        # the caption below first — that is where a figure's sits in
-        # every one of these manuscripts — then above
-        near = [texts[at], *texts[at + 1:], *reversed(texts[:at])]
-        caption = next((t for t in near if t), "")
+        caption = _caption(paras, i)
         for target in hit:
             labels.setdefault(target, caption[:60])
     return labels
+
+
+def _caption(paras: list[str], i: int) -> str:
+    """The nearest paragraph with text to drawing paragraph `i`: below
+    first — where a figure's caption sits in every one of these
+    manuscripts — then above."""
+    texts = [printed_text(p).strip() for p in paras[max(0, i - 2):i + 3]]
+    at = min(i, 2)
+    near = [texts[at], *texts[at + 1:], *reversed(texts[:at])]
+    return next((t for t in near if t), "")
 
 
 def _drawings(raw: Parts) -> Iterator[tuple[list[str], int, list[str]]]:
@@ -832,17 +836,23 @@ def _drawings(raw: Parts) -> Iterator[tuple[list[str], int, list[str]]]:
                 yield paras, i, hit
 
 
-def drawn_media(raw: Parts) -> list[str]:
-    """The media part behind each drawing, in document order.
+def drawn_media(raw: Parts) -> list[tuple[str, str]]:
+    """``(caption key, media part)`` for each drawing, in document order.
 
     What a reader sees is the drawing, not the part's name — and Word
     RENAMES media parts into document order on save when they are out
     of it (Month_of_birth, 2026-11-19: an exhibit reorder left
     ``image4..13.png`` out of order, and the author's next save
-    renumbered all ten). Pairing the two sides drawing by drawing is
-    what tells that renaming from a changed figure.
+    renumbered all ten). The key is what pairs a drawing across two
+    versions: its caption (the nearest text, :func:`_caption`), and its
+    place among the drawings of its paragraph, so two panels under one
+    caption stay two. A caption travels with its figure when the
+    exhibits are reordered and stays put when a picture is swapped,
+    which is the distinction POSITION cannot make (review, 2026-11-19).
     """
-    return [t for _paras, _i, hit in _drawings(raw) for t in hit]
+    return [(f"{_caption(paras, i)[:200]}\x00{k}", t)
+            for paras, i, hit in _drawings(raw)
+            for k, t in enumerate(hit)]
 
 
 def _media_of(raw: Parts) -> dict[str, Media]:
@@ -893,14 +903,14 @@ class Doc:
     dict holding none — which is not the same as a document with no
     figures, and is why `compare_media` reports nothing when BOTH sides
     are empty rather than treating one side's absence as a deletion."""
-    drawn: list[str]
-    """The media part behind each drawing, in document order
+    drawn: list[tuple[str, str]]
+    """``(caption key, media part)`` for each drawing, in document order
     (:func:`drawn_media`)."""
 
     def __init__(self, path: str, parts: list[Part],
                  comments: list[tuple[str, str, str]],
                  media: dict[str, Media] | None = None,
-                 drawn: list[str] | None = None) -> None:
+                 drawn: list[tuple[str, str]] | None = None) -> None:
         self.path = path
         self.parts = parts
         self.comments = comments

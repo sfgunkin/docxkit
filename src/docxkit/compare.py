@@ -85,6 +85,7 @@ from ._compare_diff import compare_media as compare_media
 from ._compare_diff import compare_paras as compare_paras
 from ._compare_diff import edge_diff as edge_diff
 from ._compare_diff import fmt_diff as fmt_diff
+from ._compare_diff import fmt_diff_edited as fmt_diff_edited
 from ._compare_diff import formula_diff as formula_diff
 from ._compare_diff import hyperlink_labels as hyperlink_labels
 from ._compare_diff import integrity as integrity
@@ -103,6 +104,7 @@ from ._compare_read import Fields as Fields
 from ._compare_read import Media as Media
 from ._compare_read import Para as Para
 from ._compare_read import Part as Part
+from ._compare_read import drawn_media as drawn_media
 from ._compare_read import load as load
 from ._compare_read import load_parts as load_parts
 from ._compare_read import mask_volatile_fields as mask_volatile_fields
@@ -129,8 +131,10 @@ __all__ = [
     "compare_docs",
     "compare_media",
     "compare_paras",
+    "drawn_media",
     "edge_diff",
     "fmt_diff",
+    "fmt_diff_edited",
     "formula_diff",
     "hyperlink_labels",
     "integrity",

@@ -555,7 +555,7 @@ def validate(path: str | Path, baseline: str | Path | None = None,
             report.structure_diff = struct_moved
             report.reject_causes = [c for c in (
                 inserted_only_bookmarks(struct_moved, parts),
-                final_paragraph_cause(report.reject_diff, base, accepted))
+                final_paragraph_cause(rejected, base, accepted))
                 if c]
 
     if word_accept_glyph is not None:

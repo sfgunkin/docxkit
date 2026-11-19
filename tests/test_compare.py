@@ -133,6 +133,60 @@ def test_a_format_change_RIDING_on_a_text_edit_is_format(tmp_path):
         ("child discipline; parenting style; ", [], ["bold"])]
 
 
+def test_two_changes_in_a_row_are_two_SEGMENTS():
+    """Bold then italic, side by side, used to come back as one entry
+    labelled with the first change (review, 2026-11-19)."""
+    from docxkit._compare_diff import fmt_diff_edited
+    from docxkit._compare_read import Part
+    from docxkit.styles import Cascade
+
+    def one(xml: str):
+        return Part("word/document.xml", "<w:body>" + xml + "</w:body>",
+                    Cascade(None)).paras[0]
+
+    a = one(para(run("The estimates of the model are stable over time.")))
+    b = one(para(run("The "), _srun("estimates", "<w:b/>"),
+                 _srun(" of the model", "<w:i/>"),
+                 run(" are stable over the decade.")))
+
+    assert [(s, sorted(o), sorted(n)) for s, o, n in fmt_diff_edited(a, b)] \
+        == [("estimates", [], ["bold"]), (" of the model", [], ["italic"])]
+
+
+def test_a_paragraph_whose_EQUATION_changed_still_reads_its_format():
+    """Prose equal, paragraph not: the replace path reaches it and the
+    prose's formatting is `fmt_diff`'s to compare (review, 2026-11-19)."""
+    from docxkit._compare_diff import fmt_diff_edited
+    from docxkit._compare_read import Part
+    from docxkit.styles import Cascade
+
+    def one(xml: str):
+        return Part("word/document.xml", "<w:body>" + xml + "</w:body>",
+                    Cascade(None)).paras[0]
+
+    a = one(para(run("Let the rate be fixed.")))
+    b = one(para(run("Let the "), _srun("rate", "<w:b/>"),
+                 run(" be fixed.")))
+
+    assert fmt_diff_edited(a, b) == [("rate", frozenset(),
+                                      frozenset({"bold"}))]
+
+
+def test_a_block_of_UNEQUAL_length_compares_no_format(tmp_path):
+    """One paragraph inserted ahead of two edited table notes pairs each
+    note with its NEIGHBOUR, and neighbouring notes share boilerplate
+    (review, 2026-11-19)."""
+    before = (para(run("Note: Standard errors in parentheses, model one."))
+              + para(run("Note: Standard errors in parentheses, model two.")))
+    after = (para(run("A paragraph the author added."))
+             + para(run("Note: "), _srun("Standard errors", "<w:b/>"),
+                    run(" in parentheses, model 1."))
+             + para(run("Note: Standard errors in parentheses, model 2.")))
+    a, b = docs(tmp_path, before, after)
+
+    assert compare(a, b)["format"] == []
+
+
 def test_a_text_edit_with_NO_format_change_reports_no_format(tmp_path):
     before = _KEYWORDS.format(rest=run("child discipline; Uzbekistan"))
     after = _KEYWORDS.format(rest=run("child discipline; Central Asia"))
@@ -4611,6 +4665,76 @@ def test_renamed_media_names_the_parts_a_RENUMBERING_explains():
         "word/media/image1.png", "word/media/image2.png"]
     assert renamed_media(before, replaced) == []
     assert renamed_media(before, before) == []
+
+
+def _figures(drawn: list[tuple[str, str]], blobs: dict[str, bytes]):
+    """One drawing per (caption, part name), in order, each through its
+    own rId."""
+    drawing = _DRAWING.replace('r:embed="rId7"', 'r:embed="{rid}"')
+    body = "".join(drawing.format(rid=f"rId{k}") + para(run(caption))
+                   for k, (caption, _) in enumerate(drawn, 1))
+    parts = make_parts(body)
+    rel = ('<Relationship Id="rId{k}" Type="http://schemas.openxmlformats'
+           '.org/officeDocument/2006/relationships/image" '
+           'Target="media/{name}"/>')
+    parts["word/_rels/document.xml.rels"] = (
+        '<?xml version="1.0"?><Relationships xmlns="http://schemas.'
+        'openxmlformats.org/package/2006/relationships">'
+        + "".join(rel.format(k=k, name=name)
+                  for k, (_, name) in enumerate(drawn, 1))
+        + "</Relationships>").encode("utf-8")
+    for name, blob in blobs.items():
+        parts[f"word/media/{name}"] = blob
+    return parts
+
+
+_FOUR = {"a.png": b"picture A", "b.png": b"picture B", "c.png": b"pic C",
+         "d.png": b"picture D", "e.png": b"picture E"}
+
+
+def test_a_figure_REMOVED_and_another_ADDED_is_not_every_figure_changed():
+    """Review, 2026-11-19, of the positional pairing: drawings
+    [A,B,C,D] -> [B,C,D,E] paired A-B, B-C, C-D, D-E and reported four
+    replaced pictures."""
+    before = _figures([("Figure A.", "a.png"), ("Figure B.", "b.png"),
+                       ("Figure C.", "c.png"), ("Figure D.", "d.png")],
+                      {k: v for k, v in _FOUR.items() if k != "e.png"})
+    after = _figures([("Figure B.", "b.png"), ("Figure C.", "c.png"),
+                      ("Figure D.", "d.png"), ("Figure E.", "e.png")],
+                     {k: v for k, v in _FOUR.items() if k != "a.png"})
+
+    changes = _media_report(before, after)["media"]
+
+    assert sorted((c["type"], c["part"]) for c in changes) == [
+        ("MEDIA ADDED", "word/media/e.png"),
+        ("MEDIA REMOVED", "word/media/a.png")]
+
+
+def test_exhibits_REORDERED_with_their_names_kept_change_no_picture():
+    """R17's shape without Word's renaming: every figure moved, each
+    caption with it."""
+    order = [("Figure A.", "a.png"), ("Figure B.", "b.png"),
+             ("Figure C.", "c.png")]
+    blobs = {k: _FOUR[k] for k in ("a.png", "b.png", "c.png")}
+
+    report = _media_report(_figures(order, blobs),
+                           _figures(order[::-1], blobs))
+
+    assert report["media"] == []
+
+
+def test_a_part_drawn_TWICE_and_changed_once_is_not_renamed():
+    """Review, 2026-11-19: one equal pair was enough to call the part
+    renamed, and ingest dropped a real figure change."""
+    from docxkit.compare import renamed_media
+    before = _figures([("Figure 1.", "a.png"), ("Figure 2.", "c.png")],
+                      {"a.png": b"picture A", "c.png": b"picture C",
+                       "x.png": b"an old picture"})
+    # x.png now draws BOTH figures: Figure 1 as before, Figure 2 not
+    after = _figures([("Figure 1.", "x.png"), ("Figure 2.", "x.png")],
+                     {"x.png": b"picture A"})
+
+    assert renamed_media(before, after) == []
 
 
 def test_two_figures_that_SWAP_contents_are_two_changes():

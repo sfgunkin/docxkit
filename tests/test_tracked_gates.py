@@ -1969,16 +1969,19 @@ def test_a_bookmark_the_REDLINE_lost_too_gets_no_cause():
 
 
 def test_the_FINAL_paragraph_that_changed_is_named():
-    original = make_parts(para(run("Body text."))
-                          + para(run("Note: Table A3 was last.")))
-    revised = make_parts(para(run("Body text."))
-                         + para(run("Note: Table 24 is last now.")))
-    lost = tracked.Untracked("body", 1, "Note: Table A3 was last.", "")
+    """Read off the rejected view, not off `untracked`'s eight: an
+    R17-sized round has more mismatches than that before the end
+    (review, 2026-11-19), so twelve come first here."""
+    body = "".join(para(run(f"Exhibit note {k}.")) for k in range(12))
+    original = make_parts(body + para(run("Note: Table A3 was last.")))
+    revised = make_parts(body + para(run("Note: Table 24 is last now.")))
+    emptied = make_parts("".join(para(run(f"Moved {k}."))
+                                 for k in range(12)) + para(run("")))
 
-    cause = tracked.final_paragraph_cause([lost], original, revised)
+    cause = tracked.final_paragraph_cause(emptied, original, revised)
 
     assert cause.startswith("The body's FINAL paragraph changed "
                             "('Note: Table A3 was last.' was last")
-    other = tracked.Untracked("body", 0, "Body text.", "")
-    assert tracked.final_paragraph_cause([other], original, revised) == ""
-    assert tracked.final_paragraph_cause([lost], original, original) == ""
+    assert tracked.final_paragraph_cause(original, original, revised) == "", \
+        "the rejected view still holds it"
+    assert tracked.final_paragraph_cause(emptied, original, original) == ""

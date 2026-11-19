@@ -1092,8 +1092,8 @@ def build(original: str | Path, revised: str | Path, out: str | Path,
                                + (f"\n{cause}" if cause else ""))
         if report.unrejectable and reject_check:
             listed = "\n  ".join(str(u) for u in report.unrejectable)
-            final = final_paragraph_cause(report.unrejectable,
-                                          original_parts, revised_parts)
+            final = final_paragraph_cause(rejected, original_parts,
+                                          revised_parts)
             raise PackageError(
                 f"rejecting every revision does NOT reproduce "
                 f"{original.name} — {len(report.unrejectable)} paragraph(s) "

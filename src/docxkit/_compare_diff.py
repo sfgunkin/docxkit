@@ -155,10 +155,17 @@ def fmt_diff_edited(pa: Para, pb: Para,
     least ``_FMT_MIN_RATIO`` alike — so a word the author also restyled
     is reported as it would be in an unedited paragraph, and the words
     they rewrote are left to the TEXT layer. A segment with no letter or
-    digit in it (a space, a bracket) is not reported.
+    digit in it (a space, a bracket) is not reported, and a segment ends
+    where its change does: bold-then-italic is two entries, not one
+    labelled with the first.
+
+    Prose that is EQUAL while the paragraph is not — only an equation or
+    a field changed — is :func:`fmt_diff`'s case, and goes there.
     """
     a, b = pa.wtext_f, pb.wtext_f
-    if a == b or len(pa.fmt) != len(a) or len(pb.fmt) != len(b):
+    if a == b:
+        return fmt_diff(pa, pb)
+    if len(pa.fmt) != len(a) or len(pb.fmt) != len(b):
         return []
     sm = SequenceMatcher(None, a, b, autojunk=False)
     if sm.ratio() < _FMT_MIN_RATIO:
@@ -169,14 +176,16 @@ def fmt_diff_edited(pa: Para, pb: Para,
             continue
         start: int | None = None
         for k in range(size + 1):
-            differs = k < size and pa.fmt[i + k] != pb.fmt[j + k]
-            if differs and start is None:
-                start = k
-            elif not differs and start is not None:
+            change = ((pa.fmt[i + k], pb.fmt[j + k])
+                      if k < size and pa.fmt[i + k] != pb.fmt[j + k] else None)
+            if start is not None and change != (pa.fmt[i + start],
+                                                pb.fmt[j + start]):
                 seg = a[i + start:i + k]
                 if any(ch.isalnum() for ch in seg):
                     res.append((seg, pa.fmt[i + start], pb.fmt[j + start]))
                 start = None
+            if change is not None and start is None:
+                start = k
     return res
 
 
@@ -662,6 +671,13 @@ class _Alignment:
             if changed:
                 entry["formula"] = changed
             self.report["text"].append(entry)
+            # Only where the block pairs like with like: in a block of
+            # unequal length every paragraph after the odd one out is
+            # paired with its NEIGHBOUR, and two neighbouring table notes
+            # share enough boilerplate to pass any similarity bar
+            # (review, 2026-11-19).
+            if len(left) != len(right):
+                continue
             for seg, old, new in fmt_diff_edited(pa, pb):
                 self.add("format", {"text": seg, "from": sorted(old),
                                     "to": sorted(new)}, pa)
@@ -764,38 +780,46 @@ def compare_media(a: Doc, b: Doc, report: Report) -> None:
     the package reported as zero changes — on the one task whose whole
     deliverable was four replaced images (HCW, filed S1).
 
-    **Paired by DRAWING when both sides draw as many pictures**, by name
-    otherwise. Pairing by digest alone would hide the case that matters:
-    two figures whose contents swap places keep both names and both
-    digests, and only a positional pairing calls that two changes. Name
-    pairing was the rule until 2026-11-19, on the measurement that Word
-    does not renumber media parts on save — true of 110 parts in three
+    **Paired by DRAWING, through its caption** (:func:`media_pairs`), and
+    by part name for whatever that leaves. Pairing by digest alone would
+    hide the case that matters: two figures whose pictures swap places
+    keep both names and both digests, and only a pairing that knows
+    which figure is which calls that two changes. Name pairing was the
+    rule until 2026-11-19, on the measurement that Word does not
+    renumber media parts on save — true of 110 parts in three
     manuscripts whose media were in document order. When they are NOT,
     Word renumbers them into it: Month_of_birth's exhibit reorder left
     ``image4..13.png`` out of order, the author's next save renamed all
     ten, and this layer reported ten replaced figures where every
-    drawing showed the same picture (backlog S4). Drawing ``i`` against
-    drawing ``i`` sees both: a rename keeps the digest, a swap does not.
-    A picture no drawing shows is still paired by name.
+    drawing showed the same picture (backlog S4). A caption travels with
+    its figure through a rename or a reorder and stays put through a
+    swap, so it sees all three. A picture no drawing shows, and a drawing
+    whose caption is new, gone, edited or repeated, is paired by name.
 
     No pixel diff, deliberately: "content differs, 66,203 -> 69,327
     bytes" is enough to send a person to look, which is all any other
     layer does.
     """
     # a drawing whose part is missing on either side is left to the
-    # name pairing below, which reports it ADDED or REMOVED
-    drawn: set[str] = set()
-    for was, now in media_pairs(a, b) or ():
+    # name pairing below, which reports it ADDED or REMOVED; each side
+    # keeps its own record of what is accounted for, because the same
+    # NAME can be a paired part on one side and an unpaired one on the
+    # other once Word has renamed things
+    done_a: set[str] = set()
+    done_b: set[str] = set()
+    for was, now in media_pairs(a, b):
         before, after = a.media.get(was), b.media.get(now)
         if before is None or after is None:
             continue
-        drawn |= {was, now}
+        done_a.add(was)
+        done_b.add(now)
         if before.digest != after.digest:
             report["media"].append(
                 {"type": "MEDIA CHANGED", "part": now, "label": after.label,
                  "from": before.size, "to": after.size})
-    for name in sorted((set(a.media) | set(b.media)) - drawn):
-        before, after = a.media.get(name), b.media.get(name)
+    for name in sorted((set(a.media) - done_a) | (set(b.media) - done_b)):
+        before = a.media.get(name) if name not in done_a else None
+        after = b.media.get(name) if name not in done_b else None
         known = after or before
         label = known.label if known else ""
         if before is not None and after is not None:
@@ -813,32 +837,42 @@ def compare_media(a: Doc, b: Doc, report: Report) -> None:
                  "from": 0, "to": after.size})
 
 
-def media_pairs(a: Doc, b: Doc) -> list[tuple[str, str]] | None:
-    """``(part in a, part in b)`` for each drawing, in document order,
-    or None when the two sides do not draw as many pictures — a figure
-    added or removed, where position says nothing and the name is the
-    better guess. A picture drawn twice is paired once."""
-    if not a.drawn or len(a.drawn) != len(b.drawn):
-        return None
-    return list(dict.fromkeys(zip(a.drawn, b.drawn, strict=True)))
+def media_pairs(a: Doc, b: Doc) -> list[tuple[str, str]]:
+    """``(part in a, part in b)`` for each drawing the two sides share,
+    in `a`'s order: paired by caption key (:func:`drawn_media`), and only
+    where that key names ONE drawing on each side. A drawing whose
+    caption is new, gone, edited or repeated is left out, and
+    :func:`compare_media` pairs its part by name.
+
+    Not by position, which was the first version (review, 2026-11-19):
+    a figure removed and another added, or exhibits reordered with their
+    names kept, shifts every drawing in between, and each was reported
+    as a changed picture."""
+    def unique(drawn: list[tuple[str, str]]) -> dict[str, str]:
+        seen = Counter(key for key, _ in drawn)
+        return {key: part for key, part in drawn if seen[key] == 1}
+
+    ka, kb = unique(a.drawn), unique(b.drawn)
+    return list(dict.fromkeys((part, kb[key]) for key, part in ka.items()
+                              if key in kb))
 
 
 def renamed_media(before: Parts, after: Parts) -> list[str]:
     """Media parts of `after` whose bytes differ from the part of that
-    name in `before` only because Word RENAMED the parts: each drawing
-    still shows the same picture. What `revision ingest` files as
-    re-saved rather than changed. Empty unless :func:`media_pairs` pairs
-    the sides."""
+    name in `before` only because Word RENAMED the parts: EVERY drawing
+    of the part still shows the picture it showed. What `revision
+    ingest` files as re-saved rather than changed. A part drawn twice,
+    once unchanged and once with a new picture, is not renamed."""
     a, b = (Doc("", [], [], _media_of(raw), drawn_media(raw))
             for raw in (before, after))
-    pairs = media_pairs(a, b)
-    if pairs is None:
-        return []
-    same = {now for was, now in pairs
-            if (x := a.media.get(was)) and (y := b.media.get(now))
-            and x.digest == y.digest}
-    return sorted(n for n in same
-                  if n in a.media and a.media[n].digest != b.media[n].digest)
+    same: dict[str, bool] = {}
+    for was, now in media_pairs(a, b):
+        x, y = a.media.get(was), b.media.get(now)
+        same[now] = same.get(now, True) and bool(x and y
+                                                 and x.digest == y.digest)
+    return sorted(n for n, ok in same.items()
+                  if ok and n in a.media
+                  and a.media[n].digest != b.media[n].digest)
 
 
 def compare_comments(a: Doc, b: Doc, report: Report) -> None:

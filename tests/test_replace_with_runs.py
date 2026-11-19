@@ -83,6 +83,67 @@ def test_the_runs_land_OUTSIDE_a_link_whose_edge_the_match_starts_at():
     assert text_of(P(label)) == "Table 2", "the link did not grow"
 
 
+def test_retitling_a_WHOLE_link_label_keeps_the_runs_inside_the_link():
+    """Review, 2026-11-19: the label run was emptied, swept up as a
+    shell, and the runs re-inserted at the link's edge — outside it,
+    leaving `<w:hyperlink>` with no label. The anchor still resolved and
+    the words read right, which is the failure no gate sees."""
+    link = ('<w:hyperlink w:anchor="Chen2021">' + R("Chen (2021)")
+            + "</w:hyperlink>")
+    p = P(R("As "), link, R(" shows."))
+
+    out = replace_with_runs(p, "Chen (2021)",
+                            [("Chen", ""), (" (2021a)", ITALIC)],
+                            allow_hyperlink=True)
+
+    label = out[out.index("<w:hyperlink"):out.index("</w:hyperlink>")]
+    assert text_of(P(label)) == "Chen (2021a)"
+    assert text_of(out) == "As Chen (2021a) shows."
+
+
+def test_the_words_a_BOOKMARK_wraps_stay_wrapped():
+    """A `<key>txt` marker or caption bookmark around exactly `old`: the
+    new runs go where the old words were, inside it."""
+    p = P(R("See "), '<w:bookmarkStart w:id="3" w:name="Todd2003txt"/>',
+          R("Todd 2003"), '<w:bookmarkEnd w:id="3"/>', R(" here."))
+
+    out = replace_with_runs(p, "Todd 2003", [("Todd and Wolpin", ""),
+                                            (" 2003", "")])
+
+    inside = out[out.index('w:name="Todd2003txt"'):
+                 out.index('<w:bookmarkEnd w:id="3"/>')]
+    assert text_of(P(inside.split("/>", 1)[1])) == "Todd and Wolpin 2003"
+
+
+def test_a_match_strictly_INSIDE_a_bookmark_is_written():
+    """`insert_in_para` refuses inside a bookmark without
+    `allow_bookmark`; `replace_in_para` does not, and neither does this.
+    Word wraps whole headings in `_Toc` bookmarks."""
+    p = P('<w:bookmarkStart w:id="4" w:name="_Toc1"/>',
+          R("Ordinary Least Squares Results"), '<w:bookmarkEnd w:id="4"/>')
+
+    out = replace_with_runs(p, "Least Squares", [("Least Squares", ITALIC)])
+
+    assert text_of(out) == "Ordinary Least Squares Results"
+    assert _runs(out) == [("Ordinary ", ""), ("Least Squares", ITALIC),
+                          (" Results", "")]
+
+
+def test_None_takes_the_look_of_the_run_the_match_starts_in():
+    """House style puts the face and size on every run; a bare run would
+    print in the Normal style's (review, 2026-11-19)."""
+    house = ('<w:rPr><w:rFonts w:ascii="Times New Roman"/>'
+             '<w:sz w:val="20"/></w:rPr>')
+    p = P(R("Note: estimates from model one.", house))
+
+    out = replace_with_runs(p, "model one", [("model ", None),
+                                            ("M", ITALIC), ("1", None)])
+
+    assert _runs(out) == [("Note: estimates from ", house),
+                          ("model ", house), ("M", ITALIC), ("1", house),
+                          (".", house)]
+
+
 def test_a_match_that_CROSSES_a_link_is_refused_as_replace_in_para_does():
     link = '<w:hyperlink w:anchor="Table2">' + R("Table 2") + "</w:hyperlink>"
     p = P(R("See "), link, R(" here."))
@@ -97,7 +158,7 @@ def test_an_absent_anchor_is_refused():
 
 
 def test_properties_that_are_not_a_whole_rPr_are_refused():
-    with pytest.raises(AnchorError, match="whole <w:rPr>"):
+    with pytest.raises(AnchorError, match=r"whole <w:rPr>…</w:rPr>, '' or"):
         replace_with_runs(P(R("A b c.")), "b", [("x", "<w:i/>")])
 
 

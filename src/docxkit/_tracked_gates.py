@@ -849,20 +849,22 @@ def inserted_only_bookmarks(diffs: list[str], redline: Parts) -> str:
     held = [n for n in lost if f'w:name="{n}"' in xml]
     if not held:
         return ""
+    # whole tags, read after: Word writes the attributes in either order
+    starts: dict[str, tuple[str, int]] = {}
+    for tag in re.finditer(r"<w:bookmarkStart\b[^>]*>", xml):
+        name_m = re.search(r'\bw:name="([^"]*)"', tag.group(0))
+        id_m = re.search(r'\bw:id="([^"]*)"', tag.group(0))
+        if name_m and id_m:
+            starts.setdefault(name_m.group(1), (id_m.group(1), tag.end()))
     shown = []
     for name in held[:6]:
-        start = re.search(rf'<w:bookmarkStart\b[^>]*w:id="(\d+)"[^>]*'
-                          rf'w:name="{re.escape(name)}"|<w:bookmarkStart\b'
-                          rf'[^>]*w:name="{re.escape(name)}"[^>]*'
-                          rf'w:id="(\d+)"', xml)
         label = ""
-        if start:
-            bid = start.group(1) or start.group(2)
-            end = re.search(rf'<w:bookmarkEnd\b[^>]*w:id="{bid}"',
-                            xml[start.end():])
+        if name in starts:
+            bid, at = starts[name]
+            end = re.search(rf'<w:bookmarkEnd\b[^>]*\bw:id="{re.escape(bid)}"',
+                            xml[at:])
             if end:
-                label = visible_text(xml[start.end():start.end()
-                                         + end.start()])[:40]
+                label = visible_text(xml[at:at + end.start()])[:40]
         shown.append(f"{name} ({label!r})" if label else name)
     more = f" and {len(held) - 6} more" if len(held) > 6 else ""
     return (f"Compare re-inserted the text carrying {', '.join(shown)}"
@@ -875,8 +877,8 @@ def inserted_only_bookmarks(diffs: list[str], redline: Parts) -> str:
             f"measured on the first; neither keeps the bookmark.")
 
 
-def final_paragraph_cause(unrejectable: list[Untracked],
-                          original: Parts, revised: Parts) -> str:
+def final_paragraph_cause(rejected: Parts, original: Parts,
+                          revised: Parts) -> str:
     """Why the original's LAST body paragraph cannot be rejected back.
 
     Month_of_birth R17 (2026-11-19, backlog S2): Table A3's note was the
@@ -885,15 +887,19 @@ def final_paragraph_cause(unrejectable: list[Untracked],
     with or without the label changes; the same pair built with moves
     off rejected it correctly. The refusal said only UNREJECTABLE.
     Returns the paragraph to add to the refusal, or ``""`` when the
-    body's last paragraph did not change or is not among the
-    unrejectable ones.
+    body's last paragraph did not change or the REJECTED view still
+    holds it.
+
+    Read off the rejected view itself rather than off :func:`untracked`,
+    whose list stops at eight: an R17-sized round has more than eight
+    mismatches before the end, and the final paragraph was never among
+    them (review, 2026-11-19).
     """
     was = _paras(_root(original))
     now = _paras(_root(revised))
     if not was or not now or was[-1] == now[-1] or not was[-1].strip():
         return ""
-    if not any(u.part == "body" and u.baseline == was[-1]
-               for u in unrejectable):
+    if was[-1] in set(_paras(_root(rejected))):
         return ""
     return (f"The body's FINAL paragraph changed ({was[-1][:50]!r} was "
             f"last, {now[-1][:50]!r} is now), and that is the paragraph "
