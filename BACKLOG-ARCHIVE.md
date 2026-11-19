@@ -14,6 +14,216 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 `compare` reads no FORMAT inside a paragraph whose text changed~~ — FIXED 19.11, `8dae74e`
+
+<!-- status: fixed -->
+
+Found 2026-11-16 on Parental_style, split out of the `replace_in_para` format-boundary entry when that was fixed
+(2026-11-17, f2b009c).
+
+**Measured.** A keywords line rewritten so its plain list came out bold: `docxkit compare prev.docx repro.docx` reported
+FORMAT `(none)` and one real change. `_compare_diff.fmt_diff` returns `[]` unless the two paragraphs' prose is EQUAL
+("a character-by-character comparison of two different strings reports the offset, not the emphasis"), so any
+formatting change riding on a text edit in the same paragraph is invisible to the gated layers.
+
+**Why it still matters after the writer fix.** `replace_in_para` no longer does this, but an author's Word edit, another
+writer or a hand-rolled script can, and `compare` is the gate the protocol trusts for "did anything else change".
+
+**Suggested fix.** Align the two texts (the `SequenceMatcher` the TEXT layer already uses) and compare per-character
+formatting over the EQUAL blocks only, reporting a segment whose flags changed. Measure on the corpus first, per
+CONTRIBUTING: an author's tracked round legitimately restyles words it also edits, and the layer must not cry wolf.
+
+**Fixed in `8dae74e`.** `fmt_diff_edited` aligns the two texts of a paragraph pair whose text changed
+(`SequenceMatcher`, no autojunk) and compares formatting over the stretches they share: at least 4
+characters, in paragraphs at least half alike (ratio 0.5), and only segments holding a letter or digit.
+Called from `_Alignment.replaced`, into the gated FORMAT bucket. The guards keep a positional pair of
+unrelated paragraphs, or a letter of a deleted word aligned with a kept one, from reporting the offset.
+
+**Measured first**, as the entry asked, on 240 real version pairs drawn from the manuscript folders
+(consecutive versions of one manuscript, so mostly author rounds): FORMAT went from 2,773 to 3,815
+entries (+1,042 in 66 pairs, 0 gone). They are mostly colour and size, the kinds the layer already reports
+on unedited paragraphs: link colour where a link was added, captions recoloured, table text resized. 13
+are one character long. 18 pairs that had no FORMAT entry now have one, and every such pair already has a
+TEXT change, so no comparison that was clean becomes dirty.
+
+**Tightened in `7909330`** after a `/code-review high`: not run in a replace block of unequal length (pairs
+there are neighbours), a segment ends where its change does, and equal prose with a changed equation goes to
+`fmt_diff`. Re-measured on the same 240 pairs: 724 new entries in 60 pairs (from 1,042 in 66), 0 gone; 15 pairs
+gain a FORMAT entry where they had none, and each already has a TEXT change.
+
+Tests: `test_a_format_change_RIDING_on_a_text_edit_is_format` (the keywords line),
+`test_a_text_edit_with_NO_format_change_reports_no_format`,
+`test_a_REWRITTEN_word_in_a_new_style_is_text_not_format`,
+`test_unrelated_paragraphs_paired_by_position_compare_no_format`.
+
+### ~~S4 `revision ingest` reports MEDIA CHANGED when Word only renamed the image parts~~ — FIXED 19.11, `e72e75f`
+
+<!-- status: fixed -->
+
+Found 2026-11-19 on Month_of_birth, ingesting the author's 15:13 save of `mb3.docx` (R18 accepted, a one-tag
+keepNext round) against `prev.docx` (= the R17 clean edit, whose exhibit reorder left `image4..13.png` out of
+document order). Word's save renumbered the media parts in document order. `ingest` printed 10
+`MEDIA CHANGED` lines, each labelled with a figure note (`'word/media/image10.png' … from 127557 to 54652`) and
+listed the 10 parts under `package: changed`. The ten "from" sizes and the ten "to" sizes are the same multiset.
+
+**Measured.** Resolving each `r:embed` in document order through the rels and hashing the target: 13 of 13 drawings
+show byte-identical pictures before and after (`image5.png` -> `image4.png`, `image12.png` -> `image5.png`, …).
+Nothing a reader sees changed.
+
+**Why it matters.** The MEDIA layer's own header says "a difference here is an edit and not a round-trip artifact",
+and each line names a figure, so the report reads as ten replaced figures after an author round that touched none.
+It did not block the baseline (no LOST entry), but it costs a manual check every time and would hide a real swap
+among the renames.
+
+**Suggested fix.** Pair media by what each drawing shows, not by part name: walk `r:embed`/`r:link` in document
+order on both sides, resolve through each side's rels, compare digests per drawing; report a part rename whose
+digest is unchanged as package noise ("re-saved, meaning unchanged"). The same pairing belongs in `compare`'s MEDIA
+layer.
+
+**Workaround in use.** A per-drawing digest check in the session scratchpad before the baseline (0 differing).
+
+**Fixed in `e72e75f`.** When both sides draw the same number of pictures, `compare_media` pairs drawing *i*
+with drawing *i* (each `r:embed`/`r:link`/`r:id` resolved through its side's rels, `drawn_media`). A rename
+keeps the digest and reports nothing, and two drawn figures that trade pictures are still two changes. A
+picture no drawing shows, a drawing whose part is missing, and a side that adds or removes a figure keep the
+name pairing. `compare.renamed_media(before, after)` names the parts a renumbering explains;
+`revision ingest` moves them out of `changed_parts` into the re-saved count. The MEDIA header no longer
+claims Word never rewrites media.
+
+**Measured** on the real pair (`revision/build/edited_r17.docx` against `Documents/mb3.docx`): MEDIA went
+from 10 entries to 0, and all ten parts are named as renamed. On that pair Word left the rels part as it was
+and changed the drawings' ids and the media, which is what the ingest test models.
+
+Tests: `test_Word_RENUMBERING_the_media_parts_is_not_a_change`,
+`test_two_DRAWN_figures_that_swap_pictures_are_still_two_changes`,
+`test_renamed_media_names_the_parts_a_RENUMBERING_explains`,
+`test_ingest_files_media_Word_only_RENAMED_as_resaved`. The sweep gains `compare.renamed_self` (always 0,
+checked).
+
+Workaround: a scratchpad digest check, nothing in the paper.
+
+**Reworked in `7909330`** after a `/code-review high` the same day: pairing by POSITION (when both sides drew
+as many pictures) read a figure removed plus another added, or a reorder with names kept, as every drawing in
+between changed. Drawings now pair by caption key (caption text plus position among the paragraph's
+drawings), only where the key is unique on both sides; the rest go by name. `renamed_media` requires EVERY
+drawing of a part to be unchanged. The real pair still gives MEDIA empty and all ten renamed.
+
+### ~~S4 No call replaces a stretch of visible text with STYLED runs; papers compose delete + insert by hand~~ — FIXED 19.11, `d9180a7`
+
+<!-- status: fixed -->
+
+Found 2026-11-18 on Month_of_birth R15 (`revision/scripts/r15_methodology_polish.py`, `apply_span`).
+
+**Measured.** The batch's 19 spans each give `old` (visible text) and `new_runs`, a list of `[text, style]` pairs
+(italic symbol, italic subscript, upright subscript, plain): "Let *x*<sub>*i*</sub> be the child's date of birth…".
+`replace_in_para(old, new)` writes `new` as plain text into the run holding the START of the match, with that run's
+properties, so one call cannot produce a mixed-style replacement. `insert_in_para(at, xml)` takes styled runs but
+deletes nothing. `replace_keeping_links` splits around link labels and is likewise plain text.
+
+**Workaround in use.** `p = replace_in_para(p, old, "")`, then `insert_in_para(p, at, runs_xml)` at the offset of
+`old` in `visible_text(p)`, then a regex that drops the emptied `<w:r>…<w:t></w:t></w:r>` shells the delete leaves.
+For a stretch that holds a link (S06, declared) `remove_link(p, anchor, drop_twin=False)` first. Gates: visible text
+== before with the span applied, after each step; the protocol's checker (G3 text AND run styles) passed. R14 on the
+same paper wrote the same thing a third way (whole paragraphs rebuilt from runs).
+
+**Suggested fix.** `replace_in_para(..., new_runs=[(text, rpr_xml), …])` (or `replace_with_runs`): the same match,
+link and note refusals as `replace_in_para`, deletion by offset, the runs spliced at the start offset with the
+`insert_in_para` edge rule (outside a link/bookmark at its edge), and no empty run shells left behind. The empty-shell
+cleanup is worth having on its own: `replace_in_para(old, "")` leaves a run whose `w:t` is empty.
+
+**Fixed in `d9180a7`.** `edit.replace_with_runs(para, old, [(text, rpr), …])`: `replace_in_para`'s match and
+every one of its refusals (the match is marked with a private-use sentinel through `replace_in_para`
+itself), the runs spliced where the match began by `insert_in_para` (outside a link or bookmark at its edge),
+and the runs the deletion emptied removed. An empty run the paragraph already had is left alone; `rpr` must be
+a whole `<w:rPr>…</w:rPr>` or empty. Eight tests in `tests/test_replace_with_runs.py`. The writer oracle's
+`replace` probe runs it. Listed in the docxkit skill.
+
+The stand-alone shell cleanup the entry also asked for (`replace_in_para(old, "")` leaving an empty `w:t`)
+was not changed in `replace_in_para`; `replace_with_runs(old, [])` is the deletion that leaves none.
+
+Workaround in the paper: `scripts/applied/r15_methodology_polish.py` (`apply_span`), already applied; nothing
+live to delete.
+
+**Reworked in `7909330`** after a `/code-review high` the same day: the delete-then-`insert_in_para` route left
+an empty `<w:hyperlink>` when a whole label was retitled, a bookmark around exactly `old` wrapping nothing, and
+refused a match inside a bookmark. The run holding the match's first character is now cut and the runs
+spliced there, and `rpr=None` takes that run's own properties.
+
+### ~~S2 `docxkit citations` does not flag a `<key>txt` marker that sits on a LATER mention~~ — FIXED 19.11, `46158cc`
+
+<!-- status: fixed -->
+
+Found 2026-11-18 on Month_of_birth R15.
+
+**Measured.** A batch added "Todd and Wolpin 2003" in §5 B04, ahead of the mention in B13 that held `Todd2003txt`.
+After `link_all`/`link_rest`, B04 linked forward to `Todd2003` and `Todd2003txt` stayed on B13, so the reference
+entry's back-link lands PAST the first mention. `docxkit citations --later-mentions` reported "86 of 86 linked" with
+only the paper's known REF WITHOUT CITE findings; no MISPLACED MARKER. `crossrefs --audit` makes exactly this check
+for exhibits (`misplaced_anchor`: "the <key>txt marker must sit on the FIRST mention").
+
+**Suggested fix.** In the citation audit: for each key, if the first in-text link to `<key>` (document order) is not
+inside `<key>txt`, report MISPLACED MARKER with the repair `delete_bookmark` + `wrap_link_in_bookmark(which="first")`.
+And `link_all` could move the marker itself when it finds an earlier mention of an already-linked work, since it
+already decides which mention is first.
+
+**Workaround in use.** `scripts/applied/r15_todd_marker.py` in the paper: `delete_bookmark`, then
+`wrap_link_in_bookmark(xml, "Todd2003", "Todd2003txt", bid, which="first")`, gated on text, links and bookmark names.
+
+**Fixed in `46158cc`.** The citation audit reports **LATE MARKER** when the first link to `<key>` sits in an
+earlier body paragraph than `<key>txt`. It judges by paragraph, as `crossrefs.audit` does, treats a hoisted
+marker as belonging to the paragraph after it, and leaves notes alone. `repair_plan` proposes
+`delete_bookmark` + `wrap_link_in_bookmark(which="first")` under "re-place". A new kind rather than MISPLACED
+MARKER, because that kind's proposed repair is the entry-marker one. The `link_all` half of the suggestion
+(move the marker itself) was not done.
+
+**Measured.** Corpus sweep, 2,955 manuscripts: +1,850 findings in 670 documents, 0 gone. Sampled cases are
+genuine: prose linked in an earlier paragraph, marker on a later mention or a table cell. The proposed repair,
+applied in memory to Aging_Well, Parental_style, DSI, FLOPs v35 and Poverty_lines ep3, clears all 26
+findings, leaves the text unchanged and changes no other finding (it also fixes one SELF LINK).
+
+**Consequence for papers:** `docxkit citations` exits 1 on any finding, so 16 non-archive documents whose
+citation audit was clean now fail, among them the working files of Aging_Well (7), Parental_style (2) and DSI
+(2). Each paper's next round should apply the repair.
+
+Workaround in the paper: `scripts/applied/r15_todd_marker.py`, already applied; nothing live to delete.
+
+### ~~S2 `crossrefs.link_more` links a range end to an exhibit with no caption bookmark (dangling link)~~ — FIXED 19.11, `023b102`
+
+<!-- status: fixed -->
+
+Found 2026-11-18 on Month_of_birth (after R15's accept; paper script `relink_exhibits.py`).
+
+**Measured.** The author retyped two Results paragraphs holding "(Tables 20–24, Figures 10–11)" and "(Tables 23–24)";
+Word stripped their links. `link_more(xml, labels=("Figure", "Table"))` then linked the range ENDS too: "11" →
+`Figure11` (resolves) and "24" → `Table24` in both paragraphs. Table 24's caption has NO bookmark (the paper's one
+deliberately unlinked exhibit; `crossrefs --audit` lists it under `unlinked`), so both links point at nothing:
+`audit` reports `dangling: ['Table24']`. Before the retype the same paragraphs carried field links to `Table20`,
+`Figure10`, `Figure11`, `Table22`, `Table23` only; neither "24" was linked, so the range-end linking is newer than
+those links or applies only to the element form.
+
+**Diagnosis (unverified in code).** `link_more` picks the targets from the mention text without asking whether the
+anchor exists. Its own audit catches the result, so it is not silent, but a writer that can emit a dangling link is
+wrong at the source.
+
+**Suggested fix.** `link_more` links a mention only to an anchor present as a bookmark (the caption's), and reports
+the skipped ones (`no_anchor=[...]`) as `link` reports `no_mention`. Test: a range "Tables 2–3" where Table 3 has no
+caption bookmark → "3" stays plain, reported.
+
+**Workaround in use.** The paper's `relink_exhibits.py` undoes, after `link_more`, every link to an
+`ALLOWED_UNLINKED` exhibit with no bookmark (`remove_link(..., drop_twin=False)`).
+
+**Fixed in `023b102`.** `link_more` links a mention only to a caption whose bookmark exists in `xml` or
+`other_parts` (the same name set `audit` reads, now one helper, `_bookmark_names`). A mention with no
+caption bookmark stays plain and is counted as `"<name> not linked: no caption bookmark"`. Tests:
+`test_link_more_leaves_a_range_end_plain_when_its_caption_has_NO_bookmark` (the paper's range case),
+`test_link_more_finds_a_caption_bookmark_in_OTHER_parts`; both fail with the fix reverted. Eleven older
+fixtures spelled bare captions, which `link` never leaves behind; they go through `_with_caption_marks`.
+
+**Workaround still in the paper:** `Month_of_birth/revision/scripts/relink_exhibits.py` lines 47–58 (the
+loop that removes links to an `ALLOWED_UNLINKED` exhibit after `link_more`). It is now dead code (nothing
+for it to undo) and goes the next time that paper is touched. Left alone on 2026-11-19 because another
+session owned the paper.
+
 ### ~~S2 `replace_in_para` gives a match that starts in a bold label the label's bold for the whole replacement~~ — FIXED 17.11, `f2b009c`
 
 <!-- status: fixed -->
