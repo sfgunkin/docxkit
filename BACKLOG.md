@@ -974,38 +974,6 @@ exactly as before. The neighbour route that fixed R27 (`_tracked_replant`, "carr
 either: it works on bookmark tags INSIDE a `w:ins`, and an exhibit's anchor is a body-level `bookmarkStart` before an
 inserted caption paragraph. What remains is (b), still waiting on the author's call on the non-negotiable.
 
-### S2 A first-mention link carried to ANOTHER place (not the deletion's neighbour) loses its marker on reject
-<!-- status: open -->
-
-Found 2026-11-20 on Month_of_birth R27 (Sections 5–6 restructured; clean edit `revision/build/edited_r27.docx`,
-baseline `revision/build/prev.docx` sha `bd803f86…`; the paper's checker `methodology_restructure_check.py post`
-PASSES G1–G9; redline `revision/build/batch.docx`, report `revision/build/r27_ship.txt`). The plan carries 14 old
-link elements whole into rewritten paragraphs, 8 with their `<Key>txt` marker. `revision ship --keep-math`:
-lint clean, XML accept == Word accept, oMath 6; reject-all paragraphs, glyphs, footnotes, links True, **STRUCTURE
-False: bookmarkStart lost `Lee2010txt`, `RepublicofUzbekistan1997txt`**; the CAUSE line fires and says the replant
-"did not fit". The other six carried markers survive.
-
-**Shape (read off the redline).** `Lee2010txt`: in the old paragraph the field `Lee and Lemieux 2010` stood in
-"(Imbens and Lemieux 2008; Lee and Lemieux 2010)"; the new text keeps "(Imbens and Lemieux 2008)" there and puts
-the marked field four sentences later ("…precise control over the date of birth (Lee and Lemieux 2010)."). Compare
-writes `del[; <field>Lee and Lemieux 2010</field>). Unobserved characteristics]` early and
-`ins[… ([BS Lee2010txt]<field>…</field>[BE]). Selection]` late, with kept words between: the deleted copy is NOT the
-insertion's neighbour, which `replant_reinserted_bookmarks` (`a7ccbbb`, `c6ac98c`) requires. `RepublicofUzbekistan1997txt`:
-the marked field moves from the old O31 into the merged paragraph E1 (O30 + O31), inside a stretch of interleaved
-`w:ins`/`w:del` with `rPrChange` (the old O30 was red, the new text black).
-
-**Why it matters.** A rewrite that moves a citation to the sentence it now supports — the normal result of
-"restructure / clarify" — cannot ship when that citation is a first mention. The clean edit is right.
-
-**Suggested fix (to measure).** Generalise the replant to a non-adjacent pair: when the lost bookmark's text
-occurs exactly once inside some `w:del` of the same paragraph (or of the paragraph the plan names as its source),
-the bookmark cannot sit on both copies, so the R19 interleave trick does not apply; a post-accept re-plant (the
-design rejected for R19 in favour of the interleave) may be the only route. Measure first whether Word keeps a
-bookmark placed on the DELETED copy through Reject All, and where Accept All leaves it.
-
-**Workaround in use.** None: R27 stopped at T3 (protocol D4), nothing promoted; the route is the author's call
-(adopt the clean edit whole, as for R17, R19, R23).
-
 ### S1 A bookmark inside a `w:moveTo` survives the XML reject view and not Word's Reject All
 <!-- status: open -->
 
