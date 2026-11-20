@@ -57,9 +57,10 @@ def _redline(*pieces: str) -> dict[str, bytes]:
 def _marked(xml: str) -> str:
     """The visible text the Chen2021txt bookmark wraps, or LOST."""
     m = re.search(r'<w:bookmarkStart w:id="(\d+)" w:name="Chen2021txt"/>', xml)
-    if not m:
+    end = (xml.find(f'<w:bookmarkEnd w:id="{m.group(1)}"/>', m.end())
+           if m else -1)
+    if not m or end < 0:
         return "LOST"
-    end = xml.index(f'<w:bookmarkEnd w:id="{m.group(1)}"/>', m.end())
     return visible_text(xml[m.end():end])
 
 
@@ -157,6 +158,90 @@ def test_a_deletion_whose_label_is_FORMATTED_differently_is_not_a_copy():
         "<w:r><w:delText>Chen and Park 2021",
         "<w:r><w:rPr><w:b/></w:rPr><w:delText>Chen and Park 2021")
     parts = _redline(bold, INSERTED)
+    before = dict(parts)
+
+    assert tracked.replant_reinserted_bookmarks(
+        parts, {DOC: ORIGINAL.encode()}) == []
+    assert parts == before
+
+
+# --- bookmark tags BETWEEN the pair (Month_of_birth R23, 2026-11-20) ------
+# "(Table A7 and Figure 4)." -> "(Figure 4).": Compare put the start of the
+# kept label's bookmark between its deletion and its insertion, and only
+# its end inside the insertion, next to the removed label's empty marker.
+
+POINT = '<w:bookmarkStart w:id="7" w:name="Gone2020txt"/>'
+POINT_END = '<w:bookmarkEnd w:id="7"/>'
+#: as R23 has it: the removed label's marker opens, the kept one's starts,
+#: the removed one's closes — a straddle around a point bookmark
+GAP = POINT + MARK.format(i=12) + POINT_END
+#: and, as there, the insertion OPENS with the label, so a start just
+#: before it marks the label and nothing else
+STRADDLED = (f'<w:ins w:id="11" {REV}>'
+             + _field("Chen2021", "Chen and Park 2021")
+             + END.format(i=12) + run(").") + "</w:ins>")
+
+
+def test_a_bookmark_STARTING_between_the_deletion_and_insertion_is_lost_too():
+    """The premise: rejecting keeps the start and drops the end with the
+    insertion, so the bookmark is gone as surely as in R19's shape."""
+    acc, rej = _views(_redline(DELETED, GAP, STRADDLED))
+
+    assert _marked(acc) == "Chen and Park 2021"
+    assert _marked(rej) == "LOST"
+
+
+def test_the_straddling_bookmark_is_set_over_BOTH_copies():
+    parts = _redline(DELETED, GAP, STRADDLED)
+    acc0, rej0 = _views(parts)
+
+    done = tracked.replant_reinserted_bookmarks(
+        parts, {DOC: ORIGINAL.encode()})
+
+    acc, rej = _views(parts)
+    assert [d.split(":")[0] for d in done] == ["bookmark 'Chen2021txt'"]
+    assert _marked(rej) == _marked(acc) == "Chen and Park 2021"
+    assert visible_text(acc) == visible_text(acc0)
+    assert visible_text(rej) == visible_text(rej0)
+
+
+def test_the_point_bookmark_in_the_gap_keeps_its_ACCEPTED_place():
+    """It goes in front of the pair, which the accepted view cannot tell
+    from where it was: just before the inserted text."""
+    parts = _redline(DELETED, GAP, STRADDLED)
+    acc0, _ = _views(parts)
+
+    tracked.replant_reinserted_bookmarks(parts, {DOC: ORIGINAL.encode()})
+
+    acc, rej = _views(parts)
+
+    def before_point(xml: str) -> str:
+        return visible_text(xml[:xml.index(POINT)])
+
+    assert before_point(acc) == before_point(acc0) == "Mixed"
+    assert POINT in rej and POINT_END in rej
+
+
+def test_an_END_after_an_insertion_that_comes_first_is_pulled_in_too():
+    ins = (f'<w:ins w:id="11" {REV}>' + run("; ", preserve=True)
+           + MARK.format(i=12) + _field("Chen2021", "Chen and Park 2021")
+           + "</w:ins>")
+    parts = _redline(ins, POINT + POINT_END + END.format(i=12), DELETED)
+
+    tracked.replant_reinserted_bookmarks(parts, {DOC: ORIGINAL.encode()})
+
+    acc, rej = _views(parts)
+    assert _marked(rej) == _marked(acc) == "Chen and Park 2021"
+
+
+def test_a_gap_holding_a_bookmark_that_COVERS_text_is_left_alone():
+    """Moving a start whose end is elsewhere would move the range it
+    covers, which neither view's text can show — so the pair is not
+    rewritten, and the refusal names the cause."""
+    reaching = ('<w:bookmarkStart w:id="8" w:name="Wide"/>'
+                + MARK.format(i=12))
+    parts = _redline(DELETED, reaching, STRADDLED,
+                     run(" tail"), '<w:bookmarkEnd w:id="8"/>')
     before = dict(parts)
 
     assert tracked.replant_reinserted_bookmarks(

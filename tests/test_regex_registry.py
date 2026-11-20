@@ -1056,11 +1056,12 @@ def test_the_gate_says_what_it_CANNOT_decide():
 #: its `w:rPr`, and it is a revision like any other — which is what most
 #: of the name readers below count.
 NOT_EXERCISED: dict[tuple[str, str], str] = {
-    ("_tracked_replant.py", "_DEL + _INS"): (
-        "pair reader: a w:del and the w:ins straight after it, each body "
+    ("_tracked_replant.py", "_DEL + _GAP + _INS"): (
+        "pair reader: a w:del and the w:ins after it, only bookmark tags "
+        "between them, each body "
         "tempered against its own close and both openers guarded against "
         "the empty form; pinned on Compare's shape in test_tracked_replant"),
-    ("_tracked_replant.py", "_INS + _DEL"): (
+    ("_tracked_replant.py", "_INS + _GAP + _DEL"): (
         "pair reader: the same two elements in the other order, guarded "
         "the same way; pinned in test_tracked_replant"),
     ("_tracked_gates.py", r"<w:ins(?=[\s/>])"): (

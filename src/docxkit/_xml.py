@@ -314,6 +314,9 @@ BOOKMARK_END_ID_RE = re.compile(r'<w:bookmarkEnd\b[^>]*w:id="(\d+)"')
 #: repeatedly: the field walk existed three times with three different
 #: guards, and only one of them defended against a missing end tag.
 BOOKMARK_NAME_RE = re.compile(r'<w:bookmarkStart\b[^>]*w:name="([^"]+)"')
+#: One whole bookmark tag, either end; Word writes both empty. Shared by
+#: `_cite_repair` and `_tracked_replant`.
+BOOKMARK_TAG_RE = re.compile(r"<w:bookmark(?:Start|End)\b[^>]*/>")
 COMMENT_ID_RE = re.compile(r'<w:comment\b[^>]*w:id="(\d+)"')
 #: A comment's range markers and its reference mark, any spelling; group
 #: 1 is the comment's id. `comments` pairs the range, `hygiene` asks

@@ -874,8 +874,9 @@ def inserted_only_bookmarks(diffs: list[str], redline: Parts) -> str:
             f"known to do it: kept text between two deletions (a trim on "
             f"both sides of a citation it keeps), and a bookmarked block "
             f"relocated with moves off. The build repairs the first when "
-            f"the deleted copy is the insertion's neighbour and holds the "
-            f"text once (replant_reinserted_bookmarks); this one did not "
+            f"the deleted copy is the insertion's neighbour (bookmark tags "
+            f"between them aside) and holds the text once "
+            f"(replant_reinserted_bookmarks); this one did not "
             f"fit that. Moves on and off and Word's character-level "
             f"comparison were all measured; none keeps the bookmark.")
 

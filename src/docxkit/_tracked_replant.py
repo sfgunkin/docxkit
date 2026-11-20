@@ -32,6 +32,20 @@ on reject.
 Each candidate is kept only when both views' visible text is unchanged
 and both now hold the bookmark; anything else is left for the build's
 refusal, which still names the cause (:func:`inserted_only_bookmarks`).
+
+**Bookmark tags between the pair** (Month_of_birth R23, 2026-11-20). "(Table
+A7 and Figure 4)." became "(Figure 4).", and Compare wrote
+``del[Table A7 and Figure 4).] <start TableA7txt/> <start Figure4txt/>
+<end TableA7txt/> ins[Figure 4 <end Figure4txt/> ).]``: the start of the
+lost bookmark sits BETWEEN the two elements and only its end inside the
+``w:ins``. Rejecting keeps that start, and only that, so the bookmark is
+lost the same way. A gap of bookmark tags is therefore allowed between the
+pair. The lost bookmark's half in it moves to the edge of the ``w:ins`` it
+touches, which is the same place in the accepted view and nothing in the
+rejected one. What remains of the gap must be point bookmarks (a start
+followed directly by its own end), which cover no text. The gap goes back
+on the side that leaves its accepted position as it was: in front of the
+pair when the deletion comes first, after it when the insertion does.
 """
 from __future__ import annotations
 
@@ -40,7 +54,13 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from . import revisions as _revisions
-from ._xml import BOOKMARK_NAME_RE, TEXT_PARTS, Parts, visible_text
+from ._xml import (
+    BOOKMARK_NAME_RE,
+    BOOKMARK_TAG_RE,
+    TEXT_PARTS,
+    Parts,
+    visible_text,
+)
 
 #: One top-level child of a ``w:ins``/``w:del`` as Compare writes it: a
 #: run, or an empty element (a bookmark tag). Anything else — a nested
@@ -53,11 +73,14 @@ _CHILD_RE = re.compile(
 #: An element's body that never crosses its own close tag.
 _DEL = r"(?P<do><w:del\b[^>]*(?<!/)>)(?P<db>(?:(?!</w:del>).)*)</w:del>"
 _INS = r"(?P<io><w:ins\b[^>]*(?<!/)>)(?P<ib>(?:(?!</w:ins>).)*)</w:ins>"
-#: A deletion and an insertion with nothing between them, in either
-#: order: Compare writes the deletion first.
-_DEL_INS_RE = re.compile(_DEL + _INS, re.DOTALL)
-_INS_DEL_RE = re.compile(_INS + _DEL, re.DOTALL)
+#: Bookmark tags and nothing else between the two (R23's shape).
+_GAP = r"(?P<gap>(?:<w:bookmark(?:Start|End)\b[^>]*/>)*)"
+#: A deletion and an insertion with only bookmark tags between them, in
+#: either order: Compare writes the deletion first.
+_DEL_INS_RE = re.compile(_DEL + _GAP + _INS, re.DOTALL)
+_INS_DEL_RE = re.compile(_INS + _GAP + _DEL, re.DOTALL)
 _ID_RE = re.compile(r'\bw:id="(\d+)"')
+_TAG_RE = BOOKMARK_TAG_RE
 
 
 def _children(body: str) -> tuple[list[str], set[int]] | None:
@@ -136,23 +159,69 @@ def _rewrite(ins_open: str, ins: tuple[list[str], set[int]], del_open: str,
             + wrap(del_open, del_kids[d1:], "del"))
 
 
+def _is_points(tags: list[str]) -> bool:
+    """Every start in `tags` directly followed by its own end, and nothing
+    else: bookmarks that cover no text, so moving them moves no range."""
+    if len(tags) % 2:
+        return False
+    for start, end in zip(tags[::2], tags[1::2], strict=True):
+        sid, eid = _ID_RE.search(start), _ID_RE.search(end)
+        if (not start.startswith("<w:bookmarkStart")
+                or not end.startswith("<w:bookmarkEnd")
+                or sid is None or eid is None or sid.group(1) != eid.group(1)):
+            return False
+    return True
+
+
+def _pull(gap: list[str], ins_body: str, name: str, *,
+          ins_first: bool) -> tuple[str, list[str]] | None:
+    """`ins_body` with `name`'s half from the gap moved to the edge of the
+    insertion it touches, and what stays in the gap; None when the rest of
+    the gap is not point bookmarks or the half is on the wrong side."""
+    tags = gap + _TAG_RE.findall(ins_body)
+    starts = [t for t in tags if t.startswith("<w:bookmarkStart")
+              and f'w:name="{name}"' in t]
+    bid = _ID_RE.search(starts[0]) if len(starts) == 1 else None
+    if bid is None:
+        return None
+    ends = [t for t in tags if t.startswith("<w:bookmarkEnd")
+            and f'w:id="{bid.group(1)}"' in t]
+    if len(ends) != 1:
+        return None
+    moved = [t for t in (starts[0], ends[0]) if t in gap]
+    rest = [t for t in gap if t not in moved]
+    if len(moved) > 1 or not _is_points(rest):
+        return None
+    if not moved:
+        return ins_body, rest
+    if moved[0] is starts[0]:           # a start before the insertion
+        return None if ins_first else (moved[0] + ins_body, rest)
+    return (ins_body + moved[0], rest) if ins_first else None  # an end after
+
+
 def _candidates(xml: str, lost: set[str],
                 next_id: Iterator[int]) -> Iterator[_Candidate]:
     """Each lost bookmark sitting inside a ``w:ins`` that has a ``w:del``
-    for a neighbour, either side, with that pair rewritten."""
-    for pattern in (_DEL_INS_RE, _INS_DEL_RE):
+    for a neighbour, either side, with that pair rewritten. Bookmark tags
+    between the two are allowed as the module docstring says."""
+    for pattern, ins_first in ((_DEL_INS_RE, False), (_INS_DEL_RE, True)):
         for m in pattern.finditer(xml):
-            ins_open, ins_body = m.group("io"), m.group("ib")
-            names = [n for n in BOOKMARK_NAME_RE.findall(ins_body)
-                     if n in lost]
-            ins = _children(ins_body) if names else None
+            gap = _TAG_RE.findall(m.group("gap"))
+            names = [n for n in BOOKMARK_NAME_RE.findall(
+                         m.group("ib") + m.group("gap")) if n in lost]
             dele = _children(m.group("db")) if names else None
-            if ins is None or dele is None:
+            if dele is None:
                 continue
-            for name in names:
-                new = _rewrite(ins_open, ins, m.group("do"), dele,
+            for name in dict.fromkeys(names):
+                pulled = _pull(gap, m.group("ib"), name, ins_first=ins_first)
+                ins = _children(pulled[0]) if pulled else None
+                if pulled is None or ins is None:
+                    continue
+                new = _rewrite(m.group("io"), ins, m.group("do"), dele,
                                name=name, next_id=next_id)
                 if new is not None:
+                    rest = "".join(pulled[1])
+                    new = new + rest if ins_first else rest + new
                     yield _Candidate(name, m.start(), m.end(), new)
 
 

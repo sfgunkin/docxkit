@@ -16,6 +16,7 @@ from ._xml import (
     BOOKMARK_ID_RE,
     BOOKMARK_NAME_RE,
     BOOKMARK_START_ID_RE,
+    BOOKMARK_TAG_RE,
     HYPERLINK_ANY_RE,
     PARA_RE,
     Field,
@@ -571,7 +572,7 @@ def _own_marker(anchor: str) -> str | None:
     return anchor + "txt"
 
 
-_BOOKMARK_TAG_RE = re.compile(r"<w:bookmark(?:Start|End)\b[^>]*/>")
+_BOOKMARK_TAG_RE = BOOKMARK_TAG_RE
 
 
 def _marker_spans(para: str) -> dict[str, tuple[int, int, str]]:
