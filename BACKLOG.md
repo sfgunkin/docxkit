@@ -967,6 +967,38 @@ both as CAUSE lines. Not done: (a)/(b). (b) means hand-authoring `moveFrom`/`mov
 which CONTRIBUTING's non-negotiables forbid unless the author lifts that for this case, and it needs a Word
 round-trip test first. Severity unchanged: such a round still cannot be shipped.
 
+### S2 A first-mention link carried to ANOTHER place (not the deletion's neighbour) loses its marker on reject
+<!-- status: open -->
+
+Found 2026-11-20 on Month_of_birth R27 (Sections 5–6 restructured; clean edit `revision/build/edited_r27.docx`,
+baseline `revision/build/prev.docx` sha `bd803f86…`; the paper's checker `methodology_restructure_check.py post`
+PASSES G1–G9; redline `revision/build/batch.docx`, report `revision/build/r27_ship.txt`). The plan carries 14 old
+link elements whole into rewritten paragraphs, 8 with their `<Key>txt` marker. `revision ship --keep-math`:
+lint clean, XML accept == Word accept, oMath 6; reject-all paragraphs, glyphs, footnotes, links True, **STRUCTURE
+False: bookmarkStart lost `Lee2010txt`, `RepublicofUzbekistan1997txt`**; the CAUSE line fires and says the replant
+"did not fit". The other six carried markers survive.
+
+**Shape (read off the redline).** `Lee2010txt`: in the old paragraph the field `Lee and Lemieux 2010` stood in
+"(Imbens and Lemieux 2008; Lee and Lemieux 2010)"; the new text keeps "(Imbens and Lemieux 2008)" there and puts
+the marked field four sentences later ("…precise control over the date of birth (Lee and Lemieux 2010)."). Compare
+writes `del[; <field>Lee and Lemieux 2010</field>). Unobserved characteristics]` early and
+`ins[… ([BS Lee2010txt]<field>…</field>[BE]). Selection]` late, with kept words between: the deleted copy is NOT the
+insertion's neighbour, which `replant_reinserted_bookmarks` (`a7ccbbb`, `c6ac98c`) requires. `RepublicofUzbekistan1997txt`:
+the marked field moves from the old O31 into the merged paragraph E1 (O30 + O31), inside a stretch of interleaved
+`w:ins`/`w:del` with `rPrChange` (the old O30 was red, the new text black).
+
+**Why it matters.** A rewrite that moves a citation to the sentence it now supports — the normal result of
+"restructure / clarify" — cannot ship when that citation is a first mention. The clean edit is right.
+
+**Suggested fix (to measure).** Generalise the replant to a non-adjacent pair: when the lost bookmark's text
+occurs exactly once inside some `w:del` of the same paragraph (or of the paragraph the plan names as its source),
+the bookmark cannot sit on both copies, so the R19 interleave trick does not apply; a post-accept re-plant (the
+design rejected for R19 in favour of the interleave) may be the only route. Measure first whether Word keeps a
+bookmark placed on the DELETED copy through Reject All, and where Accept All leaves it.
+
+**Workaround in use.** None: R27 stopped at T3 (protocol D4), nothing promoted; the route is the author's call
+(adopt the clean edit whole, as for R17, R19, R23).
+
 ### S4 `tracked.build` holds the pipeline and the refusal policy in one function; the reject-side judgment is orchestrated twice
 <!-- status: open -->
 
@@ -998,6 +1030,49 @@ says which pass changed what.
 
 **Suggested fix.** A declared list of passes, each naming the invariant it keeps (for instance "the rejected
 text is unchanged"), checked centrally after each pass and named in the report when one breaks it.
+
+### S4 The exhibit link tools do not read footnotes: an exhibit cited only from a footnote cannot be linked from it
+<!-- status: open -->
+
+Found 2026-11-20 on Month_of_birth R23–R26. After R23 moved the appendix pointers into footnotes 2–7, and R25 took
+the last pointers out of the exhibit notes, all seven appendix exhibits (Tables A1–A5, Figures A1–A2) are named only
+in `word/footnotes.xml`. `crossrefs.link` / `link_more` take `other_parts` only to *see* mentions (`no_mention`
+lists all seven); they never write a link into a footnote. `crossrefs.audit` files the seven as `caption_only`
+(six) and `unlinked` (Table A5, no bookmark). So in the PDF and in Word a footnote's "Table A3 reports these
+estimates" is plain text, while every body mention is a link.
+
+**Why it matters.** The paper's convention, every exhibit mention a link, breaks the moment a pointer moves into a
+note, which is the usual way to shorten a main text. The paper now carries an `ALLOWED_UNLINKED` list of seven, and
+`relink_exhibits.py`'s gate has to exempt `caption_only`, so a footnote mention that loses its link would go
+unseen.
+
+**Suggested fix.** `link_more(…, parts=…)` (or a `link_notes(parts)`) that forward-links each `Figure|Table N` in
+footnotes and endnotes to the body bookmark (`w:hyperlink w:anchor` works across parts in Word); with an exhibit
+that has no bookmark, plant one before its caption as `link` does. `audit` then counts a note mention as a mention,
+so `caption_only` means truly uncited again.
+
+**Workaround in use.** R26 T5 (Month_of_birth, `scripts/r26_after_verdict.py`) links the seven by hand with the
+`edit` helpers on the footnotes part, untracked.
+
+### S4 A save in Word moves an exhibit's body-level bookmark into its caption when the label is plain text
+<!-- status: open -->
+
+Found 2026-11-20 on Month_of_birth (the author's save of 10:08 after R24). The paper's convention, which
+`crossrefs.link` writes, is the exhibit bookmark (`TableA2`) as a body-level `bookmarkStart` directly before the
+caption paragraph. In Word's save the three exhibits whose caption label was plain text (`FigureA1`, `FigureA2`,
+`TableA2`; no `HYPERLINK \l "<X>txt"` field around the label) had the `bookmarkStart` moved inside the caption
+paragraph, before the label. The captions whose label is a field kept the body-level start. `crossrefs.audit` does
+not object (no `misplaced_anchor`), and nothing links to those three, so nothing broke.
+
+**Why it matters.** Two places for one bookmark. Every checker that asserts "bookmark before caption" (this paper's
+`exhibits_trim_check.py`, `notes_trim_check.py`) had to learn both, and the next round that wraps the label in a
+back-link field (`link`) inherits a bookmark inside the paragraph it is editing.
+
+**Suggested fix (a question first).** Decide which place is canonical. Either `link` / `relink` normalize the start
+back to body level on every pass, or the convention becomes "first thing in the caption paragraph" and the writers
+follow Word. Measure what Word does with a field-label caption across a save before choosing.
+
+**Workaround in use.** The paper's checkers accept both places (notes_trim protocol, "Links inside the notes").
 
 ## Where the fixed entries are
 
