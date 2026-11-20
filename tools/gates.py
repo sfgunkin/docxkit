@@ -152,6 +152,19 @@ GATES: list[Gate] = [
     # optional, so a field added before its first test is not a toll.
     ("optionals", [sys.executable, "tools/optional_audit.py",
                    "--callers", "tests"], False),
+    # Does an ORACLE reach what this change changed? The corpus gates
+    # below run only what they name, and a batch that rewrote three
+    # writers on 2026-11-14 would have read "0 differ" from a writer
+    # oracle that probed two others. Static, against HEAD, so it gates the
+    # work in hand and is silent once that is committed. Replayed over
+    # the 30 commits before it, it fails one: a change to dead code.
+    #
+    # In front of the suite since 2026-11-20, for the reason `optionals`
+    # is: two seconds, about the source alone. It sat behind `api`, so a
+    # new module learned it needed a sweep routine only on a second full
+    # chain, four minutes after the suite had already passed
+    # (REVIEW_2026-11-20 #3).
+    ("reach", [sys.executable, "tools/oracle_reach.py"], False),
     # `--cov=tests` measures the TEST files as well, for `unrun` below.
     # It costs 14.5 s of this gate's 57 (measured 2026-09-18, alternating
     # arms at `-n 8`), and it is the price of the one question nothing
@@ -204,13 +217,6 @@ GATES: list[Gate] = [
     # eleven breakage kinds that break a CALL fail it — the twelfth,
     # a constant's value, is reported. See the tool for the measurement.
     ("api", [sys.executable, "tools/api_check.py"], False),
-    # Does an ORACLE reach what this change changed? The corpus gates
-    # below run only what they name, and a batch that rewrote three
-    # writers on 2026-11-14 would have read "0 differ" from a writer
-    # oracle that probed two others. Static, against HEAD, so it gates the
-    # work in hand and is silent once that is committed. Replayed over
-    # the 30 commits before it, it fails one: a change to dead code.
-    ("reach", [sys.executable, "tools/oracle_reach.py"], False),
     # Does anything in this repository import what it does not declare?
     # The one question `pyproject.toml` has been wrong about four times
     # — latex2mathml, pymupdf, pandas and cosmic-ray — and every time it
