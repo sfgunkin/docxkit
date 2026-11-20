@@ -998,6 +998,38 @@ existing interleave. Test on the R23 pair; the real `tracked.build` of it should
 
 **Workaround in use.** None: R23 stopped at T1.3 (protocol D4), nothing promoted; route is the author's call.
 
+### S4 `tracked.build` holds the pipeline and the refusal policy in one function; the reject-side judgment is orchestrated twice
+<!-- status: open -->
+
+Found 2026-11-20 by the architecture review (`REVIEW_2026-11-20.md` #1). `tracked.build` (`tracked.py:799`) is
+377 lines with 20 parameters, 10 of them booleans; `reject_check`, `accept_check`, `lint_check`, `force` and
+`verify_in_word` decide which findings refuse. The compare-probe passes every check off plus `force`; the protocol
+passes `reject_check=False` (`revision/_build.py:425`) and leaves the refusal to `revision validate`, which calls
+`untracked`, `structure_counts`, `bookmark_changes`, `inserted_only_bookmarks` and `final_paragraph_cause` again in
+its own ladder. A new cause is wired into both (`e810cc7` touched `tracked.py` and `_validate.py` for one cause).
+
+**Why it matters.** No disagreement between the two ladders has been seen; the risk is the next cause wired into
+one of them only, so `build` and `validate` give different verdicts on the same redline.
+
+**Suggested fix.** Split `build` into compare, repair, judge and publish stages; one reject-side judge that both
+`build` and `validate` call; a policy value with presets (direct, protocol, probe) in place of the booleans, keeping
+`force` and `reject_check` as aliases (papers pass `force=True` ten times, `reject_check=False` twice). The `api`
+gate and the goldens hold the boundary. Do it with the next entry.
+
+### S4 The post-Compare repairs are an undeclared pipeline: no stated order, each proves its own safety
+<!-- status: open -->
+
+Found 2026-11-20 by the architecture review (`REVIEW_2026-11-20.md` #2). Seven repair passes run in `tracked.build`
+before the gates and `restore_math_glyphs` after them (`tracked.py:1007–1125`); the order is the order of the
+lines. Each keeps a candidate by its own rule: `return_note_spaces` when the count of paragraphs that do not accept
+correctly falls, `replant_reinserted_bookmarks` (`a7ccbbb`) when both views' visible text is unchanged.
+
+**Why it matters.** A new pass has to invent its own safety rule, and when a gate fails after the repairs nothing
+says which pass changed what.
+
+**Suggested fix.** A declared list of passes, each naming the invariant it keeps (for instance "the rejected
+text is unchanged"), checked centrally after each pass and named in the report when one breaks it.
+
 ## Where the fixed entries are
 
 Closed entries live in [`BACKLOG-ARCHIVE.md`](BACKLOG-ARCHIVE.md) — 213
