@@ -14,6 +14,54 @@ Newest first, as they were in BACKLOG.md.
 
 ## Fixed
 
+### ~~S2 A re-inserted kept label whose bookmark STRADDLES the del/ins seam is not replanted; its marker is lost on reject~~ — FIXED 20.11, `c6ac98c`
+
+<!-- status: fixed -->
+
+Found 2026-11-20 on Month_of_birth R23 (Part 1 of `notes/exhibits_trim_protocol.md`; clean edit
+`revision/build/edited_r23.docx` — kept copy also as `edited_r23_kept.docx` — baseline `revision/build/prev.docx`,
+sha `6c16b38e…`; the paper's checker `exhibits_trim_check.py post1` PASSES). Span S17 turns "(Table A7 and Figure 4)."
+into "(Figure 4).": `Table A7 and ` is deleted, and the kept first mention `Figure 4` (a `HYPERLINK \l "Figure4"`
+field inside its marker bookmark `Figure4txt`) follows the stretch directly.
+
+**Measured** (`revision ship`, Word 16, ~90 s): Compare does NOT keep the label. The redline reads
+`(` `del[Table A7 and Figure 4).]` `<bookmarkStart TableA7txt/>` **`<bookmarkStart Figure4txt/>`**
+`<bookmarkEnd TableA7txt/>` `ins[Figure 4 <bookmarkEnd Figure4txt/> ).]`: the start of `Figure4txt` sits BETWEEN
+the deletion and the insertion, its end INSIDE the insertion. Reject-all: paragraphs, glyphs, footnotes, links
+True; **STRUCTURE False, bookmarkStart lost 'Figure4txt'**. The CAUSE line fires ("Compare re-inserted the text
+carrying Figure4txt … The build repairs the first when the deleted copy is the insertion's neighbour and holds
+the text once (replant_reinserted_bookmarks); this one did not fit that"). Yet the deleted copy IS the
+insertion's neighbour (only bookmark elements between them) and holds `Figure 4` once. Same result with the
+21 neighbouring removed-label markers dropped instead of kept (diagnostic build in a session scratchpad), so
+the empty `TableA7txt` between the two is not the cause. The likely miss: `replant` expects the bookmark wholly
+inside the `w:ins`, and here only its END is. The word tokenizer makes this shape common: "(" is glued to the
+next word, so "(Table A7 and Figure 4)" vs "(Figure 4)" diffs as `(Table`…`4)` against `(Figure`…`4)`.
+
+**Why it matters.** Removing a pointer that stands between an opening bracket and a kept first mention is the
+commonest edit of a "move exhibits to footnotes / trim pointers" round. R23 stops at D4 on this one marker.
+
+**Suggested fix.** Treat a bookmark whose start sits between an adjacent `w:del`/`w:ins` pair and whose end
+sits inside the `w:ins` as the inserted-copy case: normalise it (start moved inside the `w:ins`) and run the
+existing interleave. Test on the R23 pair; the real `tracked.build` of it should build with every gate green.
+
+**Workaround in use.** None: R23 stopped at T1.3 (protocol D4), nothing promoted; route is the author's call.
+
+**Fixed, `c6ac98c` (2026-11-20).** The replant now allows bookmark tags between Compare's `w:del` and `w:ins`. The lost
+bookmark's half in that gap (a start before the insertion, or an end after an insertion that comes first) moves to
+the edge of the `w:ins` it touches, which is the same place in the accepted view and absent from the rejected one.
+What remains of the gap must be point bookmarks (a start directly followed by its own end), which cover no text;
+it goes back on the side that leaves its accepted position unchanged. A gap holding a bookmark that covers text is
+left alone and the refusal still names it.
+
+Measured on the R23 inputs (copies: baseline `mb4.docx` at the paper's `0b307b6`, sha `6c16b38e…`, which is the
+entry's; clean edit `edited_r23.docx`). The replant on R23's own redline (`batch.docx`) repairs `Figure4txt` with
+both views' text unchanged. The real `tracked.build` of the pair, without `force`, builds with every gate green
+(104 revisions). In Word, Accept All and Reject All both leave `Figure4txt` on exactly `'Figure 4'`, and
+`TableA7txt` stays an empty marker in both. Corpus: 724 of 3,044 documents carry insertions; the repair fires on 3 (the two LI7 copies from `a7ccbbb` and R23's redline), no errors. Tests: five in `test_tracked_replant.py` (the
+premise, the repair, the point bookmark's accepted place, the insertion-first end, a covering bookmark left
+alone); the two repair tests fail without the fix. No paper workaround to remove: R23 was adopted as a clean edit
+(`dd5b9c3` in the paper) before this landed.
+
 ### ~~S2 A kept first-mention label between two deletions is re-inserted by Compare, and its marker is lost on reject~~ — FIXED 19.11, `a7ccbbb`
 
 <!-- status: fixed -->
