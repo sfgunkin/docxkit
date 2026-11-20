@@ -46,12 +46,47 @@ rejected one. What remains of the gap must be point bookmarks (a start
 followed directly by its own end), which cover no text. The gap goes back
 on the side that leaves its accepted position as it was: in front of the
 pair when the deletion comes first, after it when the insertion does.
+
+**The label carried AWAY from its deleted copy** (Month_of_birth R27,
+2026-11-20, backlog S2). A restructure moved ``(Lee and Lemieux 2010)``
+four sentences on, and Compare wrote the deleted copy early and the
+marked copy inside a later ``w:ins``, with kept text between. No single
+bookmark can then mark the label in both views: Word's bookmark is one
+range over the all-markup text, and a range holding both copies holds
+the kept text between them, which both views show. Two other placements
+were measured in Word on that redline and fail:
+
+* the same name planted a second time, on the deleted copy: Word keeps
+  ONE bookmark of a name (the inserted copy's), the other is dead
+  weight in the XML, and Reject All drops the marker as before;
+* the deleted copy alone: lost on accept (the R19 measurement above).
+
+What works is the R19 property again, used on a different deletion: the
+deleted run that touches the insertion is swapped in front of (or
+behind) the label and drawn into the bookmark::
+
+    del[D… d] ins[X <start> L <end> Y]
+      ->  del[D…] ins[X] <start> del[d] ins[L] <end> ins[Y]
+
+Accepting drops ``d`` and the bookmark is exactly the label; rejecting
+drops the insertions and the bookmark is ``d``. Word on R27: Accept All
+``'Lee and Lemieux 2010'`` and ``'Republic of Uzbekistan 1997'``,
+Reject All ``'if selection'`` and ``','``, both bookmarks kept. **The
+rejected view's marker is therefore on the wrong words** — a back-link
+from the reference list lands next to where the citation will go, not
+on the citation the baseline had. That is the price of the round being
+shippable at all, so the build NAMES it for each bookmark (the note says
+which words hold it) rather than passing it silently, and the exact
+route is always tried first. Only one run is drawn in, the one that
+touches the insertion, and it must show text: Word drops a range with
+nothing a view keeps.
 """
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from itertools import chain
 
 from . import revisions as _revisions
 from ._xml import (
@@ -109,6 +144,42 @@ class _Candidate:
     start: int          # span of the del + ins pair in the part
     end: int
     rewritten: str
+    #: The deleted text that holds the bookmark in the rejected view when
+    #: it is NOT the label's own deleted copy (the neighbour route), else "".
+    held_by: str = ""
+
+
+def _label_span(kids: list[str], runs: set[int],
+                name: str) -> tuple[int, int] | None:
+    """Indexes of `name`'s start and end among an insertion's children,
+    when exactly one pair is there and only runs lie between them."""
+    starts = [i for i, k in enumerate(kids)
+              if k.startswith("<w:bookmarkStart") and f'w:name="{name}"' in k]
+    if len(starts) != 1:
+        return None
+    a = starts[0]
+    bid = _ID_RE.search(kids[a])
+    if not bid:
+        return None
+    end_id = f'w:id="{bid.group(1)}"'
+    ends = [i for i, k in enumerate(kids)
+            if k.startswith("<w:bookmarkEnd") and end_id in k]
+    if len(ends) != 1 or ends[0] < a:
+        return None
+    b = ends[0]
+    inner = range(a + 1, b)
+    if not inner or any(i not in runs for i in inner):
+        return None
+    return a, b
+
+
+def _wrapper(next_id: Iterator[int]) -> Callable[[str, list[str], str], str]:
+    def wrap(opener: str, kids: list[str], kind: str) -> str:
+        if not kids:
+            return ""
+        return (_ID_RE.sub(f'w:id="{next(next_id)}"', opener, count=1)
+                + "".join(kids) + f"</w:{kind}>")
+    return wrap
 
 
 def _rewrite(ins_open: str, ins: tuple[list[str], set[int]], del_open: str,
@@ -117,24 +188,11 @@ def _rewrite(ins_open: str, ins: tuple[list[str], set[int]], del_open: str,
     """The interleaved pair, or None when the label is not in the deletion
     exactly once."""
     (ins_kids, ins_runs), (del_kids, del_runs) = ins, dele
-    starts = [i for i, k in enumerate(ins_kids)
-              if k.startswith("<w:bookmarkStart") and f'w:name="{name}"' in k]
-    if len(starts) != 1:
+    span = _label_span(ins_kids, ins_runs, name)
+    if span is None:
         return None
-    a = starts[0]
-    bid = _ID_RE.search(ins_kids[a])
-    if not bid:
-        return None
-    end_id = f'w:id="{bid.group(1)}"'
-    ends = [i for i, k in enumerate(ins_kids)
-            if k.startswith("<w:bookmarkEnd") and end_id in k]
-    if len(ends) != 1 or ends[0] < a:
-        return None
-    b = ends[0]
-    inner = range(a + 1, b)
-    if not inner or any(i not in ins_runs for i in inner):
-        return None
-    label = [_sig(ins_kids[i]) for i in inner]
+    a, b = span
+    label = [_sig(ins_kids[i]) for i in range(a + 1, b)]
     sigs = [(i, _sig(k)) for i, k in enumerate(del_kids) if i in del_runs]
     hits = [n for n in range(len(sigs) - len(label) + 1)
             if [s for _, s in sigs[n:n + len(label)]] == label]
@@ -142,12 +200,7 @@ def _rewrite(ins_open: str, ins: tuple[list[str], set[int]], del_open: str,
         return None
     d0 = sigs[hits[0]][0]
     d1 = sigs[hits[0] + len(label) - 1][0] + 1
-
-    def wrap(opener: str, kids: list[str], kind: str) -> str:
-        if not kids:
-            return ""
-        return (_ID_RE.sub(f'w:id="{next(next_id)}"', opener, count=1)
-                + "".join(kids) + f"</w:{kind}>")
+    wrap = _wrapper(next_id)
 
     return (wrap(del_open, del_kids[:d0], "del")
             + wrap(ins_open, ins_kids[:a], "ins")
@@ -157,6 +210,46 @@ def _rewrite(ins_open: str, ins: tuple[list[str], set[int]], del_open: str,
             + ins_kids[b]
             + wrap(ins_open, ins_kids[b + 1:], "ins")
             + wrap(del_open, del_kids[d1:], "del"))
+
+
+def _rewrite_neighbour(ins_open: str, ins: tuple[list[str], set[int]],
+                       del_open: str, dele: tuple[list[str], set[int]], *,
+                       name: str, ins_first: bool,
+                       next_id: Iterator[int]) -> tuple[str, str] | None:
+    """The pair with the deleted run that touches the insertion moved
+    against the label, inside the bookmark; and that run's text. None when
+    that run carries no visible text.
+
+    With the deletion first, ``del[D… d] ins[X L Y]`` becomes
+    ``del[D…] ins[X] <start> del[d] ins[L] <end> ins[Y]``; with the
+    insertion first, ``ins[X L Y] del[d …D]`` becomes
+    ``ins[X] <start> ins[L] del[d] <end> ins[Y] del[…D]``. Each step swaps
+    an adjacent deletion and insertion, which neither view can see.
+    """
+    (ins_kids, ins_runs), (del_kids, del_runs) = ins, dele
+    span = _label_span(ins_kids, ins_runs, name)
+    if span is None or not del_kids:
+        return None
+    a, b = span
+    k = 0 if ins_first else len(del_kids) - 1
+    if k not in del_runs:
+        return None
+    held = visible_text(_sig(del_kids[k]))
+    if not held.strip():
+        return None
+    wrap = _wrapper(next_id)
+    start, end = ins_kids[a], ins_kids[b]
+    x, label, y = ins_kids[:a], ins_kids[a + 1:b], ins_kids[b + 1:]
+    if ins_first:
+        new = (wrap(ins_open, x, "ins") + start + wrap(ins_open, label, "ins")
+               + wrap(del_open, del_kids[:1], "del") + end
+               + wrap(ins_open, y, "ins")
+               + wrap(del_open, del_kids[1:], "del"))
+    else:
+        new = (wrap(del_open, del_kids[:k], "del") + wrap(ins_open, x, "ins")
+               + start + wrap(del_open, del_kids[k:], "del")
+               + wrap(ins_open, label, "ins") + end + wrap(ins_open, y, "ins"))
+    return new, held
 
 
 def _is_points(tags: list[str]) -> bool:
@@ -199,6 +292,30 @@ def _pull(gap: list[str], ins_body: str, name: str, *,
     return (ins_body + moved[0], rest) if ins_first else None  # an end after
 
 
+def _neighbour_candidates(xml: str, lost: set[str],
+                          next_id: Iterator[int]) -> Iterator[_Candidate]:
+    """Each lost bookmark inside a ``w:ins`` that directly touches a
+    ``w:del`` whose run next to it is NOT the label's copy, with that run
+    drawn into the bookmark (see the module docstring, R27)."""
+    for pattern, ins_first in ((_DEL_INS_RE, False), (_INS_DEL_RE, True)):
+        for m in pattern.finditer(xml):
+            if m.group("gap"):
+                continue
+            names = [n for n in BOOKMARK_NAME_RE.findall(m.group("ib"))
+                     if n in lost]
+            dele = _children(m.group("db")) if names else None
+            ins = _children(m.group("ib")) if dele is not None else None
+            if dele is None or ins is None:
+                continue
+            for name in dict.fromkeys(names):
+                got = _rewrite_neighbour(m.group("io"), ins, m.group("do"),
+                                         dele, name=name, ins_first=ins_first,
+                                         next_id=next_id)
+                if got is not None:
+                    yield _Candidate(name, m.start(), m.end(), got[0],
+                                     held_by=got[1])
+
+
 def _candidates(xml: str, lost: set[str],
                 next_id: Iterator[int]) -> Iterator[_Candidate]:
     """Each lost bookmark sitting inside a ``w:ins`` that has a ``w:del``
@@ -229,6 +346,30 @@ def _names(xml: str) -> set[str]:
     return set(BOOKMARK_NAME_RE.findall(xml))
 
 
+def _marked(xml: str, name: str) -> str | None:
+    """The visible text `name` wraps in `xml`, or None when it is absent."""
+    m = re.search(rf'<w:bookmarkStart\b[^>]*w:name="{re.escape(name)}"[^>]*/>',
+                  xml)
+    bid = _ID_RE.search(m.group(0)) if m else None
+    if m is None or bid is None:
+        return None
+    end = re.search(rf'<w:bookmarkEnd\b[^>]*w:id="{bid.group(1)}"[^>]*/>',
+                    xml[m.end():])
+    return visible_text(xml[m.end():m.end() + end.start()]) if end else None
+
+
+def _note(c: _Candidate, part: str, label: str) -> str:
+    if not c.held_by:
+        return (f"bookmark {c.name!r}: Compare deleted the text it marks and "
+                f"inserted it again; set over both copies so rejecting keeps "
+                f"it ({part})")
+    return (f"bookmark {c.name!r}: Compare carried the text it marks away "
+            f"from its deleted copy; it stays on the inserted {label!r}, and "
+            f"the adjacent deletion {c.held_by!r} holds it in the rejected "
+            f"view (rejecting puts the marker THERE, not on {label!r}) "
+            f"({part})")
+
+
 def replant_reinserted_bookmarks(parts: Parts, original: Parts) -> list[str]:
     """Set each bookmark of `original` that rejecting `parts` would lose,
     because Compare re-inserted the text it marks next to the deleted
@@ -253,19 +394,20 @@ def replant_reinserted_bookmarks(parts: Parts, original: Parts) -> list[str]:
             top = max((int(i) for i in _ID_RE.findall(xml)), default=0)
             fresh = iter(range(top + 1, top + 1_000_000))
             accepted = _revisions.accept(xml)
-            for c in _candidates(xml, lost, fresh):
+            # the exact route first: a neighbour is the fallback for a
+            # label whose deleted copy is not next to it
+            for c in chain(_candidates(xml, lost, fresh),
+                           _neighbour_candidates(xml, lost, fresh)):
                 trial = xml[:c.start] + c.rewritten + xml[c.end:]
                 t_acc = _revisions.accept(trial)
                 t_rej = _revisions.reject(trial)
+                label = _marked(accepted, c.name)
                 if (visible_text(t_acc) == visible_text(accepted)
                         and visible_text(t_rej) == visible_text(rejected)
-                        and c.name in _names(t_acc)
-                        and c.name in _names(t_rej)):
+                        and label and _marked(t_acc, c.name) == label
+                        and (_marked(t_rej, c.name) or "").strip()):
                     xml = trial
-                    done.append(
-                        f"bookmark {c.name!r}: Compare deleted the text it "
-                        f"marks and inserted it again; set over both copies "
-                        f"so rejecting keeps it ({part})")
+                    done.append(_note(c, part, label))
                     break
                 tried.add(c.name)
             else:

@@ -967,6 +967,13 @@ both as CAUSE lines. Not done: (a)/(b). (b) means hand-authoring `moveFrom`/`mov
 which CONTRIBUTING's non-negotiables forbid unless the author lifts that for this case, and it needs a Word
 round-trip test first. Severity unchanged: such a round still cannot be shipped.
 
+**(a) measured and ruled out, 2026-11-20** (on R27's redline, where the same question came up for a citation
+marker): a bookmark planted a second time under the SAME name on the deleted copy is not a bookmark to Word. Word
+keeps one per name (the inserted copy's), writes the other back on save as dead XML, and Reject All drops the marker
+exactly as before. The neighbour route that fixed R27 (`_tracked_replant`, "carried AWAY") does not reach this shape
+either: it works on bookmark tags INSIDE a `w:ins`, and an exhibit's anchor is a body-level `bookmarkStart` before an
+inserted caption paragraph. What remains is (b), still waiting on the author's call on the non-negotiable.
+
 ### S2 A first-mention link carried to ANOTHER place (not the deletion's neighbour) loses its marker on reject
 <!-- status: open -->
 
@@ -998,6 +1005,31 @@ bookmark placed on the DELETED copy through Reject All, and where Accept All lea
 
 **Workaround in use.** None: R27 stopped at T3 (protocol D4), nothing promoted; the route is the author's call
 (adopt the clean edit whole, as for R17, R19, R23).
+
+### S1 A bookmark inside a `w:moveTo` survives the XML reject view and not Word's Reject All
+<!-- status: open -->
+
+Found 2026-11-20 on Month_of_birth R27, while Word-checking the fix for the "carried to ANOTHER place" S2. Redline
+`revision/build/batch.docx`, baseline `prev.docx`. `Lee2009txt` (the marker round "(Lee 2009)") sits inside a
+`w:moveTo` (a moved sentence, moves on). `revisions.reject` keeps it, so `revision ship`'s reject-all gate reports
+STRUCTURE with only the two R27 markers lost; Word's Reject All on the same file (saved, names read back) has every
+baseline bookmark except `Lee2009txt`. 164 in the baseline, 163 in Word's rejected view after the two R27 markers
+were replanted.
+
+**Why it matters.** The gate is green on a bookmark Word drops: a rejected round leaves a reference's back-link
+dangling, and nothing reports it. This is the second Word measurement of the shape: `_doomed_bookmarks`' docstring
+already records Aging_Well 2026-09-07 (`Brown2019txt`, dropped on reject) and leaves moves "outside the rule"
+because `_lift_anchors` keeps such markers for DSI's sake (2026-08-19), "with one measurement each way". The DSI
+note measured the ENGINE's view against the baseline (127 vs 125), not Word's Reject All, so it may not be a
+measurement of Word at all; check that first.
+
+**Suggested fix (to measure).** `tools/view_oracle.py` over the kept redlines restricted to bookmarks inside
+`w:moveTo`: Word's Reject All against the engine's, as the 2026-10-12 bookmark rule was measured. If Word drops them
+all, `_doomed_bookmarks` takes moves on reject; if it depends on the shape, the rule has to say which. A replant in the
+style of `_tracked_replant` may then be possible (the moveFrom copy is the "deleted" neighbour), but that is a second
+step.
+
+**Workaround in use.** None; R27 has not shipped.
 
 ### S4 `tracked.build` holds the pipeline and the refusal policy in one function; the reject-side judgment is orchestrated twice
 <!-- status: open -->
