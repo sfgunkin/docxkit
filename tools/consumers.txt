@@ -2,6 +2,7 @@
 # Written by tools/consumers.py; read by tests/test_consumers.py and
 # tools/api_check.py. Refresh it when the papers move, never by hand.
 docxkit	DOCUMENT
+docxkit	FOOTNOTES
 docxkit	PARA_RE
 docxkit	RUN_RE
 docxkit	backup
